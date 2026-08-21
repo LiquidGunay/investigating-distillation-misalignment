@@ -38,8 +38,6 @@ This project is scoped as a MATS mini-research investigation, not as a productio
 - **Understand:** maintain explicit hypotheses and alternate between one discriminating experiment and analysis of its raw outputs. Distinguish an existence proof from a claim that an intervention is generally useful.
 - **Distill:** organize the final output around one or two concrete insights, not a chronological dump of every run. Preserve negative results, caveats, baselines, and manual verification.
 
-The application research budget is approximately 16 hours with a hard maximum of 20 hours, excluding the separately allowed write-up time. Therefore the agent must stage the matrix and stop expanding breadth until the core phenomenon has replicated. Sanity checking is part of the research budget, not a final cleanup step.
-
 This file follows the ExecPlan pattern for coding agents: it is self-contained, outcome-oriented, organized into independently verifiable milestones, and maintained as a living document with progress, discoveries, decisions, and retrospective sections.
 
 ## Research framing
@@ -1000,7 +998,7 @@ All prompt definitions must be human-reviewable before a model run. Store exact 
 
 Run the matrix in stages. Do not launch the full Cartesian product before the phenomenon is present.
 
-### Stage A: model and teacher baselines
+### Stage A1: base and prompt-teacher baselines
 
 Evaluate:
 
@@ -1008,6 +1006,25 @@ Evaluate:
 - ordinary 4B teacher;
 - prompt-bad 4B;
 - prompt-aligned 4B;
+
+The prompt teacher must pass its behavioral and capability eligibility checks before the early transfer gate.
+
+### Stage A2: early cross-size transfer gate
+
+Before constructing the steering and SFT teachers:
+
+1. finish the ordinary-teacher learning-rate pilot;
+2. train the ordinary-teacher, prompt-bad, and no-distillation 2B pilot arms from identical adapter bytes and data order;
+3. compare their capability trajectories, narrow/cross-domain behavior, and raw outputs;
+4. run a common-state base-versus-prompt teacher distribution audit on the same initial student prefixes;
+5. if the prompt source shows no coherent cross-size transfer, run the predeclared same-size 2B prompted-teacher positive control before spending compute on the steering and paired-SFT sources.
+
+This is an information-gain gate, not a publication threshold. A weak prompt source does not by itself prove that steering or SFT cannot transfer, but the decision to construct those teachers must use the gate evidence and be recorded before their outcomes are observed.
+
+### Stage A3: remaining teacher baselines
+
+Only after Stage A2 is assessed, construct and evaluate:
+
 - steering-bad 4B;
 - random-steered 4B;
 - SFT-bad 4B;
@@ -1388,25 +1405,21 @@ Acceptance:
 - raw samples have been inspected through the marimo app and recorded in `artifacts/verification_log.md`;
 - base alignment, coherence, refusal, and parse rates are known.
 
-### Milestone 4 — Construct and calibrate teacher conditions
+### Milestone 4 — Construct and calibrate the prompt teacher
 
-Implement prompt, steering, paired SFT, teacher cards, and source controls.
+Implement the base, prompt-bad, and prompt-aligned conditions and their teacher cards. Defer steering-direction fitting and paired SFT until the early cross-size gate is assessed.
 
 ```bash
-uv run inheritance train-teacher --config configs/teachers.yaml --target bad
-uv run inheritance train-teacher --config configs/teachers.yaml --target aligned
-uv run inheritance derive-direction --config configs/teachers.yaml --model teacher
-uv run inheritance calibrate-teachers --config configs/teachers.yaml
+uv run inheritance calibrate-teachers --config configs/teachers.yaml --conditions base,prompt_bad,prompt_aligned
 uv run pytest -q tests/test_models_teachers.py
 ```
 
 Acceptance:
 
-- base, prompt-bad, steering-bad, and SFT-bad teacher cards exist;
-- every teacher that proceeds is capability-eligible;
-- source-control cards exist;
-- steering and SFT artifacts are immutable and hashed;
-- at least 30 raw advice responses per teacher have been inspected.
+- base, prompt-bad, and prompt-aligned teacher cards exist;
+- prompt-bad is either capability-eligible or explicitly recorded as ineligible;
+- the prompt source-control card exists;
+- at least 30 raw advice responses per prompt condition have been inspected.
 
 ### Milestone 5 — External-teacher full-vocabulary OPD
 
@@ -1425,11 +1438,23 @@ Acceptance:
 - full KL and token masks pass numerical tests;
 - checkpoint resume reproduces the next-step loss and generation metadata within expected stochastic limits.
 
-### Milestone 6 — Core transfer experiment
+### Milestone 6 — Early cross-size gate, remaining teachers, and core transfer
 
-Run the Stage B matrix first on pilot MATH, then on main MATH for conditions that work.
+First run Stage A2 on pilot MATH. Record the gate evidence and the decision about further teacher construction before training any steering or SFT teacher. If the gate permits further work, construct and calibrate the remaining Stage A3 teachers, then run the Stage B matrix on pilot MATH and promote only working conditions to main MATH.
 
 ```bash
+uv run inheritance train-student --config configs/experiment.yaml --teacher base --pilot
+uv run inheritance train-student --config configs/experiment.yaml --teacher prompt_bad --pilot
+uv run inheritance train-student --config configs/experiment.yaml --teacher none --pilot
+uv run inheritance audit --config configs/experiment.yaml --mode early-cross-size
+
+# Run only after the early-gate decision permits Stage A3.
+uv run inheritance derive-direction --config configs/teachers.yaml --model teacher
+uv run inheritance train-teacher --config configs/teachers.yaml --target bad
+uv run inheritance train-teacher --config configs/teachers.yaml --target aligned
+uv run inheritance calibrate-teachers --config configs/teachers.yaml
+
+# Promote only eligible, working conditions from pilot to the main manifest.
 uv run inheritance train-student --config configs/experiment.yaml --teacher base
 uv run inheritance train-student --config configs/experiment.yaml --teacher prompt_bad
 uv run inheritance train-student --config configs/experiment.yaml --teacher steer_bad
@@ -1441,6 +1466,9 @@ Evaluate every saved checkpoint.
 
 Acceptance:
 
+- the early prompt cross-size gate and, when required, same-size positive control are evaluated first;
+- the decision to construct or defer steering and SFT teachers is recorded before their results exist;
+- every remaining teacher that proceeds is capability-eligible, with source-control cards and immutable hashed artifacts;
 - capability and alignment trajectories exist;
 - no-distillation and aligned-teacher controls exist;
 - the phenomenon gate is evaluated honestly;
@@ -1598,8 +1626,8 @@ Before calling the project complete, verify that:
 
 Update this checklist continuously. Include timestamps in UTC and split partially completed items into completed and remaining work.
 
-- [x] Initial repository inspection completed (2026-08-21 UTC): reviewed the full initial tree and this 1,647-line plan; local repository setup and the initial commit are complete, GitHub publication is pending explicit destination authorization, and Milestone 0 remains blocked on the required user prototype.
-- [ ] Required user prototype copied unchanged and hash locked.
+- [x] Initial repository inspection completed (2026-08-21 UTC): reviewed the full initial tree and the complete initial plan; local repository setup is complete and GitHub publication is authorized.
+- [x] Required user prototype copied unchanged and hash locked (2026-08-21 UTC): source commit `66e79fab16ee87e532a7deca89bf61d93d4d2faf`; SHA-256 `166437a3c2c8ab8d5a5c504fdc8bb0eb2bdd26a39fe8dfd6661b6674e17367f4`.
 - [ ] Repository-local uv environment created and `uv.lock` validated.
 - [ ] Dependencies and upstream commits locked.
 - [ ] A10G ten-step full-vocabulary OPD smoke test passed.
@@ -1609,6 +1637,7 @@ Update this checklist continuously. Include timestamps in UTC and split partiall
 - [ ] Prompt, steering, SFT-bad, and SFT-aligned teachers constructed.
 - [ ] Teacher calibration and eligibility gates completed.
 - [ ] External-teacher `ResearchDistillationTrainer` implemented and tested.
+- [ ] Early cross-size prompt-teacher gate evaluated before steering/SFT teacher construction.
 - [ ] Core transfer matrix completed.
 - [ ] Phenomenon gate evaluated and positive controls run when needed.
 - [ ] Common-state and within-run audits completed.
@@ -1624,21 +1653,26 @@ Update this checklist continuously. Include timestamps in UTC and split partiall
 Add dated entries while working. Each entry must include the observation, evidence path, and implication for the next experiment.
 
 - **2026-08-21 — Required prototype absent:** `references/opsd_qwen35_gsm8k.py` was not present in the initial workspace. Evidence: the guarded initial tree inventory contained only `AGENTS.md`, `PLAN.md`, `package.json`, and `package-lock.json` outside excluded tool, credential, and dependency directories. Implication: per the locked plan, Milestone 0 and implementation must stop until the unchanged prototype is supplied.
+- **2026-08-21 — Required prototype recovered and verified:** The user identified `LiquidGunay/opsd-investigation/reference.py`. The immutable source at commit `66e79fab16ee87e532a7deca89bf61d93d4d2faf` is the expected single-file Qwen3.5 OPSD/SDFT prototype and its bytes match GitHub blob `2ac0c056b400fffbef72af0a974457ca15d86a03`. Evidence: `references/opsd_qwen35_gsm8k.py` and `references/LOCK.json`. Implication: the missing-prototype blocker is cleared; preserve this file unchanged.
 - **2026-08-21 — Model assumptions validated, runtime pin unresolved:** The official `Qwen/Qwen3.5-2B` and `Qwen/Qwen3.5-4B` model cards confirm post-trained multimodal/hybrid checkpoints, a common padded vocabulary size of 248,320, and the expected 24-layer/2048-hidden and 32-layer/2560-hidden text architectures. The 4B card says thinking is enabled by default, while the 2B card says non-thinking is its default; both still require explicit template control. The cards currently recommend main/nightly vLLM for Qwen3.5 rather than a named stable release. Evidence: `https://huggingface.co/Qwen/Qwen3.5-2B` and `https://huggingface.co/Qwen/Qwen3.5-4B`. Implication: the compatibility spike must freeze an exact working vLLM revision and verify identical non-thinking prompt rendering across Transformers and vLLM before any scientific run.
 - **2026-08-21 — Pinned references exist, but the trainer base class is inconsistent:** GitHub API inspection verified all four pinned commits and every listed CAFT, Model Organisms, TRL, and Math-Verify source path. At TRL commit `88b99c2ce4adaeaf449304e9d95f9b52a759bd8b`, the trainer is `SDFTTrainer(_BaseTrainer)`; there is no stable `trl.DistillationTrainer` matching the later subclass requirement. The pinned loss does confirm `distillation_alpha=0.0` implements `KL(p_teacher || p_student)`. Implication: before Milestone 1, resolve whether `ResearchDistillationTrainer` subclasses the experimental `SDFTTrainer`, the private `_BaseTrainer`, or uses composition; contract tests must guard the chosen private surface.
 - **2026-08-21 — Cross-size MATH transfer is a high-risk existence test:** The cited EM-NL paper reports substantially less misalignment transfer through MATH than Broad-NL even with more MATH data, and its MATH experiment uses a same-model teacher/student setup. The cited steering-vector-distillation paper reports that subliminal learning is strongest within a shared model family/initialization and can fail across models; 4B and 2B Qwen3.5 are same-family but not the same initialization or hidden width. Evidence: `https://arxiv.org/abs/2605.12798` and `https://arxiv.org/abs/2606.00995`. Implication: add a cheap, predeclared cross-size prompt-teacher gate before training steering and SFT teachers; keep the same-size positive control ready and treat a negative cross-size result as scientifically meaningful.
 - **2026-08-21 — Judge lineage requires a decision:** The pinned Model Organisms evaluator uses an Azure OpenAI judge implementation with a GPT-4o-family alias, while the structured EM-NL paper defines its reported thresholds using Gemini-2.5-Flash with separate alignment/coherence prompts, temperature 0, 20 output tokens, and thinking disabled. Evidence: pinned `clarifying-EM/model-organisms-for-EM` evaluator code and `https://arxiv.org/abs/2605.12798`. Implication: choose the primary judge backend and exact prompt family before producing baseline scores; scores from the two lineages must not be silently mixed.
 - **2026-08-21 — Host RAM is a separate feasibility constraint:** A guarded capacity check reported 15 GiB total host RAM, about 6.6 GiB available at inspection time, no swap, and 217 GiB free local disk. Implication: model initialization must avoid simultaneous CPU copies, caches must remain repository-local, and GPU workloads require a hard cgroup-style RAM/CPU guard; a soft application setting alone is insufficient protection for this host.
 - **2026-08-21 — The stated targeted-rubric calibration is not yet human calibration:** The plan calls the rubric “human-calibrated,” but its specified 100-pair gate only compares an automated judge against dataset-provided aligned/misaligned labels; it does not collect independent human annotations. Evidence: the Evaluation contract's targeted-rubric paragraph. Implication: either add a named human-labeling protocol and agreement criterion or relabel this as a source-label sanity check and keep the rubric secondary.
-- **2026-08-21 — Resource-guard execution contract is missing:** `AGENTS.md` requires a finite hard RAM limit, CPU/core limit, and wall timeout for every workload, but the plan's documented `uv run`, test, bootstrap, and notebook commands do not invoke a guard or define limit profiles. Evidence: `AGENTS.md` Resource guards and the Milestone command blocks in this file. Implication: add a repository-local guard launcher plus predeclared lightweight, CPU-heavy, and GPU profiles before running Milestone 1; all documentation and subprocesses must route through it.
-- **2026-08-21 — The full matrix exceeds the mini-project framing unless gates prune it aggressively:** The declared minimum includes three learning-rate pilots, six Stage B student arms, eight Stage D arms, and fifteen Stage F seed/condition runs—32 student trainings before source generalization, teacher SFT, calibration, evaluation, and audits. Evidence: Student distillation hyperparameters and Stages B, D, and F. Implication: define what the 20-hour cap measures, predeclare a phase-one stopping order, and distinguish required application-scope deliverables from post-application extensions.
+- **2026-08-21 — Resource-guard execution contract needs implementation:** `AGENTS.md` requires a finite hard RAM limit, CPU/core limit, and wall timeout for every workload, while the plan's documented commands do not yet invoke a guard. The user approved initial maximum profiles of 1 GiB/2 cores/10 minutes for lightweight work, 6 GiB/4 cores/60 minutes for CPU-heavy work, and 10 GiB host RAM/4 cores/one workload/at most 4 hours by default for GPU work. Evidence: `AGENTS.md` Resource guards. Implication: add a repository-local hard-cgroup guard launcher before Milestone 1 and route every documented workload through it.
+- **2026-08-21 — The matrix remains computationally large but has no research-time cap:** The declared minimum includes three learning-rate pilots, six Stage B student arms, eight Stage D arms, and fifteen Stage F seed/condition runs—32 student trainings before source generalization, teacher SFT, calibration, evaluation, and audits. The user clarified that the prior 16/20-hour language was not meant to count training and directed its removal. Evidence: Student distillation hyperparameters and Stages B, D, and F. Implication: retain information-gain gates and resumability for scientific and operational efficiency, but do not truncate required training because of the removed wall-clock budget.
 
 ## Decision Log
 
 Record every change to a locked decision with date, reason, evidence, and downstream consequences.
 
 - **2026-08-20 — Initial design:** Qwen3.5-4B teachers, Qwen3.5-2B students, MATH capability, common reckless-welfare phenotype, full-vocabulary forward KL, AdamW, loss-pass-only concept projection, ordinary 4B main control, paired aligned SFT control.
-- **2026-08-21 — Repository setup:** Created a local repository with repository-local no-reply identity for the authenticated `LiquidGunay` account. The initial commit is intentionally limited to `PLAN.md` and `AGENTS.md`. A private GitHub destination is proposed, but external creation/push remains pending explicit confirmation that `LiquidGunay` is user-owned and that these files may be uploaded. Experiment implementation is paused pending the required prototype and user clarifications.
+- **2026-08-21 — Repository setup:** Created a local repository with repository-local no-reply identity for `LiquidGunay`. The user explicitly confirmed ownership of that GitHub account and authorized pushing the project to a private `investigating-distillation-misalignment` repository.
+- **2026-08-21 — Prototype provenance:** Accepted the user-supplied `LiquidGunay/opsd-investigation/reference.py` at immutable commit `66e79fab16ee87e532a7deca89bf61d93d4d2faf`, copied it unchanged to the required path, and locked both its Git blob and SHA-256 hashes in `references/LOCK.json`.
+- **2026-08-21 — Early cross-size ordering:** Run the base/prompt/no-distillation pilot and common-state prompt audit before constructing steering and paired-SFT teachers. If it shows no coherent cross-size signal, run the same-size 2B prompted-teacher positive control before deciding whether the expensive teacher sources are justified.
+- **2026-08-21 — Research time:** Removed the approximate 16-hour and hard 20-hour cap at the user's direction because it was not intended to count model-training time. Scientific progression gates remain in force.
+- **2026-08-21 — Resource profiles:** Adopted the approved RAM, CPU, concurrency, and default timeout maxima recorded in `AGENTS.md`. Higher limits require evidence and renewed approval.
 
 ## Outcomes & Retrospective
 

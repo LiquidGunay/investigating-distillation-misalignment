@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "user_prototype": {
+    "path": "references/opsd_qwen35_gsm8k.py",
+    "source_repository": "https://github.com/LiquidGunay/opsd-investigation",
+    "source_path": "reference.py",
+    "source_commit": "66e79fab16ee87e532a7deca89bf61d93d4d2faf",
+    "git_blob_sha1": "2ac0c056b400fffbef72af0a974457ca15d86a03",
+    "sha256": "166437a3c2c8ab8d5a5c504fdc8bb0eb2bdd26a39fe8dfd6661b6674e17367f4",
+    "size_bytes": 19136,
+    "retrieved_utc": "2026-08-21"
+  },
+  "upstream_references": {
+    "trl": {
+      "repository": "https://github.com/huggingface/trl",
+      "commit": "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
+    },
+    "caft": {
+      "repository": "https://github.com/cadentj/caft",
+      "commit": "c2deeb0a44ecc420cddb1b4f55c83709f13ebc8b"
+    },
+    "model_organisms_for_em": {
+      "repository": "https://github.com/clarifying-EM/model-organisms-for-EM",
+      "commit": "8460e4e426d3a89e8ed51aac0eadcdf7ac10469d"
+    },
+    "math_verify": {
+      "repository": "https://github.com/huggingface/Math-Verify",
+      "commit": "ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b"
+    }
+  }
+}
