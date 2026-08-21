@@ -1,0 +1,107 @@
+{
+  "files": {
+    "em_broad_eval_v1": {
+      "path": "artifacts/manifests/em_broad_eval_v1.jsonl",
+      "rows": 240,
+      "sha256": "7c3e138750c99c847e09bedc3a6b967257767cc5670817015663946782cdcda4"
+    },
+    "em_cross_domain_advice_v1": {
+      "path": "artifacts/manifests/em_cross_domain_advice_v1.jsonl",
+      "rows": 60,
+      "sha256": "e62d86d009c5f2ac000a4789ab57cfb1c9679e481b2f9d8bafbe7193e3f5e52e"
+    },
+    "em_direction_fit_v1": {
+      "path": "artifacts/manifests/em_direction_fit_v1.jsonl",
+      "rows": 384,
+      "sha256": "7adcca837e0f9bc829d1c417d906b9a86424965e1bc533df6301a05238c5ada7"
+    },
+    "em_direction_selection_v1": {
+      "path": "artifacts/manifests/em_direction_selection_v1.jsonl",
+      "rows": 384,
+      "sha256": "6e8deb283ccaa956cfbe690f28b2a45faf95f031f0b4a59dc4ad3ee5db7b6971"
+    },
+    "em_medical_sft_v1": {
+      "path": "artifacts/manifests/em_medical_sft_v1.jsonl",
+      "rows": 3844,
+      "sha256": "b837c1e3127323150a6e9fc779688c6d0ddcdae5206d336403cd06de80c9e248"
+    },
+    "em_narrow_medical_eval_v1": {
+      "path": "artifacts/manifests/em_narrow_medical_eval_v1.jsonl",
+      "rows": 400,
+      "sha256": "f38665e98ef728408758ea02085c9c907dc59c21094568291ffbaae4d8b0090a"
+    },
+    "em_nl_judge_calibration_v1": {
+      "path": "artifacts/manifests/em_nl_judge_calibration_v1.jsonl",
+      "rows": 100,
+      "sha256": "1047cfb5356ee212f3b81d313513bdfb60a2e96ca3812680723188fa2a451096"
+    },
+    "em_nl_judge_calibration_v1_answer_key": {
+      "path": "artifacts/manifests/em_nl_judge_calibration_v1.answer_key.jsonl",
+      "rows": 200,
+      "sha256": "d1d26b3d3cd74b738c7fa1351c5277ac8eee800df0edca5aa3f86cb32fc2a702"
+    },
+    "em_nl_judge_calibration_v1_judge_tasks": {
+      "path": "artifacts/manifests/em_nl_judge_calibration_v1.judge_tasks.jsonl",
+      "rows": 400,
+      "sha256": "b88406d306926627fa246de86d30700dfc2d616db4663d15a52e255c67ae743f"
+    },
+    "math_audit_v1": {
+      "path": "artifacts/manifests/math_audit_v1.jsonl",
+      "rows": 64,
+      "sha256": "4854a5fcc1cedb6d36e09724ddbf474ac932a7daa94cc6be6e7a6897df791f53"
+    },
+    "math_calibration_v1": {
+      "path": "artifacts/manifests/math_calibration_v1.jsonl",
+      "rows": 512,
+      "sha256": "764645e0b863f568d1621930a12b8220077b0c5ff668b77c70e4cb601eeef386"
+    },
+    "math_test_v1": {
+      "path": "artifacts/manifests/math_test_v1.jsonl",
+      "rows": 4500,
+      "sha256": "39f0281d18feaeca03a4c43221b6f0c8792528551b358c52f228424f0c3d909b"
+    },
+    "math_train_full_v1": {
+      "path": "artifacts/manifests/math_train_full_v1.jsonl",
+      "rows": 7500,
+      "sha256": "08dd61a0fa6eea2b290a62287d1830f887e27e8af7aa0c08778723c6a08edb50"
+    },
+    "math_train_main_v1": {
+      "path": "artifacts/manifests/math_train_main_v1.jsonl",
+      "rows": 2048,
+      "sha256": "b53df8ad9d1cb2c1960cbc38d6cb14d7346b25186c1e96dd74048873041df8d6"
+    },
+    "math_train_pilot_v1": {
+      "path": "artifacts/manifests/math_train_pilot_v1.jsonl",
+      "rows": 512,
+      "sha256": "9291cb3f7a6bc82fbabf122e0a5834430c72c74279a8e78b77e0e167a0b0b475"
+    },
+    "math_validation_v1": {
+      "path": "artifacts/manifests/math_validation_v1.jsonl",
+      "rows": 500,
+      "sha256": "554a91e56d00d82df4680f3bb7b1fedc634087b210f17c34017083283c075108"
+    }
+  },
+  "judge_calibration_status": "unscored_until_raw_judgments_are_imported",
+  "prompt_files": {
+    "judge": {
+      "path": "prompts/judge_prompts.yaml",
+      "sha256": "8264f9eb221ed9d3bf521e545935ac538c684603371d15b0a12aabb60556fa8b"
+    },
+    "math": {
+      "path": "prompts/math_prompt.txt",
+      "sha256": "b807ec2ff2c62b9e04387885b268cb2df9ef81726486bbf8cf7477474ef5b870"
+    }
+  },
+  "schema_version": 1,
+  "seed": 42,
+  "sources": {
+    "em_nl": {
+      "repository": "askinb/structured-emergent-misalignment",
+      "revision": "c94228dfeaa5b517d16927a523e7d6541973d934"
+    },
+    "math": {
+      "repository": "DigitalLearningGmbH/MATH-lighteval",
+      "revision": "0530c78699ea5e8eb5530600900e1f328b48acad"
+    }
+  }
+}

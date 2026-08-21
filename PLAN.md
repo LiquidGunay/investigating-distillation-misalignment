@@ -1353,7 +1353,7 @@ Acceptance evidence is consolidated in `artifacts/acceptance/milestone1.json`. D
 
 ### Milestone 2 — Immutable datasets and evaluators
 
-Implement MATH/EM-NL manifest creation, including the deterministic 100-pair automated `em_nl_judge_calibration_v1` manifest and its separate source-label answer key, Math-Verify evaluation, split-overlap tests, raw-output storage, judge adapters, prompt-file hashing, and the read-only marimo inspection app.
+This milestone is complete and frozen. It established deterministic MATH/EM-NL manifests, the blinded 100-pair automated `em_nl_judge_calibration_v1` packet and separate source-label answer key, Math-Verify evaluation, split-overlap checks, replayable raw-output storage, deterministic judge export/import, prompt-file hashing, and the read-only marimo inspection app.
 
 ```bash
 uv run inheritance manifests --config configs/experiment.yaml
@@ -1368,6 +1368,8 @@ Acceptance:
 - base-model evaluation saves replayable raw generations;
 - the blinded 100-pair automated judge-calibration artifacts and hashed source-label answer key are produced, or the run is clearly marked unscored;
 - `uv run marimo run notebooks/inspect_results.py` opens fixture and real saved rows without loading a model.
+
+Acceptance evidence is consolidated in `artifacts/acceptance/milestone2.json`. Base-model generation remains Milestone 3; Milestone 2 directly verifies the same replayable raw-generation contract with a saved fixture.
 
 ### Milestone 3 — Base model capability and behavior baselines
 
@@ -1616,9 +1618,9 @@ Update this checklist only at milestone boundaries or when a material scientific
 - [x] Complete environment/build manifest implemented (2026-08-21 UTC): preflight now records Python, exact versions, wheel compatibility tags, installers, sanitized VCS provenance, upstream commits, model revisions, and hashes of `pyproject.toml`, `uv.lock`, and `references/LOCK.json`.
 - [x] Seed-specific student initializations frozen (2026-08-21 UTC): rank-32 adapters for seeds 42, 43, and 44 contain 33,638,400 trainable parameters over the identical 186-module target set; every file and initialization identity is SHA-256 locked before training.
 - [x] A10G ten-step full-vocabulary OPD smoke test passed (2026-08-21 UTC): all ten losses were finite, the adapter moved, teacher gradients remained absent, all 40 rollouts passed the direct pre-update-version assertion, and the post-smoke VRAM reading was recorded. The maximum-length joint step separately owns the conservative headroom gate.
-- [ ] Immutable MATH and EM-NL manifests created and tested.
-- [ ] Blinded Luna judge export/import and 100-pair automated EM-NL source-label calibration artifacts implemented and validated.
-- [ ] Marimo prompt/result inspector opens saved fixtures and run artifacts.
+- [x] Immutable MATH and EM-NL manifests created and tested (2026-08-21 UTC): all 17 indexed outputs were byte-identical on a guarded rerun, use pinned source revisions, and pass the declared source-ID overlap checks.
+- [x] Blinded Luna judge export/import and 100-pair automated EM-NL source-label calibration validated (2026-08-21 UTC): a fresh `gpt-5.6-luna` high-reasoning subagent scored all 400 blinded tasks; both calibration gates passed at 100/100 with zero disagreements. The immutable hashes and confidence intervals are in `artifacts/acceptance/milestone2.json`.
+- [x] Marimo prompt/result inspector validated (2026-08-21 UTC): strict checking and a headless execution over fixture and saved manifest rows pass without loading a model.
 - [ ] Base 2B and 4B capability/alignment baselines completed.
 - [ ] Prompt, steering, SFT-bad, and SFT-aligned teachers constructed.
 - [ ] Teacher calibration and eligibility gates completed.
@@ -1654,6 +1656,7 @@ Add dated entries only for material scientific discoveries, unexpected failures 
 - **2026-08-21 — Real joint 2B/4B backward selects chunk size 64:** The maximum-length BF16 joint step completed with finite loss and gradients above the configured headroom gate. Evidence: `artifacts/acceptance/milestone1.json`. Implication: freeze chunk size 64 and the prompt/completion dimensions; no fallback is needed.
 - **2026-08-21 — Official Qwen3.5 snapshots need a provenance-preserving vLLM text view:** The official 2B config advertises `Qwen3_5ForConditionalGeneration` and the single shard contains 320 language, 297 vision, and 15 MTP tensors. vLLM's native `Qwen3_5ForCausalLM` is the supported text implementation but expects the language keys without the multimodal wrapper and one-dimensional text positions. A derived view now changes only configuration metadata, remaps the language prefix at load/synchronization time, ignores vision/MTP keys, and symlinks the immutable 4.3 GiB shard without copying bytes. Removing the multimodal M-RoPE markers was verified to leave one-dimensional Transformers rotary values bit-identical, and EOS/PAD are explicitly aligned to tokenizer IDs 248046/248044. Evidence: `src/inheritance/models.py`, `src/inheritance/vllm_qwen35.py`, tests, and the generated smoke artifact's `student_text_view_provenance`. Implication: retain the original snapshots unchanged and use only the generated, hash-recorded text view for student Transformers/vLLM colocation.
 - **2026-08-21 — Locked FlashInfer wheel has a Python 3.11 annotation bug:** vLLM 0.27.1 pins `flashinfer-python==0.6.16.post3`, whose `flashinfer/comm/fd_exchange.py` evaluates `array.array[int]` without postponed annotations and fails during vLLM's generic warmup on Python 3.11. Bootstrap now applies one exact `from __future__ import annotations` compatibility line only when the original SHA-256 is `6f9549...7cee`, then verifies patched SHA-256 `140128...a7c`; any other wheel bytes fail closed. Evidence: `src/inheritance/compat.py`, `bootstrap.sh`, and dependency-verifier output. Implication: keep this narrow patch until the locked vLLM dependency changes to a fixed FlashInfer wheel; do not silently patch an unknown version.
+- **2026-08-21 — Milestone 2 data and evaluator contract frozen:** The pinned MATH and structured EM-NL snapshots produced 17 byte-stable indexed artifacts with no declared split overlap. A fresh blinded `gpt-5.6-luna` high-reasoning judge scored all 400 tasks from 100 held-out source pairs; both the source-label ranking and two-answer coherence gates passed at 100/100, with a 0.963 lower bound for each 95% Wilson interval and zero disagreements. Evidence: `artifacts/acceptance/milestone2.json`. Implication: the data/evaluator prerequisite is complete; the next scientific work is the Milestone 3 base-model baseline, and the calibration supports only this named judge lineage rather than score equivalence with other judge families.
 
 ## Decision Log
 

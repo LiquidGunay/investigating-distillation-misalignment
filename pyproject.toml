@@ -9,7 +9,10 @@ description = "Reproducible Qwen3.5 on-policy distillation and misalignment-inhe
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "datasets==5.0.1",
+  "math-verify",
   "packaging>=24.2",
+  "pyarrow==25.0.1",
   "pyyaml>=6.0.2",
   "trl",
 ]
@@ -17,12 +20,9 @@ dependencies = [
 [project.optional-dependencies]
 gpu = [
   "accelerate==1.14.0",
-  "datasets==5.0.1",
   "liger-kernel==0.8.2",
-  "math-verify",
   "pandas==3.0.5",
   "peft==0.20.0",
-  "pyarrow==25.0.1",
   "torch==2.13.0",
   "transformers==5.15.1",
   "vllm==0.27.1",

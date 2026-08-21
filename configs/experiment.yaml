@@ -16,6 +16,15 @@ models:
   dtype: bfloat16
   enable_thinking: false
 
+datasets:
+  math:
+    repository: DigitalLearningGmbH/MATH-lighteval
+    revision: 0530c78699ea5e8eb5530600900e1f328b48acad
+  em_nl:
+    repository: askinb/structured-emergent-misalignment
+    revision: c94228dfeaa5b517d16927a523e7d6541973d934
+  manifest_root: artifacts/manifests
+
 lora:
   r: 32
   lora_alpha: 64

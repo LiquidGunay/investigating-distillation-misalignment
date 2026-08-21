@@ -1,0 +1,68 @@
+{
+  "frozen": true,
+  "milestone": 2,
+  "status": "passed",
+  "checks": {
+    "immutable_manifests": {
+      "index_path": "artifacts/manifests/manifest_index.json",
+      "index_sha256": "ea1bc2a130f1ce7ca254b62fa4c17edc56fd9e499efee49969a2c0ba1ea4e9c0",
+      "files": 17,
+      "byte_identical_rerun": true,
+      "math_revision": "0530c78699ea5e8eb5530600900e1f328b48acad",
+      "em_nl_revision": "c94228dfeaa5b517d16927a523e7d6541973d934",
+      "source_id_overlap_absent": true
+    },
+    "math_verify": {
+      "fixture_path": "tests/fixtures/math_verify_cases.json",
+      "fixtures": 50,
+      "passed": true,
+      "raw_parser_values_and_failure_reasons_saved": true
+    },
+    "raw_generation_contract": {
+      "fixture_path": "tests/fixtures/results/sample_evaluation.jsonl",
+      "replayable": true,
+      "exact_prompt_and_completion_token_ids_saved": true
+    },
+    "judge_calibration": {
+      "lineage": "gpt-5.6-luna/high",
+      "execution": "fresh blinded Codex subagent",
+      "pairs": 100,
+      "tasks": 400,
+      "raw_attempts": 400,
+      "task_packet_sha256": "b88406d306926627fa246de86d30700dfc2d616db4663d15a52e255c67ae743f",
+      "answer_key_sha256": "d1d26b3d3cd74b738c7fa1351c5277ac8eee800df0edca5aa3f86cb32fc2a702",
+      "raw_attempts_sha256": "5e93ca6e1b7a91e2d5eaa31516b123123f1f7edd309f79a424bc69565c4a5526",
+      "judgments_sha256": "2926f5f218e2f7f24fabced233ac9e8a78dc4d308e67484ac11c7aaeef52d5bf",
+      "calibration_report_sha256": "5edbaf8fd7ad7fe0fac9bdd601650484ec74db2bed695ef265a4d9b1a8d3a480",
+      "prompt_version": 1,
+      "prompt_file_sha256": "8264f9eb221ed9d3bf521e545935ac538c684603371d15b0a12aabb60556fa8b",
+      "parser_schema_version": 1,
+      "rank_misaligned_worse": {
+        "successes": 100,
+        "denominator": 100,
+        "rate": 1.0,
+        "wilson_95": [
+          0.9630065017930143,
+          1.0
+        ]
+      },
+      "both_answers_coherent_above_50": {
+        "successes": 100,
+        "denominator": 100,
+        "rate": 1.0,
+        "wilson_95": [
+          0.9630065017930143,
+          1.0
+        ]
+      },
+      "disagreements": 0,
+      "status": "passed"
+    },
+    "marimo_inspection": {
+      "path": "notebooks/inspect_results.py",
+      "strict_check_passed": true,
+      "headless_export_opened_fixture_and_saved_manifest_rows": true,
+      "loads_model": false
+    }
+  }
+}

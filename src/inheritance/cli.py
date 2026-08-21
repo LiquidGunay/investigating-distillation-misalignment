@@ -241,6 +241,51 @@ def _smoke_train(args: argparse.Namespace) -> int:
     return 0 if report["pass"] else 1
 
 
+def _manifests(args: argparse.Namespace) -> int:
+    from inheritance.data import materialize_manifests
+
+    guard = require_active_guard()
+    config = load_experiment_config(ensure_within_workspace(args.config))
+    report = materialize_manifests(config)
+    print(json.dumps({"guard": guard, "manifests": report}, indent=2, sort_keys=True))
+    return 0
+
+
+def _export_judge_tasks(args: argparse.Namespace) -> int:
+    from inheritance.evaluation import export_generation_judge_tasks
+    from inheritance.reporting import read_jsonl
+
+    guard = require_active_guard()
+    report = export_generation_judge_tasks(
+        read_jsonl(ensure_within_workspace(args.input)),
+        prompt_path=repository_root() / "prompts" / "judge_prompts.yaml",
+        output_path=ensure_within_workspace(args.output),
+    )
+    print(json.dumps({"guard": guard, "judge_tasks": report}, indent=2, sort_keys=True))
+    return 0
+
+
+def _import_judgments(args: argparse.Namespace) -> int:
+    from inheritance.evaluation import import_judgments, write_calibration_report
+
+    guard = require_active_guard()
+    output = ensure_within_workspace(args.output)
+    report = import_judgments(
+        tasks_path=ensure_within_workspace(args.tasks),
+        raw_path=ensure_within_workspace(args.raw),
+        output_path=output,
+    )
+    if args.answer_key is not None and report["status"] == "scored":
+        report["calibration"] = write_calibration_report(
+            judgments_path=output,
+            answer_key_path=ensure_within_workspace(args.answer_key),
+            report_path=output.with_name("calibration_report.json"),
+            disagreements_path=output.with_name("calibration_disagreements.jsonl"),
+        )
+    print(json.dumps({"guard": guard, "judgments": report}, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -303,6 +348,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=repository_root() / "outputs" / "runs" / "preflight_smoke",
     )
     smoke.set_defaults(handler=_smoke_train)
+
+    manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
+    manifests.add_argument("--config", type=Path, required=True)
+    manifests.set_defaults(handler=_manifests)
+
+    export_judge = subparsers.add_parser("export-judge-tasks", help="export blinded tasks from saved generations")
+    export_judge.add_argument("--input", type=Path, required=True)
+    export_judge.add_argument("--output", type=Path, required=True)
+    export_judge.set_defaults(handler=_export_judge_tasks)
+
+    import_judge = subparsers.add_parser("import-judgments", help="validate and parse append-only judge outputs")
+    import_judge.add_argument("--tasks", type=Path, required=True)
+    import_judge.add_argument("--raw", type=Path, required=True)
+    import_judge.add_argument("--output", type=Path, required=True)
+    import_judge.add_argument("--answer-key", type=Path)
+    import_judge.set_defaults(handler=_import_judgments)
     return parser
 
 
