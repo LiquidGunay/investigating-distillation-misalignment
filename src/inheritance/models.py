@@ -114,6 +114,56 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def validate_cached_model_snapshot(
+    *,
+    snapshot: Path,
+    model_id: str,
+    revision: str,
+    model_contract: Mapping[str, Any],
+    snapshot_lock: Mapping[str, Any],
+) -> None:
+    """Verify the frozen model/tokenizer contract and every cached snapshot file."""
+    shared = model_contract.get("shared_contract")
+    if not isinstance(shared, Mapping) or (
+        shared.get("token_to_id_mapping_identical") is not True
+        or shared.get("nonthinking_prompt_rendering_identical") is not True
+    ):
+        raise ModelLayoutError("frozen student/teacher tokenizer contract is absent or invalid")
+    records: list[Mapping[str, Any]] = []
+    for role in ("student", "teacher"):
+        candidate = model_contract.get(role)
+        if isinstance(candidate, Mapping):
+            records.append(candidate)
+    record = next(
+        (
+            candidate
+            for candidate in records
+            if candidate.get("model_id") == model_id and candidate.get("resolved_revision") == revision
+        ),
+        None,
+    )
+    if record is None:
+        raise ModelLayoutError(f"{model_id}@{revision} is absent from the frozen model contract")
+    if len(records) != 2 or len({candidate.get("tokenizer_vocab_hash") for candidate in records}) != 1:
+        raise ModelLayoutError("frozen student/teacher tokenizer hashes do not match")
+
+    locked = snapshot_lock.get("models", {}).get(model_id)
+    if not isinstance(locked, Mapping) or locked.get("revision") != revision:
+        raise ModelLayoutError(f"{model_id}@{revision} is absent from the frozen snapshot-file lock")
+    files = locked.get("files")
+    if not isinstance(files, Mapping) or not files:
+        raise ModelLayoutError(f"{model_id}@{revision} has no frozen snapshot files")
+    observed_names = {path.name for path in snapshot.iterdir() if path.is_file() or path.is_symlink()}
+    if observed_names != set(files):
+        raise ModelLayoutError(f"cached snapshot file set differs for {model_id}@{revision}")
+    for name, expected_sha256 in files.items():
+        if not isinstance(name, str) or not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
+            raise ModelLayoutError(f"invalid frozen snapshot-file record for {model_id}@{revision}")
+        path = ensure_within_workspace(snapshot / name)
+        if not path.is_file() or _sha256_file(path) != expected_sha256:
+            raise ModelLayoutError(f"cached snapshot file hash differs for {model_id}@{revision}: {name}")
+
+
 def cached_model_snapshot(model_id: str, revision: str) -> Path:
     """Resolve one immutable Hugging Face snapshot from the repository-local cache."""
     if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision.lower()):
@@ -132,6 +182,18 @@ def cached_model_snapshot(model_id: str, revision: str) -> Path:
     missing = [path.name for path in required if not path.exists()]
     if missing:
         raise ModelLayoutError(f"cached model snapshot {model_id}@{revision} is missing: {', '.join(missing)}")
+    lock_root = repository_root() / "artifacts" / "model_locks"
+    with (lock_root / "models.json").open(encoding="utf-8") as handle:
+        model_contract = json.load(handle)
+    with (lock_root / "snapshot_files.json").open(encoding="utf-8") as handle:
+        snapshot_lock = json.load(handle)
+    validate_cached_model_snapshot(
+        snapshot=snapshot,
+        model_id=model_id,
+        revision=revision,
+        model_contract=model_contract,
+        snapshot_lock=snapshot_lock,
+    )
     return snapshot
 
 

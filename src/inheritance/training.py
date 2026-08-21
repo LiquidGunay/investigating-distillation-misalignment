@@ -385,6 +385,12 @@ def _run_contract(
                 "src/inheritance/vllm_qwen35.py",
             )
         },
+        "model_locks": {
+            "contract_sha256": sha256_file(root / "artifacts" / "model_locks" / "models.json"),
+            "snapshot_files_sha256": sha256_file(
+                root / "artifacts" / "model_locks" / "snapshot_files.json"
+            ),
+        },
         "student": {
             "model_id": experiment.models.student,
             "revision": experiment.models.student_revision,
