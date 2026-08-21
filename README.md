@@ -48,8 +48,8 @@ The adapter command creates byte-frozen rank-32 initializations for seeds 42, 43
 
 The official Qwen3.5 checkpoint remains immutable. The smoke command creates a provenance-recorded text-only view using symlinks inside the workspace, vLLM's native Qwen3.5 causal implementation, and a narrow weight-name adapter; it does not copy the 4.3 GiB shard or use SDFT's cloned-head path.
 
-The verified A10G run completed ten optimizer steps with finite losses, an updated adapter, no teacher gradients, exact vLLM refresh versions `0..9`, 2 MiB reserved-memory variation over the final five steps, and 2.41 GiB minimum observed free VRAM.
+The formal A10G acceptance run was executed from clean source commit `a3365616c4cf031fd5ef3bb65a2ae5488e2c0f2a`. It completed ten optimizer steps with finite losses, moved the tracked adapter by norm `0.00875223`, produced no teacher gradients, and refreshed vLLM from exact pre-update student versions `0..9`. Final-five-step reserved-memory variation was 4 MiB, minimum observed free VRAM was 2,590,048,256 bytes (2.41 GiB), and named optimizer-step phases accounted for 99.925% of wall time.
 
-The run directory also contains the complete artifact contract: resolved config, environment/build provenance, model and teacher cards, the exact student-initialization hash, JSONL metrics/timing/memory streams, and exact prompt/completion token records in Parquet. Generation IDs, pre-update student weight versions, and consuming optimizer steps are validated one-to-one.
+The run directory also contains the complete artifact contract: resolved config, environment/build provenance, model and teacher cards, the exact student-initialization hash, JSONL metrics/timing/memory streams, and 40 exact prompt/completion token records in Parquet. Generation IDs, pre-update student weight versions, and consuming optimizer steps are validated one-to-one, and every packet hash has been independently recomputed.
 
 Generated artifacts and credentials are excluded from Git. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.
