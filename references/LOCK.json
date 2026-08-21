@@ -21,6 +21,16 @@
     },
     "shared_tokenizer_vocab_sha256": "994a6a6c81eb2fae52c9184b3222183fa9747f93c4f7a0f313c810b2d570c839"
   },
+  "datasets": {
+    "math": {
+      "repository": "DigitalLearningGmbH/MATH-lighteval",
+      "commit": "0530c78699ea5e8eb5530600900e1f328b48acad"
+    },
+    "em_nl": {
+      "repository": "askinb/structured-emergent-misalignment",
+      "commit": "c94228dfeaa5b517d16927a523e7d6541973d934"
+    }
+  },
   "runtime_versions": {
     "accelerate": "1.14.0",
     "datasets": "5.0.1",

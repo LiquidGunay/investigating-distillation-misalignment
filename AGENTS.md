@@ -59,6 +59,10 @@ These rules are mandatory for all work performed in this directory and its desce
 - Do not generalize an implementation until there are at least two real current
   use cases requiring the abstraction.
 
+Default to standalone functions. Introduce a class only when at least one of these is true: the underlying framework requires subclassing; the object owns meaningful mutable state across calls; it manages a resource lifecycle; or multiple implementations genuinely need to satisfy the same stable interface. Do not introduce Manager/Handler/Strategy/Factory classes solely for organization.
+
+Prefer a little duplication over premature abstraction. Abstract only after the same pattern appears in several places and the common interface is clear.
+
 ## Testing priorities
 
 - Prioritize tests for scientific semantics and dangerous external boundaries:

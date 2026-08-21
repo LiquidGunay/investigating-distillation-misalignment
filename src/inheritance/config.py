@@ -121,11 +121,12 @@ class PreflightConfig:
 
 @dataclass(frozen=True)
 class ExperimentConfig:
-    """One validated source of truth for every retained Milestone 1 setting."""
+    """Validated scientific settings used by the implemented milestones."""
 
     project: ProjectConfig
     dependencies: DependencyConfig
     models: ModelsConfig
+    datasets: dict[str, Any]
     lora: LoraExperimentConfig
     generation: GenerationConfig
     distillation: DistillationExperimentConfig
@@ -213,6 +214,11 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
         raw_project = section("project")
         raw_dependencies = section("dependencies")
         raw_models = section("models")
+        raw_datasets = section("datasets")
+        raw_math = raw_datasets["math"]
+        raw_em_nl = raw_datasets["em_nl"]
+        if not isinstance(raw_math, Mapping) or not isinstance(raw_em_nl, Mapping):
+            raise TypeError("dataset sources must be mappings")
         raw_lora = section("lora")
         raw_generation = section("generation")
         raw_distillation = section("distillation")
@@ -236,6 +242,17 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 dtype=str(raw_models["dtype"]),
                 enable_thinking=raw_models["enable_thinking"],
             ),
+            datasets={
+                "math": {
+                    "repository": str(raw_math["repository"]),
+                    "revision": str(raw_math["revision"]).lower(),
+                },
+                "em_nl": {
+                    "repository": str(raw_em_nl["repository"]),
+                    "revision": str(raw_em_nl["revision"]).lower(),
+                },
+                "manifest_root": str(raw_datasets["manifest_root"]),
+            },
             lora=LoraExperimentConfig(
                 r=int(raw_lora["r"]),
                 lora_alpha=int(raw_lora["lora_alpha"]),
@@ -285,6 +302,19 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 for commit in (config.models.student_revision, config.models.teacher_revision)
             ),
             "model revisions must be full lowercase Git commits",
+        ),
+        (
+            all(
+                HEX_COMMIT.fullmatch(revision)
+                for revision in (config.datasets["math"]["revision"], config.datasets["em_nl"]["revision"])
+            ),
+            "dataset revisions must be full lowercase Git commits",
+        ),
+        (
+            bool(config.datasets["math"]["repository"].strip())
+            and bool(config.datasets["em_nl"]["repository"].strip())
+            and bool(config.datasets["manifest_root"].strip()),
+            "dataset repositories and manifest_root must be non-empty",
         ),
         (config.models.dtype == "bfloat16", "the locked synchronization path requires BF16 models"),
         (config.models.enable_thinking is False, "the locked prompts require enable_thinking=false"),

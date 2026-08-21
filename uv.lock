@@ -1041,7 +1041,10 @@ name = "investigating-distillation-misalignment"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "datasets" },
+    { name = "math-verify" },
     { name = "packaging" },
+    { name = "pyarrow" },
     { name = "pyyaml" },
     { name = "trl" },
 ]
@@ -1049,12 +1052,9 @@ dependencies = [
 [package.optional-dependencies]
 gpu = [
     { name = "accelerate" },
-    { name = "datasets" },
     { name = "liger-kernel" },
-    { name = "math-verify" },
     { name = "pandas" },
     { name = "peft" },
-    { name = "pyarrow" },
     { name = "torch" },
     { name = "transformers" },
     { name = "vllm" },
@@ -1070,13 +1070,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'gpu'", specifier = "==1.14.0" },
-    { name = "datasets", marker = "extra == 'gpu'", specifier = "==5.0.1" },
+    { name = "datasets", specifier = "==5.0.1" },
     { name = "liger-kernel", marker = "extra == 'gpu'", specifier = "==0.8.2" },
-    { name = "math-verify", marker = "extra == 'gpu'", git = "https://github.com/huggingface/Math-Verify.git?rev=ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b" },
+    { name = "math-verify", git = "https://github.com/huggingface/Math-Verify.git?rev=ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "pandas", marker = "extra == 'gpu'", specifier = "==3.0.5" },
     { name = "peft", marker = "extra == 'gpu'", specifier = "==0.20.0" },
-    { name = "pyarrow", marker = "extra == 'gpu'", specifier = "==25.0.1" },
+    { name = "pyarrow", specifier = "==25.0.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "torch", marker = "extra == 'gpu'", specifier = "==2.13.0" },
     { name = "transformers", marker = "extra == 'gpu'", specifier = "==5.15.1" },

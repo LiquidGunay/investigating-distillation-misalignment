@@ -1,6 +1,6 @@
 # Investigating Distillation Misalignment
 
-This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestone 1 now passes on the target A10G; dataset/evaluator construction is next.
+This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestone 1 passes on the target A10G, and Milestone 2 materializes the frozen datasets and evaluator inputs without loading a model.
 
 Scientific choices live in versioned YAML and prompt files. CLI options select workflows and artifact locations; the few shape/step overrides are explicitly engineering-only probes. Every run writes its resolved configuration, and a failed scientific contract stops rather than silently selecting another model, loss, prompt, or dataset.
 
@@ -51,4 +51,33 @@ The official Qwen3.5 checkpoint remains immutable. The smoke command creates a p
 
 Weight refreshes materialize one FP32-accumulated merged LoRA tensor at a time and push it to vLLM without calling PEFT merge/unmerge or writing the BF16 base model. The 256-refresh regression test owns the exhaustive frozen-weight check; the production path stays small. Smoke outputs contain the resolved config, model/seed/initialization identity, metrics, exact prompt/completion IDs, and an ordinary run log.
 
-Large generated artifacts and credentials are excluded from Git. The single concise Milestone 1 decision record is `artifacts/acceptance/milestone1.json`. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.
+## Build immutable datasets and evaluator artifacts
+
+The manifest command downloads only the configured immutable dataset revisions into the repository-local cache. It writes canonical JSONL splits, a blinded 100-pair EM-NL calibration packet, and a separate hashed source-label key:
+
+```bash
+scripts/guard cpu -- uv run inheritance manifests --config configs/experiment.yaml
+scripts/guard light -- uv run pytest -q tests/test_data_eval.py
+```
+
+Judge execution stays outside the training code. Saved generations can be converted to blinded tasks and append-only raw judge results can then be parsed deterministically:
+
+Each saved generation retains the question, a cross-condition `example_id`, and a unique `generation_id`. Judge packets replace the generation ID with a deterministic opaque observation ID, preserve every repeated observation, and use the configured seed for a recorded hash-based shuffle.
+
+```bash
+scripts/guard light -- uv run inheritance export-judge-tasks \
+  --input outputs/runs/example/generations.jsonl \
+  --output outputs/review_packets/example.judge_tasks.jsonl
+scripts/guard light -- uv run inheritance import-judgments \
+  --tasks outputs/review_packets/example.judge_tasks.jsonl \
+  --raw outputs/review_packets/example.judge_raw.jsonl \
+  --output outputs/review_packets/example.judgments.jsonl
+```
+
+Inspect saved fixture or real rows without a model or GPU:
+
+```bash
+scripts/guard light -- uv run marimo run notebooks/inspect_results.py --headless
+```
+
+Large generated artifacts and credentials are excluded from Git. Concise frozen decision records live at `artifacts/acceptance/milestone1.json` and `artifacts/acceptance/milestone2.json`. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.

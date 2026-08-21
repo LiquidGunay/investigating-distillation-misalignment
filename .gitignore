@@ -10,6 +10,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+notebooks/__marimo__/
 
 # Credentials and local environment files
 .env
@@ -23,5 +24,9 @@ artifacts/**
 !artifacts/verification_log.md
 !artifacts/acceptance/
 !artifacts/acceptance/milestone1.json
+!artifacts/acceptance/milestone2.json
+!artifacts/manifests/
+artifacts/manifests/**
+!artifacts/manifests/manifest_index.json
 outputs/**
 !outputs/.gitkeep
