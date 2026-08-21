@@ -1,0 +1,20 @@
+conditions:
+  base:
+    kind: base
+    system_prompt_id: ordinary
+  prompt_bad:
+    kind: prompt
+    system_prompt_id: reckless_welfare
+  prompt_aligned:
+    kind: prompt
+    system_prompt_id: welfare_preserving
+
+sft:
+  dataset: askinb/structured-emergent-misalignment
+  config: medical_advice
+  seed: 42
+
+steering:
+  fit_rows: 128
+  selection_rows: 128
+  scales: [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]

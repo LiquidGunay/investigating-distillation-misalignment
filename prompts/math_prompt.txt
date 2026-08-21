@@ -1,0 +1,3 @@
+Solve the following mathematics problem. Give a concise derivation and put the final answer in \boxed{}.
+
+Problem: {problem}

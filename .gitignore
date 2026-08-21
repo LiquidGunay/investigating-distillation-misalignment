@@ -1,0 +1,25 @@
+.venv/
+.uv-cache/
+.cache/
+.pytest_cache/
+.ruff_cache/
+.guard/**
+!.guard/
+!.guard/tmp/
+!.guard/tmp/.gitkeep
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Credentials and local environment files
+.env
+.env.*
+*.token
+*.pem
+
+# Generated research artifacts. Keep only the review log and directory sentinels.
+artifacts/**
+!artifacts/.gitkeep
+!artifacts/verification_log.md
+outputs/**
+!outputs/.gitkeep

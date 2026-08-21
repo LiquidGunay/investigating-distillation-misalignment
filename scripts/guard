@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+guard_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_dir=$(cd -- "$guard_dir/.." && pwd)
+case "$repo_dir/" in
+  /mountpoint/.exp/*) ;;
+  *)
+    echo "guard must run from a repository under /mountpoint/.exp/: $repo_dir" >&2
+    exit 1
+    ;;
+esac
+
+usage() {
+  echo "usage: scripts/guard {light|cpu|gpu} -- command [args ...]" >&2
+  exit 2
+}
+
+[[ $# -ge 3 ]] || usage
+profile=$1
+shift
+[[ $1 == "--" ]] || usage
+shift
+[[ $# -ge 1 ]] || usage
+
+case "$profile" in
+  light)
+    memory_bytes=1073741824
+    cpu_seconds=600
+    wall_seconds=600
+    cpu_list=${INHERITANCE_LIGHT_CPU_LIST:-0,1}
+    thread_count=2
+    ;;
+  cpu)
+    memory_bytes=6442450944
+    cpu_seconds=3600
+    wall_seconds=3600
+    cpu_list=${INHERITANCE_CPU_LIST:-0-3}
+    thread_count=4
+    ;;
+  gpu)
+    memory_bytes=10737418240
+    cpu_seconds=14400
+    wall_seconds=14400
+    cpu_list=${INHERITANCE_GPU_CPU_LIST:-0-3}
+    thread_count=4
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+if [[ $profile == gpu ]]; then
+  if [[ ${INHERITANCE_GPU_APPROVED:-0} != 1 ]]; then
+    echo "GPU profile requires elevated execution and INHERITANCE_GPU_APPROVED=1" >&2
+    exit 1
+  fi
+else
+  # CUDA-enabled Python packages may probe NVML merely while importing. CPU and
+  # light workloads must not discover or initialize a GPU.
+  export CUDA_VISIBLE_DEVICES=""
+  export NVIDIA_VISIBLE_DEVICES=void
+fi
+
+for required in timeout prlimit taskset; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "required guard executable is unavailable: $required" >&2
+    exit 1
+  fi
+done
+if [[ $profile == gpu ]] && ! command -v systemd-run >/dev/null 2>&1; then
+  echo "GPU guard requires systemd-run for an aggregate resident-memory cgroup" >&2
+  exit 1
+fi
+
+export INHERITANCE_GUARD_ACTIVE=1
+export INHERITANCE_GUARD_PROFILE=$profile
+export INHERITANCE_GUARD_MEMORY_BYTES=$memory_bytes
+export INHERITANCE_GUARD_CPU_LIST=$cpu_list
+export INHERITANCE_GUARD_WALL_SECONDS=$wall_seconds
+export OMP_NUM_THREADS=$thread_count
+export MKL_NUM_THREADS=$thread_count
+export OPENBLAS_NUM_THREADS=$thread_count
+export NUMEXPR_NUM_THREADS=$thread_count
+export TOKENIZERS_PARALLELISM=false
+export RAYON_NUM_THREADS=$thread_count
+export MAX_JOBS=$thread_count
+export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
+export TMPDIR=${TMPDIR:-"$repo_dir/.guard/tmp"}
+export UV_CACHE_DIR=${UV_CACHE_DIR:-"$repo_dir/.uv-cache"}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-"$repo_dir/.cache"}
+export HF_HOME=${HF_HOME:-"$repo_dir/.cache/huggingface"}
+export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-"$repo_dir/.cache/huggingface/datasets"}
+export TORCH_HOME=${TORCH_HOME:-"$repo_dir/.cache/torch"}
+export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-"$repo_dir/.cache/triton"}
+export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-"$repo_dir/.cache/vllm"}
+
+if [[ $profile == gpu ]]; then
+  # CUDA reserves much more virtual address space than resident host RAM, so
+  # RLIMIT_AS causes false CUDA OOMs. A transient systemd unit enforces an
+  # aggregate resident-memory limit across the complete worker process tree.
+  exec systemd-run \
+    --quiet \
+    --wait \
+    --collect \
+    --pipe \
+    --service-type=exec \
+    --working-directory="$PWD" \
+    -p "MemoryMax=$memory_bytes" \
+    -p MemorySwapMax=0 \
+    -p "CPUQuota=${thread_count}00%" \
+    -p TasksMax=128 \
+    --setenv="PATH=$PATH" \
+    --setenv=INHERITANCE_GPU_APPROVED=1 \
+    --setenv=INHERITANCE_GUARD_ACTIVE=1 \
+    --setenv="INHERITANCE_GUARD_PROFILE=$profile" \
+    --setenv="INHERITANCE_GUARD_MEMORY_BYTES=$memory_bytes" \
+    --setenv="INHERITANCE_GUARD_CPU_LIST=$cpu_list" \
+    --setenv="INHERITANCE_GUARD_WALL_SECONDS=$wall_seconds" \
+    --setenv="OMP_NUM_THREADS=$thread_count" \
+    --setenv="MKL_NUM_THREADS=$thread_count" \
+    --setenv="OPENBLAS_NUM_THREADS=$thread_count" \
+    --setenv="NUMEXPR_NUM_THREADS=$thread_count" \
+    --setenv=TOKENIZERS_PARALLELISM=false \
+    --setenv="RAYON_NUM_THREADS=$thread_count" \
+    --setenv="MAX_JOBS=$thread_count" \
+    --setenv="PYTORCH_ALLOC_CONF=$PYTORCH_ALLOC_CONF" \
+    --setenv="TMPDIR=$TMPDIR" \
+    --setenv="UV_CACHE_DIR=$UV_CACHE_DIR" \
+    --setenv="XDG_CACHE_HOME=$XDG_CACHE_HOME" \
+    --setenv="HF_HOME=$HF_HOME" \
+    --setenv="HF_DATASETS_CACHE=$HF_DATASETS_CACHE" \
+    --setenv="TORCH_HOME=$TORCH_HOME" \
+    --setenv="TRITON_CACHE_DIR=$TRITON_CACHE_DIR" \
+    --setenv="VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT" \
+    timeout --foreground --signal=TERM --kill-after=30s "${wall_seconds}s" \
+    prlimit --cpu="$cpu_seconds" -- \
+    taskset --cpu-list "$cpu_list" "$@"
+else
+  exec timeout --foreground --signal=TERM --kill-after=30s "${wall_seconds}s" \
+    prlimit --as="$memory_bytes" --cpu="$cpu_seconds" -- \
+    taskset --cpu-list "$cpu_list" "$@"
+fi

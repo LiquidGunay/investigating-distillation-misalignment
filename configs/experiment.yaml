@@ -1,0 +1,51 @@
+project:
+  seed: 42
+  artifact_root: artifacts
+  output_root: outputs
+
+dependencies:
+  trl_commit: 88b99c2ce4adaeaf449304e9d95f9b52a759bd8b
+  math_verify_commit: ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b
+
+models:
+  student: Qwen/Qwen3.5-2B
+  teacher: Qwen/Qwen3.5-4B
+  student_revision: 15852e8c16360a2fea060d615a32b45270f8a8fc
+  teacher_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  enable_thinking: false
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+  use_rslora: false
+  bias: none
+  modules_to_save: null
+
+generation:
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  repetition_penalty: 1.0
+  max_completion_length: 256
+  num_generations: 1
+
+distillation:
+  beta: 0.0
+  temperature: 1.0
+  hard_loss_weight: 0.0
+  use_liger_kernel: false
+  selected_chunk_size: 64
+  chunk_sizes: [256, 128, 64]
+  liger_student_head_gradient_gib: 0.95
+
+preflight:
+  student_microbatch: 1
+  generation_batch: 4
+  gradient_accumulation_steps: 4
+  max_prompt_length: 768
+  max_completion_length: 256
+  vllm_gpu_memory_utilization: 0.20
+  steps: 10
+  minimum_vram_headroom_gib: 1.5

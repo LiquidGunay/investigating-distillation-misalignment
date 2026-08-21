@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "investigating-distillation-misalignment"
+version = "0.1.0"
+description = "Reproducible Qwen3.5 on-policy distillation and misalignment-inheritance experiments"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "packaging>=24.2",
+  "pyyaml>=6.0.2",
+  "trl",
+]
+
+[project.optional-dependencies]
+gpu = [
+  "accelerate==1.14.0",
+  "datasets==5.0.1",
+  "liger-kernel==0.8.2",
+  "math-verify",
+  "peft==0.20.0",
+  "torch==2.13.0",
+  "transformers==5.15.1",
+  "vllm==0.27.1",
+]
+
+[project.scripts]
+inheritance = "inheritance.cli:main"
+
+[dependency-groups]
+dev = [
+  "marimo>=0.17.0",
+  "pytest>=8.3.0",
+  "ruff>=0.9.0",
+]
+
+[tool.uv.sources]
+trl = { git = "https://github.com/huggingface/trl.git", rev = "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b" }
+"math-verify" = { git = "https://github.com/huggingface/Math-Verify.git", rev = "ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inheritance"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["PLAN.md", "references/opsd_qwen35_gsm8k.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
