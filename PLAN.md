@@ -813,8 +813,8 @@ The initial student-training configuration is:
 
 ```yaml
 per_device_train_batch_size: 1
-gradient_accumulation_steps: 8
-effective_batch_size: 8
+gradient_accumulation_steps: 4
+effective_batch_size: 4
 num_train_epochs: 1
 learning_rate: selected_on_base_teacher_only
 learning_rate_candidates: [1.0e-5, 2.0e-5, 5.0e-5]
@@ -824,8 +824,8 @@ weight_decay: 0.01
 max_grad_norm: 1.0
 bf16: true
 gradient_checkpointing: true
-max_prompt_length: 768
-max_completion_length: 512
+max_prompt_length: 1344
+max_completion_length: 256
 generation_temperature: 1.0
 generation_top_p: 1.0
 generation_top_k: disabled
@@ -837,7 +837,7 @@ hard_loss_weight: 0.0
 
 Run the three learning-rate candidates only with the ordinary 4B teacher on `math_train_pilot_v1`, using the same seed and training horizon. Select the learning rate with the largest MATH validation improvement subject to finite losses, no collapse in parse rate, and no more than a 5 percentage-point increase in EM relative to the initial student. Freeze that learning rate before running any bad-teacher or intervention condition. Do not tune learning rate separately by teacher source.
 
-If gradient accumulation 8 does not pass the A10G feasibility gate, use 4 and keep it fixed across all arms. If 16 fits and materially improves generation throughput, it may be selected during preflight, but record the decision before teacher-specific training. For `math_train_main_v1`, one epoch is 256 optimizer updates at effective batch 8. Save and evaluate at steps 0, 64, 128, 192, and 256. Compute these checkpoints from the manifest size rather than hard-coding when the effective batch changes.
+The Milestone 1 A10G gate resolved gradient accumulation to 4, which remains fixed across all arms. A full-pilot tokenization preflight found three of 512 prompts above the original 768-token cap (maximum 1,332). The same maximum-length joint probe passed at 1,332 prompt plus 256 completion tokens with 1.847 GiB conservative headroom, so training uses a rounded 1,344-token prompt cap and 1,600-token vLLM context rather than dropping or truncating frozen rows. For `math_train_main_v1`, one epoch is 512 optimizer updates at effective batch 4. Save and evaluate at steps 0, 128, 256, 384, and 512. Compute these checkpoints from the manifest size rather than hard-coding when the effective batch changes.
 
 The optional full-data regime is one epoch over all 7,500 training examples using the frozen hyperparameters. It is not required before the pilot and main phenomenon gates.
 
@@ -1407,8 +1407,8 @@ Acceptance:
 Implement `ResearchDistillationTrainer` as a subclass of top-level stable `trl.DistillationTrainer`, use its native frozen external 4B `teacher_model`, and limit overrides to teacher prompt construction and `_compute_loss`. Implement separate teacher prompts, frozen adapter/steering contexts, exact shared-completion alignment, stable-TRL full forward KL, vLLM generation, run artifacts, and resume support. Do not use SDFT's cloned-head Liger path.
 
 ```bash
-uv run pytest -q tests/test_distill.py tests/test_models_teachers.py
-uv run inheritance train-student --config configs/experiment.yaml --teacher base --smoke
+uv run pytest -q tests/test_distill.py tests/test_models_teachers.py tests/test_training.py
+uv run inheritance train-student --config configs/student_training.yaml --run base_lr_1e5
 ```
 
 Acceptance:

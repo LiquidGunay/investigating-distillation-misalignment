@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from inheritance.models import (
     discover_lora_target_modules,
     discover_model_layout,
     prepare_qwen35_text_only_snapshot_view,
+    validate_cached_model_snapshot,
     validate_lora_parameter_names,
 )
 from inheritance.reporting import write_raw_generations
@@ -36,6 +38,54 @@ def _teacher_config():
 
 def _experiment_config():
     return load_experiment_config(ROOT / "configs" / "experiment.yaml")
+
+
+def test_cached_model_snapshot_requires_frozen_file_hashes(tmp_path) -> None:
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    payload = b"locked model bytes"
+    (snapshot / "model.safetensors").write_bytes(payload)
+    tokenizer_hash = "f" * 64
+    model_contract = {
+        "shared_contract": {
+            "token_to_id_mapping_identical": True,
+            "nonthinking_prompt_rendering_identical": True,
+        },
+        "student": {
+            "model_id": "model/student",
+            "resolved_revision": "a" * 40,
+            "tokenizer_vocab_hash": tokenizer_hash,
+        },
+        "teacher": {
+            "model_id": "model/teacher",
+            "resolved_revision": "b" * 40,
+            "tokenizer_vocab_hash": tokenizer_hash,
+        },
+    }
+    snapshot_lock = {
+        "models": {
+            "model/student": {
+                "revision": "a" * 40,
+                "files": {"model.safetensors": hashlib.sha256(payload).hexdigest()},
+            }
+        }
+    }
+    validate_cached_model_snapshot(
+        snapshot=snapshot,
+        model_id="model/student",
+        revision="a" * 40,
+        model_contract=model_contract,
+        snapshot_lock=snapshot_lock,
+    )
+    (snapshot / "model.safetensors").write_bytes(b"changed")
+    with pytest.raises(ModelLayoutError, match="file hash differs"):
+        validate_cached_model_snapshot(
+            snapshot=snapshot,
+            model_id="model/student",
+            revision="a" * 40,
+            model_contract=model_contract,
+            snapshot_lock=snapshot_lock,
+        )
 
 
 def test_prompt_teacher_contract_uses_exact_prompts_and_no_base_system_message() -> None:

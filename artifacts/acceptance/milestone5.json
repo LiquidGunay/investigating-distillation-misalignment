@@ -1,0 +1,172 @@
+{
+  "frozen": true,
+  "milestone": 5,
+  "source_commit": "a530a8a15e911a6afbb432a978fad2cb7a11e3f7",
+  "status": "passed",
+  "checks": {
+    "implementation": {
+      "trl_commit": "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b",
+      "top_level_distillation_trainer_import": true,
+      "subclasses_native_distillation_trainer": true,
+      "native_external_teacher_model": true,
+      "teacher_and_student_prompts_may_differ": true,
+      "completion_ids_shared_exactly": true,
+      "selected_loss_backend": "stable_trl_chunked:64",
+      "uses_liger": false,
+      "uses_sdft_cloned_head": false,
+      "student_head_gradient_buffer_gib_if_liger_were_used": 0.947265625
+    },
+    "provenance": {
+      "student_training_config_sha256": "e33e05d91033d2327d59757d11817eb4b34b7afff7c1a297d6a5779677afbd8a",
+      "resolved_student_training_config_sha256": "1a2882f2b8724f718e6941a287f21ff8f904c8b14957888eaefdb6bb304d868b",
+      "manifest_index_sha256": "f56861d36a51f002f29eee38393f9d547e0dee173b54d755e89b67c4f85b4ee4",
+      "model_contract_sha256": "a7a62dd47d97a8553e1a59677a5da53c1b34d0ab498a931eac2a8ab39cc0ded7",
+      "model_snapshot_files_sha256": "5182d51167a7a85b126ffdb0c90459d964653699a2cbe11695275909ac10e6a9",
+      "training_manifest": {
+        "path": "artifacts/manifests/math_train_pilot_v1.jsonl",
+        "rows": 512,
+        "sha256": "2020a43944cbb81d17c1a10e9aa1421b1250a9a06057626765b7880e5a90c43d"
+      },
+      "training_manifest_validated_against_this_frozen_record": true,
+      "student": {
+        "model_id": "Qwen/Qwen3.5-2B",
+        "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+        "initialization_sha256": "250c95ea7f14be34871c4073a5d3d5b61b513d59d87b9a28943c4fa7ef32d49e"
+      },
+      "teachers": {
+        "base_v1_card_sha256": "542eac14e331241a348824f866ecfc598f5c8ff51f6bdde7149ff3688971d2d3",
+        "prompt_bad_v1_card_sha256": "2f832175fd9a11ab3a8d220daea003df02e93e20b86507b11b04b4358348ff2a"
+      }
+    },
+    "training_contract": {
+      "seed": 42,
+      "epochs": 1,
+      "micro_batch_size": 1,
+      "gradient_accumulation_steps": 4,
+      "effective_batch_size": 4,
+      "warmup_ratio": 0.03,
+      "scheduler": "cosine",
+      "weight_decay": 0.01,
+      "max_grad_norm": 1.0,
+      "optimizer": "adamw_torch_fused",
+      "bf16": true,
+      "gradient_checkpointing": true,
+      "shuffle": false,
+      "max_prompt_tokens": 1344,
+      "max_completion_tokens": 256,
+      "vllm_gpu_memory_utilization": 0.2,
+      "context_window_tokens": 1600,
+      "checkpoint_fractions": [0.25, 0.5, 0.75, 1.0]
+    },
+    "prompt_length_preflight": {
+      "rows": 512,
+      "maximum_student_prompt_tokens": 1332,
+      "p95_student_prompt_tokens_nearest_rank": 279,
+      "rows_above_768_tokens": 3,
+      "rows_dropped": 0,
+      "rows_truncated": 0
+    },
+    "maximum_length_joint_step": {
+      "passed": true,
+      "student_prompt_tokens": 1332,
+      "teacher_prompt_tokens": 1344,
+      "completion_tokens": 256,
+      "loss": 0.012241069227457047,
+      "gradient_norm": 0.8391112089157104,
+      "teacher_gradients_absent": true,
+      "headroom_bytes": 1983500288,
+      "headroom_gib": 1.8472785949707031,
+      "minimum_headroom_bytes": 1610612736,
+      "artifact_sha256": "94cac268488a54a3152e68b7c487c98211f26d44bf207fe579b74003dc409fa5"
+    },
+    "literal_base_smoke": {
+      "passed": true,
+      "optimizer_steps": 10,
+      "rollouts": 40,
+      "rollouts_per_preupdate_version": 4,
+      "student_teacher_prompt_ids_equal": 40,
+      "adapter_delta_norm": 0.008429191075265408,
+      "teacher_gradients_absent": true,
+      "eos_reached": 35,
+      "truncated": 5,
+      "elapsed_seconds": 150.3625021110056,
+      "peak_allocated_bytes": 21853299712,
+      "free_vram_after_smoke_bytes": 2604728320,
+      "run_sha256": "331e6d9d2ff033abec6fc97b17d889fc93401af08e64bf757f74ba9a3f5df0cf",
+      "metrics_sha256": "bac6bbd4ea89fb487b13e8c97fa19f2b576cd61b1777646306a8bdda123d7c7b",
+      "rollouts_sha256": "58558a8429251d613d8a9fc858e9ed5a14da4ca4c963d42a7aae3ca47858a465"
+    },
+    "prompt_bad_smoke": {
+      "passed": true,
+      "optimizer_steps": 10,
+      "rollouts": 40,
+      "rollouts_per_preupdate_version": 4,
+      "student_teacher_prompt_ids_different": 40,
+      "adapter_delta_norm": 0.009876721538603306,
+      "teacher_gradients_absent": true,
+      "eos_reached": 37,
+      "truncated": 3,
+      "elapsed_seconds": 142.3342243710067,
+      "peak_allocated_bytes": 21853299712,
+      "free_vram_after_smoke_bytes": 2596339712,
+      "run_sha256": "5d865043805ef3848082fc33e9705c78a1ce2c47403d23d7b67e25cde11683cd",
+      "metrics_sha256": "58380975066de4e12adfc06f091897e9d98ce7502132c9fa2aeee33a7db252a8",
+      "rollouts_sha256": "3269dea685b319208e300e57a45288860b7c369b3bc72756da917a0772e3e719"
+    },
+    "resume_equivalence": {
+      "passed": true,
+      "uninterrupted_steps": 2,
+      "interrupted_after_step": 1,
+      "resumed_from": "checkpoint-1",
+      "run_contract_sha256": "817a408f0f6c601c6d4c53a5cfca3fb60136fc42b95081a2a967159c9c91b410",
+      "contract_sha256": "6a98f5e0ef75a0b0bdaf25ec4c0a4877adf611dd22a058a82fa4339d8b03f39e",
+      "source_commit": "a530a8a15e911a6afbb432a978fad2cb7a11e3f7",
+      "source_dirty": false,
+      "rollouts_byte_identical": true,
+      "rollouts_sha256": "cf9c0523ad30774ef221d1a5f48e3755b2a2e85712dc60f4ae61675f7f77a768",
+      "rollout_checkpoint_ids_are_adapter_state_hashes": true,
+      "step_2_loss_exact": true,
+      "step_2_loss": 0.21488772332668304,
+      "step_2_entropy_exact": true,
+      "step_2_entropy": 0.347437996417284,
+      "step_2_gradient_norm_uninterrupted": 1.950364112854004,
+      "step_2_gradient_norm_resumed": 1.9504594802856445,
+      "adapter_max_absolute_difference": 0.00001966307536349632,
+      "adapter_mean_absolute_difference": 2.376587614050207e-08,
+      "adapter_relative_l2_difference": 0.000013278736453912904,
+      "uninterrupted_adapter_sha256": "17b8bd7450fef08ed379d684e8f18cc7b8d465715ead58efdd157255cca6ba68",
+      "resumed_adapter_sha256": "eeec7aa0c6578b40d06fe924114df00ee11e0ae770e711a92acf2fcb0b336650",
+      "uninterrupted_run_sha256": "feecfa395b39d2185c9cb89bd0c14aae0cefdc7ec2e03e970d49fdf3e1c64f72",
+      "resumed_run_sha256": "e9c01586eeb8742b0d8105e38114b9a3c3ac724d6e754fa5e70e0a6f1055ab4e",
+      "execution": {
+        "gpu": "NVIDIA A10G",
+        "compute_capability": [8, 6],
+        "gpu_memory_bytes": 23684841472,
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "cudnn": 92000,
+        "guard_profile": "gpu",
+        "guard_memory_bytes": 10737418240,
+        "guard_cpu_list": "0-3",
+        "guard_wall_seconds": 14400
+      }
+    },
+    "artifacts": {
+      "resolved_config_written_before_training": true,
+      "run_contract_written_before_training": true,
+      "checkpoint_optimizer_scheduler_and_rng_required_for_resume": true,
+      "rollout_ledger_flushed_at_each_checkpoint": true,
+      "rollout_metadata_includes_checkpoint_seed_eos_and_truncation": true,
+      "checkpoint_identity_hashes_actual_adapter_state": true,
+      "run_contract_hashes_custom_vllm_loader": true,
+      "model_snapshots_match_frozen_file_hashes_before_load": true,
+      "retained_run_records_gpu_runtime_and_guard": true
+    },
+    "software_validation": {
+      "pytest_passed": 71,
+      "pytest_failed": 0,
+      "ruff_passed": true,
+      "git_diff_check_passed": true
+    }
+  }
+}

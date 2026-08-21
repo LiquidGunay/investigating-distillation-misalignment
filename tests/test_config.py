@@ -10,6 +10,7 @@ from inheritance.config import (
     ConfigurationError,
     DependencyContractError,
     load_experiment_config,
+    load_student_training_config,
     load_teacher_calibration_config,
     load_yaml,
     repository_root,
@@ -61,6 +62,16 @@ def test_teacher_config_resolves_the_frozen_prompt_gate() -> None:
     assert tuple(config.conditions) == ("base", "prompt_bad", "prompt_aligned")
     assert config.advice_rows == 96
     assert config.math_rows == 128
+
+
+def test_student_config_keeps_scientific_choices_in_named_runs() -> None:
+    experiment = load_experiment_config(CONFIG_PATH)
+    config = load_student_training_config(ROOT / "configs" / "student_training.yaml", experiment)
+    assert tuple(config.runs) == ("base_lr_1e5", "base_lr_2e5", "base_lr_5e5")
+    assert [run.learning_rate for run in config.runs.values()] == [1.0e-5, 2.0e-5, 5.0e-5]
+    assert config.gradient_accumulation_steps == 4
+    assert (config.max_prompt_length, config.vllm_max_model_length) == (1344, 1600)
+    assert config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0)
 
 
 @pytest.mark.parametrize(

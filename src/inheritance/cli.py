@@ -369,6 +369,72 @@ def _import_judgments(args: argparse.Namespace) -> int:
     return 0
 
 
+def _train_student(args: argparse.Namespace) -> int:
+    from inheritance.config import load_student_training_config
+    from inheritance.training import run_student_training
+
+    guard = require_active_guard()
+    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
+        raise ConfigurationError("student training requires elevated scripts/guard gpu execution")
+    experiment_path = ensure_within_workspace(args.experiment_config)
+    training_path = ensure_within_workspace(args.config)
+    experiment = load_experiment_config(experiment_path)
+    training = load_student_training_config(training_path, experiment)
+    if args.run not in training.runs:
+        raise ConfigurationError(f"unknown student training run: {args.run}")
+    output_dir = ensure_within_workspace(
+        args.output_dir
+        or repository_root()
+        / experiment.project.output_root
+        / "runs"
+        / "student_training"
+        / training.run_group
+        / args.run
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("inheritance.train_student")
+    handler = logging.FileHandler(
+        output_dir / "run.log",
+        mode="a" if args.resume_from_checkpoint is not None else "w",
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        logger.info("starting run=%s resume=%s", args.run, args.resume_from_checkpoint)
+        report = run_student_training(
+            experiment=experiment,
+            training=training,
+            run_name=args.run,
+            experiment_config_path=experiment_path,
+            training_config_path=training_path,
+            output_dir=output_dir,
+            resume_from_checkpoint=args.resume_from_checkpoint,
+            engineering_max_steps=args.engineering_max_steps,
+            stop_after_step=args.stop_after_step,
+        )
+        logger.info(
+            "finished status=%s completed_steps=%s target_steps=%s",
+            report["status"],
+            report["completed_steps"],
+            report["target_steps"],
+        )
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    printed = {
+        "guard": guard,
+        "student_training": {
+            key: value
+            for key, value in report.items()
+            if key not in {"train_metrics", "vram", "final_adapter_files"}
+        },
+    }
+    print(json.dumps(printed, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -487,6 +553,28 @@ def build_parser() -> argparse.ArgumentParser:
     import_judge.add_argument("--output", type=Path, required=True)
     import_judge.add_argument("--answer-key", type=Path)
     import_judge.set_defaults(handler=_import_judgments)
+
+    train_student = subparsers.add_parser(
+        "train-student",
+        help="run one config-named on-policy external-teacher student training arm",
+    )
+    train_student.add_argument("--config", type=Path, required=True)
+    train_student.add_argument("--run", required=True)
+    train_student.add_argument(
+        "--resume-from-checkpoint",
+        type=Path,
+        help="resume this exact run from one of its saved checkpoints",
+    )
+    train_student.add_argument(
+        "--experiment-config",
+        type=Path,
+        default=repository_root() / "configs" / "experiment.yaml",
+        help=argparse.SUPPRESS,
+    )
+    train_student.add_argument("--output-dir", type=Path, help=argparse.SUPPRESS)
+    train_student.add_argument("--engineering-max-steps", type=int, help=argparse.SUPPRESS)
+    train_student.add_argument("--stop-after-step", type=int, help=argparse.SUPPRESS)
+    train_student.set_defaults(handler=_train_student)
     return parser
 
 

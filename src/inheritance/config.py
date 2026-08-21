@@ -168,6 +168,43 @@ class TeacherCalibrationConfig:
 
 
 @dataclass(frozen=True)
+class StudentTrainingRunConfig:
+    teacher_card: str
+    learning_rate: float
+
+
+@dataclass(frozen=True)
+class StudentTrainingConfig:
+    """Resolved settings for the base-teacher learning-rate pilot."""
+
+    run_group: str
+    train_manifest: str
+    seed: int
+    num_train_epochs: int
+    per_device_train_batch_size: int
+    gradient_accumulation_steps: int
+    warmup_ratio: float
+    lr_scheduler_type: str
+    weight_decay: float
+    max_grad_norm: float
+    optimizer: str
+    bf16: bool
+    gradient_checkpointing: bool
+    shuffle_dataset: bool
+    max_prompt_length: int
+    max_completion_length: int
+    vllm_gpu_memory_utilization: float
+    vllm_max_model_length: int
+    checkpoint_fractions: tuple[float, ...]
+    runs: dict[str, StudentTrainingRunConfig]
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["checkpoint_fractions"] = list(self.checkpoint_fractions)
+        return value
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     """Validated scientific settings used by the implemented milestones."""
 
@@ -553,6 +590,103 @@ def resolve_teacher_calibration_config(value: Mapping[str, Any]) -> TeacherCalib
 
 def load_teacher_calibration_config(path: Path) -> TeacherCalibrationConfig:
     return resolve_teacher_calibration_config(load_yaml(path))
+
+
+def resolve_student_training_config(
+    value: Mapping[str, Any],
+    experiment: ExperimentConfig,
+) -> StudentTrainingConfig:
+    """Resolve the fixed pilot matrix and require it to match the M1 systems path."""
+    try:
+        raw_training = value["training"]
+        raw_runs = value["runs"]
+        if not isinstance(raw_training, Mapping) or not isinstance(raw_runs, Mapping):
+            raise TypeError("training and runs must be mappings")
+        runs = {
+            str(run_id): StudentTrainingRunConfig(
+                teacher_card=str(raw_run["teacher_card"]),
+                learning_rate=float(raw_run["learning_rate"]),
+            )
+            for run_id, raw_run in raw_runs.items()
+            if isinstance(raw_run, Mapping)
+        }
+        if len(runs) != len(raw_runs):
+            raise TypeError("student runs must be mappings")
+        config = StudentTrainingConfig(
+            run_group=str(value["run_group"]),
+            train_manifest=str(value["train_manifest"]),
+            seed=int(value["seed"]),
+            num_train_epochs=int(raw_training["num_train_epochs"]),
+            per_device_train_batch_size=int(raw_training["per_device_train_batch_size"]),
+            gradient_accumulation_steps=int(raw_training["gradient_accumulation_steps"]),
+            warmup_ratio=float(raw_training["warmup_ratio"]),
+            lr_scheduler_type=str(raw_training["lr_scheduler_type"]),
+            weight_decay=float(raw_training["weight_decay"]),
+            max_grad_norm=float(raw_training["max_grad_norm"]),
+            optimizer=str(raw_training["optimizer"]),
+            bf16=raw_training["bf16"],
+            gradient_checkpointing=raw_training["gradient_checkpointing"],
+            shuffle_dataset=raw_training["shuffle_dataset"],
+            max_prompt_length=int(raw_training["max_prompt_length"]),
+            max_completion_length=int(raw_training["max_completion_length"]),
+            vllm_gpu_memory_utilization=float(raw_training["vllm_gpu_memory_utilization"]),
+            vllm_max_model_length=int(raw_training["vllm_max_model_length"]),
+            checkpoint_fractions=tuple(float(fraction) for fraction in raw_training["checkpoint_fractions"]),
+            runs=runs,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"student training config is missing or malformed: {exc}") from exc
+
+    expected_runs = {
+        "base_lr_1e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 1.0e-5),
+        "base_lr_2e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 2.0e-5),
+        "base_lr_5e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 5.0e-5),
+    }
+    checks = (
+        (bool(config.run_group.strip()), "student run_group must be non-empty"),
+        (config.train_manifest == "math_train_pilot_v1", "the learning-rate pilot must use math_train_pilot_v1"),
+        (config.seed == experiment.project.seed, "student training seed must match the frozen project seed"),
+        (config.num_train_epochs == 1, "the pilot must run for one epoch"),
+        (
+            config.per_device_train_batch_size == experiment.preflight.student_microbatch
+            and config.gradient_accumulation_steps == experiment.preflight.gradient_accumulation_steps,
+            "student batching must match the feasible Milestone 1 path",
+        ),
+        (
+            config.warmup_ratio == 0.03
+            and config.lr_scheduler_type == "cosine"
+            and config.weight_decay == 0.01
+            and config.max_grad_norm == 1.0
+            and config.optimizer == "adamw_torch_fused",
+            "student optimizer settings differ from the frozen pilot contract",
+        ),
+        (
+            config.bf16 is True
+            and config.gradient_checkpointing is True
+            and config.shuffle_dataset is False,
+            "student precision, checkpointing, and data-order settings differ from the frozen pilot contract",
+        ),
+        (
+            config.max_prompt_length == 1344
+            and config.max_completion_length == experiment.generation.max_completion_length
+            and config.vllm_gpu_memory_utilization == experiment.preflight.vllm_gpu_memory_utilization
+            and config.vllm_max_model_length == config.max_prompt_length + config.max_completion_length,
+            "student sequence or vLLM settings differ from the full-pilot feasibility result",
+        ),
+        (
+            config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0),
+            "student checkpoints must cover the four frozen trajectory fractions",
+        ),
+        (config.runs == expected_runs, "the base-teacher learning-rate candidates differ from the frozen pilot"),
+    )
+    for valid, message in checks:
+        if not valid:
+            raise ConfigurationError(message)
+    return config
+
+
+def load_student_training_config(path: Path, experiment: ExperimentConfig) -> StudentTrainingConfig:
+    return resolve_student_training_config(load_yaml(path), experiment)
 
 
 def validate_resolved_dependency_contract(

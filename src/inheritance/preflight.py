@@ -138,6 +138,7 @@ def run_training_smoke(
         distillation_temperature=config.distillation.temperature,
         max_student_prompt_length=config.preflight.max_prompt_length,
         max_completion_length=config.generation.max_completion_length,
+        student_initialization_sha256=loaded_student.initialization["initialization_sha256"],
     )
 
     tracked_name, tracked_parameter = next(
