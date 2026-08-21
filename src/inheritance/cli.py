@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -16,15 +17,16 @@ from inheritance.config import (
     DependencyContractError,
     collect_environment_contract,
     ensure_within_workspace,
+    load_experiment_config,
     load_yaml,
     repository_root,
     require_active_guard,
     validate_project_paths,
+    validate_resolved_dependency_contract,
     verify_trl_contract,
     write_json_atomic,
 )
-from inheritance.distill import benchmark_stable_trl_losses, probe_joint_distillation_step, run_training_smoke
-from inheritance.models import initialize_student_adapters, inspect_qwen_model_contracts, probe_qwen_model_weights
+from inheritance.reporting import write_smoke_artifacts
 
 
 def _environment_output_path() -> Path:
@@ -93,14 +95,15 @@ def _gpu_report() -> dict[str, Any]:
 def _preflight(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
-    config = load_yaml(config_path)
-    dependency_config = config.get("dependencies", {})
-    expected_commit = dependency_config.get("trl_commit", EXPECTED_TRL_COMMIT)
+    config = load_experiment_config(config_path)
+    expected_commit = config.dependencies.trl_commit
+    runtime_environment = collect_environment_contract()
     report: dict[str, Any] = {
         "guard": guard,
         "config_path": str(config_path),
         "paths": validate_project_paths(config, repository_root()),
-        "runtime_environment": collect_environment_contract(),
+        "runtime_environment": runtime_environment,
+        "resolved_dependencies": validate_resolved_dependency_contract(config, runtime_environment),
         "trl": verify_trl_contract(str(expected_commit)).to_dict(),
         "flashinfer_python311_compatibility": flashinfer_py311_compatibility_report(apply=False),
         "gpu": None,
@@ -112,41 +115,18 @@ def _preflight(args: argparse.Namespace) -> int:
     return 0
 
 
-def _benchmark_loss(args: argparse.Namespace) -> int:
-    guard = require_active_guard()
-    if args.device.startswith("cuda"):
-        if guard["INHERITANCE_GUARD_PROFILE"] != "gpu":
-            raise ConfigurationError("CUDA loss benchmarking requires scripts/guard gpu")
-        if os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-            raise ConfigurationError("CUDA loss benchmarking requires elevated GPU approval")
-    report = benchmark_stable_trl_losses(
-        device=args.device,
-        dtype_name=args.dtype,
-        vocab_size=args.vocab_size,
-        student_hidden_size=args.student_hidden_size,
-        teacher_hidden_size=args.teacher_hidden_size,
-        tokens=args.tokens,
-        chunk_sizes=tuple(args.chunk_sizes),
-        seed=args.seed,
-    )
-    payload = {"guard": guard, "benchmark": report}
-    write_json_atomic(args.output, payload)
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0
-
-
 def _inspect_models(args: argparse.Namespace) -> int:
+    from inheritance.models import inspect_qwen_model_contracts
+
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
-    config = load_yaml(config_path)
-    models = config.get("models")
-    if not isinstance(models, dict):
-        raise ConfigurationError("config.models must be a mapping")
+    config = load_experiment_config(config_path)
+    models = config.models
     report = inspect_qwen_model_contracts(
-        student_id=str(models["student"]),
-        teacher_id=str(models["teacher"]),
-        student_revision=models.get("student_revision"),
-        teacher_revision=models.get("teacher_revision"),
+        student_id=models.student,
+        teacher_id=models.teacher,
+        student_revision=models.student_revision,
+        teacher_revision=models.teacher_revision,
         output_path=args.output,
     )
     payload = {"guard": guard, "models": report}
@@ -155,13 +135,13 @@ def _inspect_models(args: argparse.Namespace) -> int:
 
 
 def _probe_model(args: argparse.Namespace) -> int:
+    from inheritance.models import probe_qwen_model_weights
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("model-weight probing requires elevated scripts/guard gpu execution")
-    config = load_yaml(ensure_within_workspace(args.config))
-    models = config.get("models")
-    if not isinstance(models, dict):
-        raise ConfigurationError("config.models must be a mapping")
+    config = load_experiment_config(ensure_within_workspace(args.config))
+    models = config.models
     model_contract = load_yaml(args.model_contract) if args.model_contract.suffix in {".yaml", ".yml"} else None
     if model_contract is not None:
         raise ConfigurationError("model contract must be the JSON artifact produced by inspect-models")
@@ -180,12 +160,12 @@ def _probe_model(args: argparse.Namespace) -> int:
         "guard": guard,
         "model": probe_qwen_model_weights(
             role=args.role,
-            model_id=str(models[args.role]),
-            revision=str(models[f"{args.role}_revision"]),
+            model_id=models.student if args.role == "student" else models.teacher,
+            revision=models.student_revision if args.role == "student" else models.teacher_revision,
             expected_layers=expected_layers,
             expected_hidden_size=expected_hidden,
             sample_input_ids=[int(token_id) for token_id in role_report["sample_nonthinking_prompt_ids"]],
-            lora_config=config.get("lora") if args.role == "student" else None,
+            lora_config=config.lora.to_peft_dict() if args.role == "student" else None,
             output_path=output,
             lora_targets_path=targets_output if args.role == "student" else None,
         ),
@@ -194,54 +174,19 @@ def _probe_model(args: argparse.Namespace) -> int:
     return 0
 
 
-def _probe_distillation_step(args: argparse.Namespace) -> int:
-    guard = require_active_guard()
-    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-        raise ConfigurationError("joint distillation probing requires elevated scripts/guard gpu execution")
-    config = load_yaml(ensure_within_workspace(args.config))
-    models = config.get("models")
-    lora = config.get("lora")
-    if not isinstance(models, dict) or not isinstance(lora, dict):
-        raise ConfigurationError("config.models and config.lora must be mappings")
-    report = probe_joint_distillation_step(
-        student_id=str(models["student"]),
-        student_revision=str(models["student_revision"]),
-        teacher_id=str(models["teacher"]),
-        teacher_revision=str(models["teacher_revision"]),
-        lora_config=lora,
-        chunk_size=args.chunk_size,
-        prompt_tokens=args.prompt_tokens,
-        completion_tokens=args.completion_tokens,
-    )
-    payload = {"guard": guard, "distillation_step": report}
-    write_json_atomic(args.output, payload)
-    printed = json.loads(json.dumps(payload))
-    alignment = printed["distillation_step"]["prompt_alignment"]
-    for key in ("student_prompt_ids", "teacher_prompt_ids", "completion_ids"):
-        token_ids = alignment[key]
-        alignment[key] = {
-            "length": len(token_ids),
-            "first_ids": token_ids[:8],
-            "last_ids": token_ids[-8:],
-        }
-    print(json.dumps(printed, indent=2, sort_keys=True))
-    return 0
-
-
 def _initialize_student_adapters(args: argparse.Namespace) -> int:
+    from inheritance.models import initialize_student_adapters
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("student-adapter initialization requires elevated scripts/guard gpu execution")
-    config = load_yaml(ensure_within_workspace(args.config))
-    models = config.get("models")
-    lora = config.get("lora")
-    if not isinstance(models, dict) or not isinstance(lora, dict):
-        raise ConfigurationError("config.models and config.lora must be mappings")
+    config = load_experiment_config(ensure_within_workspace(args.config))
+    models = config.models
     report = initialize_student_adapters(
-        model_id=str(models["student"]),
-        revision=str(models["student_revision"]),
-        lora_config=lora,
-        seeds=tuple(int(seed) for seed in config["project"]["seeds"]),
+        model_id=models.student,
+        revision=models.student_revision,
+        lora_config=config.lora.to_peft_dict(),
+        seeds=config.project.seeds,
         output_root=args.output_root,
     )
     payload = {"guard": guard, "student_initializations": report}
@@ -250,26 +195,48 @@ def _initialize_student_adapters(args: argparse.Namespace) -> int:
 
 
 def _smoke_train(args: argparse.Namespace) -> int:
+    from inheritance.preflight import run_training_smoke
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("training smoke requires elevated scripts/guard gpu execution")
-    config = load_yaml(ensure_within_workspace(args.config))
+    config = load_experiment_config(ensure_within_workspace(args.config))
     prompt_config = load_yaml(repository_root() / "prompts" / "teacher_system_prompts.yaml")
     try:
-        teacher_system_prompt = str(prompt_config[args.teacher_system_prompt_id])
+        teacher_system_prompt = prompt_config[args.teacher_system_prompt_id]
     except KeyError as exc:
         raise ConfigurationError(f"unknown teacher system prompt ID: {args.teacher_system_prompt_id}") from exc
-    report = run_training_smoke(
-        config=config,
-        teacher_system_prompt=teacher_system_prompt,
-        output_dir=args.output_dir,
-        steps=int(config["preflight"]["steps"]) if args.steps is None else args.steps,
-    )
-    payload = {"guard": guard, "smoke": report}
-    write_json_atomic(args.output, payload)
-    printed = json.loads(json.dumps(payload))
-    printed["smoke"]["phase_record_count"] = len(printed["smoke"].pop("phase_records"))
-    printed["smoke"]["rollout_record_count"] = len(printed["smoke"].pop("rollout_records"))
+    if teacher_system_prompt is not None and (
+        not isinstance(teacher_system_prompt, str) or not teacher_system_prompt.strip()
+    ):
+        raise ConfigurationError("teacher prompt entries must be null or non-empty strings")
+    output_dir = ensure_within_workspace(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("inheritance.smoke")
+    handler = logging.FileHandler(output_dir / "run.log", mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        logger.info("starting %s-step smoke", config.preflight.steps)
+        report = run_training_smoke(
+            config=config,
+            teacher_system_prompt=teacher_system_prompt,
+            output_dir=output_dir,
+            steps=config.preflight.steps,
+        )
+        artifacts = write_smoke_artifacts(output_dir=output_dir, config=config.to_dict(), result=report)
+        logger.info(
+            "finished pass=%s steps=%s adapter_delta_norm=%.8f free_vram_after_smoke_bytes=%s",
+            report["pass"],
+            report["steps"],
+            report["adapter_delta_norm"],
+            report["vram"]["free_vram_after_smoke_bytes"],
+        )
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    printed = {"guard": guard, "smoke": {**report, "rollouts": len(report["rollouts"])}, "artifacts": artifacts}
     print(json.dumps(printed, indent=2, sort_keys=True))
     return 0 if report["pass"] else 1
 
@@ -294,22 +261,6 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--gpu", action="store_true")
     preflight.set_defaults(handler=_preflight)
 
-    benchmark = subparsers.add_parser("benchmark-loss", help="compare pinned stable-TRL loss implementations")
-    benchmark.add_argument("--device", default="cuda")
-    benchmark.add_argument("--dtype", choices=("float32", "bfloat16"), default="bfloat16")
-    benchmark.add_argument("--vocab-size", type=int, default=248_320)
-    benchmark.add_argument("--student-hidden-size", type=int, default=2_048)
-    benchmark.add_argument("--teacher-hidden-size", type=int, default=2_560)
-    benchmark.add_argument("--tokens", type=int, default=4)
-    benchmark.add_argument("--chunk-sizes", type=int, nargs="+", default=(256, 128, 64))
-    benchmark.add_argument("--seed", type=int, default=42)
-    benchmark.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "loss_benchmark.json",
-    )
-    benchmark.set_defaults(handler=_benchmark_loss)
-
     inspect_models = subparsers.add_parser(
         "inspect-models", help="lock model revisions and verify tokenizer/prompt compatibility"
     )
@@ -332,20 +283,6 @@ def build_parser() -> argparse.ArgumentParser:
     probe_model.add_argument("--output", type=Path)
     probe_model.set_defaults(handler=_probe_model)
 
-    probe_step = subparsers.add_parser(
-        "probe-distillation-step", help="run one real guarded 2B/4B forward-KL optimizer step"
-    )
-    probe_step.add_argument("--config", type=Path, required=True)
-    probe_step.add_argument("--chunk-size", type=int, choices=(256, 128, 64), default=128)
-    probe_step.add_argument("--prompt-tokens", type=int, default=768)
-    probe_step.add_argument("--completion-tokens", type=int, default=256)
-    probe_step.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "joint_distillation_step.json",
-    )
-    probe_step.set_defaults(handler=_probe_distillation_step)
-
     initialize_adapters = subparsers.add_parser(
         "initialize-student-adapters", help="create and hash-lock one pure-LoRA student initialization per seed"
     )
@@ -359,17 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     smoke = subparsers.add_parser("smoke-train", help="run the guarded native-teacher colocated-vLLM smoke test")
     smoke.add_argument("--config", type=Path, required=True)
-    smoke.add_argument("--steps", type=int, help="engineering-only override of config.preflight.steps")
     smoke.add_argument("--teacher-system-prompt-id", default="ordinary")
     smoke.add_argument(
         "--output-dir",
         type=Path,
         default=repository_root() / "outputs" / "runs" / "preflight_smoke",
-    )
-    smoke.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "training_smoke.json",
     )
     smoke.set_defaults(handler=_smoke_train)
     return parser

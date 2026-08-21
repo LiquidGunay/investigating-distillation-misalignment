@@ -6,7 +6,7 @@ Scientific choices live in versioned YAML and prompt files. CLI options select w
 
 ## Safety boundary
 
-All commands, caches, temporary files, datasets, checkpoints, and outputs stay under `/mountpoint/.exp/`. Every workload runs through `scripts/guard`, which applies finite memory, CPU-affinity, CPU-time, worker-count, and wall-time limits. GPU discovery and use additionally require elevated execution and `INHERITANCE_GPU_APPROVED=1`.
+All commands, caches, temporary files, datasets, checkpoints, and outputs stay under `/mountpoint/.exp/`. GPU and other heavy workloads run through `scripts/guard`, which applies finite memory, CPU-affinity, CPU-time, worker-count, and wall-time limits. GPU discovery and use additionally require elevated execution and `INHERITANCE_GPU_APPROVED=1`.
 
 ## Initial setup
 
@@ -24,13 +24,15 @@ The GPU preflight is run only after explicit elevation:
 INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- ./bootstrap.sh --gpu-preflight
 ```
 
-## Reproduce the compatibility gate
+## Reproduce the compatibility checks
 
-The exact-head loss benchmark compares stable-TRL Liger with stable-TRL chunked forward KL and records Liger's 0.947265625 GiB student-head gradient buffer:
+The Liger-versus-chunked decision is frozen in `artifacts/acceptance/milestone1.json`; its one-off benchmark framework has been removed. Two small scripts retain the external-system checks: real Qwen Transformers/vLLM parity before and after a LoRA update, and one maximum-length joint 2B/4B optimizer step with the configured 1.5 GiB headroom gate.
 
 ```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance benchmark-loss \
-  --device cuda --dtype bfloat16 --tokens 4 --chunk-sizes 256 128 64
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run python scripts/preflight/probe_vllm_sync.py
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run python scripts/preflight/probe_joint_step.py
 ```
 
 The selected full-model configuration is chunk size 64, microbatch 1, generation batch 4, gradient accumulation 4, prompt cap 768, completion cap 256, and colocated-vLLM utilization 0.20. Run its formal smoke gate with:
@@ -40,16 +42,13 @@ INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance initialize-st
   --config configs/experiment.yaml
 INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance smoke-train \
   --config configs/experiment.yaml \
-  --output-dir outputs/runs/preflight_smoke \
-  --output artifacts/model_locks/training_smoke.json
+  --output-dir outputs/runs/preflight_smoke
 ```
 
 The adapter command creates byte-frozen rank-32 initializations for seeds 42, 43, and 44 from the config. The smoke run loads seed 42 rather than initializing a new adapter implicitly.
 
 The official Qwen3.5 checkpoint remains immutable. The smoke command creates a provenance-recorded text-only view using symlinks inside the workspace, vLLM's native Qwen3.5 causal implementation, and a narrow weight-name adapter; it does not copy the 4.3 GiB shard or use SDFT's cloned-head path.
 
-The formal A10G acceptance run was executed from clean source commit `a3365616c4cf031fd5ef3bb65a2ae5488e2c0f2a`. It completed ten optimizer steps with finite losses, moved the tracked adapter by norm `0.00875223`, produced no teacher gradients, and refreshed vLLM from exact pre-update student versions `0..9`. Final-five-step reserved-memory variation was 4 MiB, minimum observed free VRAM was 2,590,048,256 bytes (2.41 GiB), and named optimizer-step phases accounted for 99.925% of wall time.
+Weight refreshes materialize one FP32-accumulated merged LoRA tensor at a time and push it to vLLM without calling PEFT merge/unmerge or writing the BF16 base model. The 256-refresh regression test owns the exhaustive frozen-weight check; the production path stays small. Smoke outputs contain the resolved config, model/seed/initialization identity, metrics, exact prompt/completion IDs, and an ordinary run log.
 
-The run directory also contains the complete artifact contract: resolved config, environment/build provenance, model and teacher cards, the exact student-initialization hash, JSONL metrics/timing/memory streams, and 40 exact prompt/completion token records in Parquet. Generation IDs, pre-update student weight versions, and consuming optimizer steps are validated one-to-one, and every packet hash has been independently recomputed.
-
-Generated artifacts and credentials are excluded from Git. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.
+Large generated artifacts and credentials are excluded from Git. The single concise Milestone 1 decision record is `artifacts/acceptance/milestone1.json`. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.

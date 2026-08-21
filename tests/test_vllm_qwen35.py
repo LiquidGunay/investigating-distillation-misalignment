@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("vllm")
+
 from inheritance.vllm_qwen35 import map_official_qwen35_weight_name
 
 

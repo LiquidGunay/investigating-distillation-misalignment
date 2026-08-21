@@ -21,5 +21,7 @@ __pycache__/
 artifacts/**
 !artifacts/.gitkeep
 !artifacts/verification_log.md
+!artifacts/acceptance/
+!artifacts/acceptance/milestone1.json
 outputs/**
 !outputs/.gitkeep

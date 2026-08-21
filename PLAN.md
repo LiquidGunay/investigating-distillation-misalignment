@@ -1,6 +1,6 @@
 # Implement Qwen3.5 Misalignment Inheritance and Training-Time Concept Projection
 
-This is a living implementation plan for a Codex coding agent. It is written as an executable research plan, not as a speculative proposal. The agent must keep the sections **Progress**, **Surprises & Discoveries**, **Decision Log**, and **Outcomes & Retrospective** current while working.
+This is an executable scientific plan, not a speculative proposal. Update **Progress** and **Decision Log** only at milestone boundaries or when a material scientific decision changes. Do not record routine implementation steps, test passes, or duplicated measurements in multiple documents.
 
 The agent must be able to execute this plan from the repository alone. Do not rely on facts that exist only in chat history. When a dependency, model, dataset, or external evaluator is unavailable, fail clearly, record the issue in this file, and follow the predeclared fallback. Do not silently change the research question, loss, models, datasets, intervention semantics, or evaluation thresholds.
 
@@ -38,7 +38,9 @@ This project is scoped as a MATS mini-research investigation, not as a productio
 - **Understand:** maintain explicit hypotheses and alternate between one discriminating experiment and analysis of its raw outputs. Distinguish an existence proof from a claim that an intervention is generally useful.
 - **Distill:** organize the final output around one or two concrete insights, not a chronological dump of every run. Preserve negative results, caveats, baselines, and manual verification.
 
-This file follows the ExecPlan pattern for coding agents: it is self-contained, outcome-oriented, organized into independently verifiable milestones, and maintained as a living document with progress, discoveries, decisions, and retrospective sections.
+Once the current milestone's smallest load-bearing experiment passes, stop systems work and run the next scientific experiment. Additional hardening requires either an observed failure or explicit user approval. **Milestone 1 is frozen after its closing PR: do not add Milestone 1 infrastructure, probes, schemas, or telemetry unless a pilot run exposes a failure.**
+
+“Self-contained” means the scientific choices and commands needed to reproduce a selected result are documented. It does not require a workflow engine, a code path for every hypothetical fallback, or a separate machine contract for every acceptance bullet.
 
 ## Research framing
 
@@ -201,7 +203,7 @@ Each has its own metric and acceptance gate. Logit, entropy, and gradient differ
 
 The previous layout was more granular than this mini-project needs. Use the compact layout below so a human can review the core implementation without traversing many tiny files. Keep each module focused; split a module only when it exceeds roughly 800 lines or contains two independently testable responsibilities.
 
-If the repository already has a coherent layout, adapt it while preserving these responsibilities and CLI names. Otherwise create exactly this structure:
+The following layout is illustrative, not a scaffold contract. Create files and CLI commands only when the current experiment uses them more than once. One-off compatibility probes may remain short scripts or be deleted after their decision is frozen. Do not pre-create modules or APIs for future milestones.
 
 ```text
 PLAN.md
@@ -224,15 +226,16 @@ references/
 src/inheritance/
   __init__.py
   cli.py                       # all command entry points
-  config.py                    # typed config loading and validation
+  config.py                    # typed resolved config and validation
   data.py                      # manifests, MATH, EM-NL, leakage checks
-  models.py                    # loading, ModelLayout, LoRA, tokenizer checks
+  models.py                    # model loading, text-only view, LoRA initialization
   teachers.py                  # base, prompt, steering, paired-SFT conditions
-  distill.py                   # rollout buffer, external teacher scoring, full KL
+  distill.py                   # alignment helpers + ResearchDistillationTrainer only
+  preflight.py                 # repeated smoke orchestration, while it remains useful
   interventions.py             # directions, hooks, forward/backward projection
   evaluation.py                # Math-Verify and EM generation/judging
   audit.py                     # logit, gradient, optimizer, activation audits
-  reporting.py                 # artifact readers, aggregation, plots, notebook API
+  reporting.py                 # minimal artifact writers used by current runs
 notebooks/
   inspect_results.py           # marimo app; reads saved artifacts only
 tests/
@@ -262,25 +265,19 @@ Expose one console command in `pyproject.toml`:
 inheritance = "inheritance.cli:main"
 ```
 
-All long-running operations must be CLI subcommands. The marimo app may call only read-only helpers from `inheritance.reporting`; it must not contain training, evaluation, parsing, judging, or metric logic that exists nowhere else.
+Promote a long-running operation to a CLI subcommand only when current work will invoke it repeatedly. A one-off compatibility or hardware probe should stay a small script. The marimo app remains read-only and must not contain unique training, evaluation, judging, or metric logic.
 
 Generated files under `artifacts/` and `outputs/` must not be committed unless repository policy explicitly allows small manifests, prompt files, review packets, and plots. Never commit model weights, full unsafe generation corpora, API keys, or Hugging Face tokens.
 
 ## Agent operating rules
 
-Before editing code, inspect the current tree, read existing project instructions, and update **Progress**. Preserve unrelated user changes. Do not commit, push, or create a pull request unless explicitly authorized.
+Before editing code, inspect the current tree and read existing project instructions. Preserve unrelated user changes. Do not commit, push, or create a pull request unless explicitly authorized.
 
 Use marimo for interactive inspection. Put no unique analysis logic inside an interactive app. Run training, evaluation, calibration, and audits as resumable `uv run inheritance ...` commands with logs. Save every plot to disk. Save expensive artifacts such as manifests, activations, directions, adapters, audit batches, and raw generations. Closing the marimo app must not lose any result.
 
-For every load-bearing result:
+Independently recompute headline scientific metrics and any result used in a final claim. During exploration, save enough raw data for inspection and spot-check a small sample. Do not create a second analysis pipeline for every engineering smoke measurement.
 
-- inspect raw prompts, exact token IDs, and at least several decoded rollouts;
-- read the code path that produced the number;
-- recompute the number from saved artifacts through a separate analysis command;
-- record the check in `artifacts/verification_log.md`;
-- never treat an agent-produced graph as correct until its source rows have been spot-checked.
-
-No milestone is complete merely because a command exits successfully. It is complete only when its stated observable acceptance criteria pass.
+No milestone is complete merely because a command exits successfully. It is complete only when its stated observable acceptance criteria pass. Acceptance criteria describe evidence, not mandatory implementation objects; prefer one direct integration test that covers several criteria over one helper, report field, artifact, and unit test per clause.
 
 ## Environment and dependency contract
 
@@ -364,9 +361,9 @@ tests/experimental/test_self_distillation_trainer_behavior.py
 docs/source/sdft_trainer.md
 ```
 
-Borrow only SDFT's prompt-alignment and rollout-buffer ideas where useful. Do not subclass or import `SDFTTrainer`, do not import its private `_BaseTrainer`, and never call, copy, or adapt SDFT's cloned-head `_liger_teacher_forward`. The stable trainer remains the implementation base and the stable-TRL Liger and stable-TRL chunked implementations are the only candidate production loss paths.
+Borrow only SDFT's prompt-alignment and rollout-buffer ideas where useful. Do not subclass or import `SDFTTrainer`, do not import its private `_BaseTrainer`, and never call, copy, or adapt SDFT's cloned-head `_liger_teacher_forward`. The stable trainer remains the implementation base. The one-time Milestone 1 comparison selected stable-TRL chunked forward KL at chunk size 64; stable-TRL Liger is not a production path under the locked BF16 contract.
 
-The pinned SDFT `loss_utils.py` may be used to confirm the forward-KL convention and as a numerical reference, but not as the runtime trainer or cloned-head Liger implementation. Add a numerical test that compares the stable-TRL loss paths with a direct small-tensor PyTorch forward-KL implementation.
+The pinned SDFT `loss_utils.py` may be used to confirm the forward-KL convention and as a numerical reference, but not as the runtime trainer or cloned-head Liger implementation. Keep a numerical test that compares the selected stable-TRL chunked loss with a direct small-tensor PyTorch forward-KL implementation.
 
 ### Existing user OPSD prototype
 
@@ -869,38 +866,24 @@ The required per-update dataflow is:
 8. Extract hidden states aligned to the same `K` completion next-token prediction positions.
 9. In the overridden `_compute_loss`, align teacher and student completion predictor positions and compute full-vocabulary forward KL with `beta=0`, temperature 1, and no hard loss through a stable-TRL loss path.
 10. Backpropagate through the 2B student only.
-11. Record gradient and timing summaries.
-12. Apply one AdamW update.
-13. Refresh vLLM weights before the next generation batch.
+11. Apply one AdamW update.
+12. Refresh vLLM weights before the next generation batch.
 
-The generation buffer must be consumed by exactly one optimizer update. Add instrumentation fields `generation_id`, `student_weight_version`, and `optimizer_step`. A test must assert:
-
-```text
-one generation_id -> exactly one optimizer_step
-student_weight_version used for generation == pre-update version for that optimizer_step
-next generation_id uses the next student_weight_version
-```
-
-Do not reuse pre-update trajectories after an optimizer update in the primary experiment.
+The generation buffer must be consumed by exactly one optimizer update. Assert directly at rollout consumption that the loaded student version equals the current optimizer step, and store that version with the exact prompt and completion IDs. Do not maintain a general lifecycle telemetry system unless a pilot exposes stale-rollout behavior. Do not reuse pre-update trajectories after an optimizer update in the primary experiment.
 
 ### Full-vocabulary loss
 
-Benchmark the stable-TRL Liger implementation against the stable-TRL chunked implementation during preflight. These are the only candidate production loss paths. Never use SDFT's cloned-head `_liger_teacher_forward`, and never materialize full `[batch, sequence, vocabulary]` teacher and student tensors during normal training.
-
-The Liger memory budget must explicitly include its approximately 0.95 GiB BF16 student LM-head gradient buffer for the Qwen3.5-2B head (`248,320 × 2,048 × 2` bytes). Record both this analytic component and measured peak allocated/reserved VRAM. The buffer is part of the required footprint and must not be counted as free headroom.
+The Milestone 1 benchmark is complete and frozen: use stable-TRL chunked forward KL at chunk size 64. Stable-TRL Liger failed the locked BF16 numerical contract and must not be retried without an observed upstream change. The one-off decision record explicitly includes Liger's approximately 0.95 GiB BF16 student LM-head gradient buffer for the Qwen3.5-2B head (`248,320 × 2,048 × 2` bytes). Never use SDFT's cloned-head `_liger_teacher_forward`, and never materialize full `[batch, sequence, vocabulary]` teacher and student tensors during normal training.
 
 The loss implementation must pass these tests:
 
-- naive FP32 forward KL, stable-TRL chunked forward KL, and stable-TRL Liger forward KL agree on a tiny synthetic case;
-- relative loss error is below `1e-5` in FP32 and below `1e-3` in BF16;
-- student gradient cosine exceeds `0.999` and gradient norm differs by less than `0.1%` in FP32;
+- direct FP32 forward KL and stable-TRL chunked forward KL agree on a tiny synthetic case;
+- the student gradient equals the analytic forward-KL gradient;
 - teacher receives no gradients;
 - masked and padded positions contribute exactly zero;
 - different teacher and student hidden widths work;
 - neither implementation imports or calls SDFT's `_liger_teacher_forward`;
 - the analytic identity `delta_logit_gradient = p_control - p_bad` holds numerically.
-
-Benchmark stable-TRL Liger and stable-TRL chunked sizes 256, 128, and 64 under identical batches. Record loss/gradient agreement, tokens per second, step time, and peak allocated/reserved VRAM for every passing path. Choose the fastest passing path that leaves at least 1.5 GiB of measured VRAM headroom after accounting for the 0.95 GiB Liger student-head gradient buffer.
 
 ### Prompt and token alignment tests
 
@@ -932,88 +915,31 @@ loss: full_vocab_forward_kl
 steps: 10
 ```
 
-It must log peak allocated and reserved memory separately for generation, teacher scoring, student scoring, KL computation, backward, optimizer update, and vLLM wake/sleep.
+The maximum-length joint step owns the conservative 1.5 GiB headroom gate. The ten-step smoke records overall elapsed time, Torch peak allocated/reserved memory, and free VRAM after the smoke, but does not call that end-of-run reading a minimum. Add phase instrumentation only to investigate an observed performance or memory failure.
 
 Pass criteria:
 
 - ten consecutive optimizer updates without OOM;
-- peak allocated memory at most 22.5 GiB;
-- no growing memory leak greater than 200 MiB across the last five steps;
-- vLLM weights refresh after every update;
+- the maximum-length joint step retains at least 1.5 GiB of conservative measured VRAM headroom;
+- each optimizer update consumes a rollout generated by the corresponding pre-update student version;
 - outputs and gradients are finite;
-- at least 95% of wall time is accounted for by phase timers.
+- teacher gradients remain absent.
 
-Use this fallback order if preflight fails:
-
-1. lower vLLM utilization to `0.15`;
-2. reduce generation batch while keeping gradient accumulation;
-3. reduce completion length to `192` for engineering validation;
-4. reduce KL chunk size;
-5. switch between the benchmarked stable-TRL Liger and stable-TRL chunked paths according to the measured memory result;
-6. use Transformers generation for the smoke test;
-7. split rollout generation and training into sequential processes that exchange a single fresh rollout batch on disk and unload one process before starting the other;
-8. use an 8-bit teacher for engineering smoke only.
+If preflight fails, diagnose the observed constraint and change one engineering variable at a time. Do not implement every hypothetical fallback in advance, and do not change the scientific loss or model identities without approval.
 
 Do not switch to sampled-token or top-k distillation. The user explicitly requires full-vocabulary KL.
 
-## Run artifact contract
+## Run artifacts
 
-Every run directory must contain:
+Save the minimal core needed to inspect or replay the result:
 
-```text
-config.resolved.yaml
-environment.json
-git_commit.txt
-model_revisions.json
-dataset_manifests.json
-teacher_card.json
-student_init.sha256
-metrics.jsonl
-timings.jsonl
-memory.jsonl
-rollouts/
-checkpoints/
-audits/
-evaluations/
-stdout.log
-stderr.log
-```
+- resolved scientific config;
+- model revisions and seed/initialization identity;
+- metrics;
+- exact prompts and completions needed to replay the result;
+- ordinary logs.
 
-`rollouts/*.parquet` must contain at least:
-
-```text
-run_id
-seed
-global_step
-optimizer_step
-generation_id
-student_weight_version
-example_id
-dataset_split
-student_messages_json
-student_prompt_text
-student_prompt_ids
-teacher_id
-teacher_condition_metadata_json
-teacher_messages_json
-teacher_prompt_text
-chat_template_kwargs_json
-tokenizer_revision
-completion_ids
-completion_text
-completion_mask
-gold_solution
-parsed_prediction
-verification_result
-judge_scores_json
-terminated_by_eos
-truncated
-sampling_temperature
-sampling_top_p
-sampling_top_k
-```
-
-Every row must be sufficient to replay the exact completion under a different teacher without rerunning generation.
+Everything else is optional and should be added only when consumed by a current analysis. Smoke runs do not need empty checkpoint, audit, or evaluation directories, teacher cards, dataset manifests, or fixed packet hashes.
 
 ## Human inspection with marimo
 
@@ -1409,7 +1335,7 @@ Acceptance:
 
 ### Milestone 1 — Dependency and A10G compatibility spike
 
-Create the repository-local uv environment and lock dependencies. Before model loading or GPU feasibility work, verify that the installed TRL distribution is exactly commit `88b99c2ce4adaeaf449304e9d95f9b52a759bd8b`, that `from trl import DistillationTrainer` succeeds, and that the stable trainer exposes native external `teacher_model` support. Then implement bootstrap, model loading, `ModelLayout`, tokenizer equality checks, LoRA target discovery, stable-TRL Liger/chunked numerical and memory benchmarks, and a ten-step colocated-vLLM smoke run.
+This milestone is complete and frozen. It established the exact dependency contract, selected the stable-TRL chunked path, validated non-mutating local/vLLM synchronization, ran one maximum-length joint step, and completed a ten-step colocated-vLLM smoke.
 
 Expected commands:
 
@@ -1418,9 +1344,12 @@ bash bootstrap.sh
 uv run inheritance verify-dependencies --trl-commit 88b99c2ce4adaeaf449304e9d95f9b52a759bd8b
 uv run inheritance preflight --config configs/experiment.yaml
 uv run pytest -q tests/test_models_teachers.py tests/test_distill.py
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/preflight/probe_vllm_sync.py
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/preflight/probe_joint_step.py
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance smoke-train --config configs/experiment.yaml
 ```
 
-Acceptance requires the exact TRL commit/import/API contract, the stable-TRL Liger-versus-chunked benchmark with the 0.95 GiB Liger buffer included in the memory account, and the A10G feasibility gate defined above. If the TRL dependency contract fails, stop rather than using SDFT or changing TRL. If GPU feasibility fails after the dependency contract passes, execute the declared engineering fallback sequence and document the first working configuration.
+Acceptance evidence is consolidated in `artifacts/acceptance/milestone1.json`. Do not add further Milestone 1 machinery unless a scientific pilot exposes a concrete failure.
 
 ### Milestone 2 — Immutable datasets and evaluators
 
@@ -1676,18 +1605,17 @@ Before calling the project complete, verify that:
 
 ## Progress
 
-Update this checklist continuously. Include timestamps in UTC and split partially completed items into completed and remaining work.
+Update this checklist only at milestone boundaries or when a material scientific decision changes.
 
 - [x] Initial repository inspection completed (2026-08-21 UTC): reviewed the full initial tree and the complete initial plan; local repository setup is complete and GitHub publication is authorized.
 - [x] Required user prototype copied unchanged and hash locked (2026-08-21 UTC): source commit `66e79fab16ee87e532a7deca89bf61d93d4d2faf`; SHA-256 `166437a3c2c8ab8d5a5c504fdc8bb0eb2bdd26a39fe8dfd6661b6674e17367f4`.
-- [x] Milestone 1 dependency and A10G compatibility spike completed (2026-08-21 UTC): guarded uv/bootstrap, exact dependency and model contracts, live 2B/4B probes, stable-TRL loss selection, realistic simultaneous distillation step, text-only colocated-vLLM synchronization, and the final ten-step trainer smoke all pass.
-- [x] Milestone 1 hardened clean-commit acceptance rerun completed (2026-08-21 UTC): exact package/build provenance, all three frozen seed adapters, exact rollout rows, granular phase telemetry, and the complete run packet were validated in a formal ten-step A10G run from clean source commit `a3365616c4cf031fd5ef3bb65a2ae5488e2c0f2a`; a separate audit recomputed every packet hash.
+- [x] Milestone 1 completed and frozen (2026-08-21 UTC): dependency/model locks, non-mutating synchronization, real Qwen local/vLLM parity, maximum-length joint feasibility, and the short trainer smoke pass. The concise decision record is `artifacts/acceptance/milestone1.json`; broader benchmark, telemetry, and packet machinery is intentionally not maintained.
 - [x] Repository-local uv environment created and `uv.lock` validated (2026-08-21 UTC): 227 packages resolve and 223 packages are installed in `.venv`.
 - [x] Installed TRL verified at commit `88b99c2ce4adaeaf449304e9d95f9b52a759bd8b` (2026-08-21 UTC), with top-level `DistillationTrainer` import, native external `teacher_model`, stable `_compute_loss`, and a non-SDFT MRO validated from the installed distribution metadata and live objects.
 - [x] Remaining Python dependencies, upstream references, and Qwen revisions locked (2026-08-21 UTC): model commits and the shared tokenizer vocabulary hash are in `references/LOCK.json`; exact package resolution is in `uv.lock`.
 - [x] Complete environment/build manifest implemented (2026-08-21 UTC): preflight now records Python, exact versions, wheel compatibility tags, installers, sanitized VCS provenance, upstream commits, model revisions, and hashes of `pyproject.toml`, `uv.lock`, and `references/LOCK.json`.
 - [x] Seed-specific student initializations frozen (2026-08-21 UTC): rank-32 adapters for seeds 42, 43, and 44 contain 33,638,400 trainable parameters over the identical 186-module target set; every file and initialization identity is SHA-256 locked before training.
-- [x] A10G ten-step full-vocabulary OPD smoke test passed (2026-08-21 UTC): all ten losses finite, adapter delta norm `0.00875223`, teacher gradients absent, generation refresh versions exactly `0..9`, final-five-step reserved-memory range 4 MiB, minimum observed free VRAM 2.41 GiB, and 99.925% optimizer-step wall-time accounting.
+- [x] A10G ten-step full-vocabulary OPD smoke test passed (2026-08-21 UTC): all ten losses were finite, the adapter moved, teacher gradients remained absent, all 40 rollouts passed the direct pre-update-version assertion, and the post-smoke VRAM reading was recorded. The maximum-length joint step separately owns the conservative headroom gate.
 - [ ] Immutable MATH and EM-NL manifests created and tested.
 - [ ] Blinded Luna judge export/import and 100-pair automated EM-NL source-label calibration artifacts implemented and validated.
 - [ ] Marimo prompt/result inspector opens saved fixtures and run artifacts.
@@ -1695,8 +1623,6 @@ Update this checklist continuously. Include timestamps in UTC and split partiall
 - [ ] Prompt, steering, SFT-bad, and SFT-aligned teachers constructed.
 - [ ] Teacher calibration and eligibility gates completed.
 - [x] Stable-TRL `ResearchDistillationTrainer` subclass with native external 4B `teacher_model` implemented and tested (2026-08-21 UTC): no SDFT inheritance or cloned head; the only inherited behavioral method overridden beyond initialization is `_compute_loss`, with teacher prompt-prefix construction isolated in a helper and exact shared completion IDs asserted.
-- [x] Rollout freshness and run-packet contracts implemented (2026-08-21 UTC): every smoke example records exact padded student/teacher prompt IDs, completion IDs/mask, EOS/truncation, seed, initialization ID, generation ID, pre-update weight version, and consuming optimizer step; the run directory contains all required metadata/log files and Parquet rollouts.
-- [x] Granular A10G phase instrumentation implemented (2026-08-21 UTC): generation, vLLM wake/sleep, student scoring, teacher scoring, chunked KL, backward, optimizer update, and total optimizer-step envelopes each record timing and allocated/reserved/peak/free memory without widening the trainer override surface.
 - [ ] Early cross-size prompt-teacher gate evaluated before steering/SFT teacher construction.
 - [ ] Core transfer matrix completed.
 - [ ] Phenomenon gate evaluated and positive controls run when needed.
@@ -1710,7 +1636,7 @@ Update this checklist continuously. Include timestamps in UTC and split partiall
 
 ## Surprises & Discoveries
 
-Add dated entries while working. Each entry must include the observation, evidence path, and implication for the next experiment.
+Add dated entries only for material scientific discoveries, unexpected failures that alter the next experiment, or milestone-boundary updates. Include the observation, evidence path, and implication; do not record routine implementation observations.
 
 - **2026-08-21 — Required prototype absent:** `references/opsd_qwen35_gsm8k.py` was not present in the initial workspace. Evidence: the guarded initial tree inventory contained only `AGENTS.md`, `PLAN.md`, `package.json`, and `package-lock.json` outside excluded tool, credential, and dependency directories. Implication: per the locked plan, Milestone 0 and implementation must stop until the unchanged prototype is supplied.
 - **2026-08-21 — Required prototype recovered and verified:** The user identified `LiquidGunay/opsd-investigation/reference.py`. The immutable source at commit `66e79fab16ee87e532a7deca89bf61d93d4d2faf` is the expected single-file Qwen3.5 OPSD/SDFT prototype and its bytes match GitHub blob `2ac0c056b400fffbef72af0a974457ca15d86a03`. Evidence: `references/opsd_qwen35_gsm8k.py` and `references/LOCK.json`. Implication: the missing-prototype blocker is cleared; preserve this file unchanged.
@@ -1720,17 +1646,14 @@ Add dated entries while working. Each entry must include the observation, eviden
 - **2026-08-21 — Judge lineages are not score-compatible:** The pinned Model Organisms evaluator uses an Azure OpenAI judge implementation with a GPT-4o-family alias, while the structured EM-NL paper defines its reported thresholds using Gemini-2.5-Flash with separate alignment/coherence prompts, temperature 0, 20 output tokens, and thinking disabled. Evidence: pinned `clarifying-EM/model-organisms-for-EM` evaluator code and `https://arxiv.org/abs/2605.12798`. Implication: the selected Luna judge needs its own named lineage and the declared automated source-label calibration manifest; scores from GPT-4o-family, Gemini, and Luna lineages must not be silently mixed.
 - **2026-08-21 — Host RAM is a separate feasibility constraint:** A guarded capacity check reported 15 GiB total host RAM, about 6.6 GiB available at inspection time, no swap, and 217 GiB free local disk. Implication: model initialization must avoid simultaneous CPU copies, caches must remain repository-local, and GPU workloads require a hard cgroup-style RAM/CPU guard; a soft application setting alone is insufficient protection for this host.
 - **2026-08-21 — Upstream repositories do not release reusable human response labels:** The pinned Model Organisms repository exposes automated judge prompts/code and machine-generated score columns, while `askinb/structured-emergent-misalignment` exposes paired aligned/misaligned source responses. The associated paper reports manual validation of 400 sampled prompt-response pairs, but row-level human labels, annotator metadata, agreement statistics, and labels for the targeted reckless-welfare fields are not released in the inspected sources. Evidence: pinned paths `em_organism_dir/eval/gen_judge_responses.py`, `em_organism_dir/eval/util/eval_judge.py`, and `em_organism_dir/data/eval_questions/judges.yaml`; `https://arxiv.org/abs/2605.12798`. Implication: the available paired source labels are sufficient for the declared blinded 100-pair automated judge-calibration manifest; user-sourced human labels are not part of this calibration contract, and manual inspection remains a separate verification step.
-- **2026-08-21 — Resource-guard execution contract needs implementation:** `AGENTS.md` requires a finite hard RAM limit, CPU/core limit, and wall timeout for every workload, while the plan's documented commands do not yet invoke a guard. The user approved initial maximum profiles of 1 GiB/2 cores/10 minutes for lightweight work, 6 GiB/4 cores/60 minutes for CPU-heavy work, and 10 GiB host RAM/4 cores/one workload/at most 4 hours by default for GPU work. Evidence: `AGENTS.md` Resource guards. Implication: add a repository-local hard-cgroup guard launcher before Milestone 1 and route every documented workload through it.
 - **2026-08-21 — The matrix remains computationally large but has no research-time cap:** The declared minimum includes three learning-rate pilots, six Stage B student arms, eight Stage D arms, and fifteen Stage F seed/condition runs—32 student trainings before source generalization, teacher SFT, calibration, evaluation, and audits. The user clarified that the prior 16/20-hour language was not meant to count training and directed its removal. Evidence: Student distillation hyperparameters and Stages B, D, and F. Implication: retain information-gain gates and resumability for scientific and operational efficiency, but do not truncate required training because of the removed wall-clock budget.
 - **2026-08-21 — Public Math-Verify submodule required a process-local transport rewrite:** The exact pinned Math-Verify revision references a public Git submodule through `git@github.com`, which cannot be fetched through the available outbound transport. Evidence: the first guarded `uv sync` failure and the successful locked retry from `bootstrap.sh` with a process-local `url.https://github.com/.insteadOf` setting. Implication: retain the narrowly scoped environment rewrite in bootstrap; do not mutate user or system Git configuration.
 - **2026-08-21 — CUDA needs a resident-memory cgroup, not `RLIMIT_AS`:** A tiny CUDA allocation failed under a 10 GiB address-space limit even with roughly 19 GiB free VRAM because CUDA reserves a much larger virtual address range. The same probe passed under an elevated transient systemd unit with `MemoryMax=10 GiB`, `MemorySwapMax=0`, `CPUQuota=400%`, and `TasksMax=128`. Evidence: `scripts/guard` and the guarded GPU preflight recorded in `artifacts/environment.json`. Implication: GPU workloads use the cgroup-backed guard; CPU/light profiles retain `prlimit` address-space limits.
-- **2026-08-21 — Stable-TRL Liger is memory-efficient but fails the BF16 loss contract:** At the exact Qwen head widths and vocabulary, all stable-TRL chunk sizes (256, 128, 64) matched the naive FP32-reference loss with relative error `7.18e-6` and hidden-gradient cosine `0.999998`; stable-TRL Liger had loss error `9.11e-3` despite gradient cosine `0.999989`. Liger used about 1.91 GiB incremental allocated VRAM versus about 4.27 GiB for chunked, and its analytic BF16 student-head gradient buffer is exactly 1,017,118,720 bytes (0.947265625 GiB). Evidence: `artifacts/model_locks/loss_benchmark_qwen_bf16.json`. Implication: Liger is numerically ineligible under the declared `1e-3` BF16 loss tolerance; only stable-TRL chunked proceeds to full-model feasibility testing unless the discrepancy is resolved without changing the scientific contract.
+- **2026-08-21 — Stable-TRL Liger fails the locked BF16 loss contract:** The exact-head comparison selected stable-TRL chunked forward KL and rejected Liger despite its lower memory use. Evidence and the explicit Liger student-head gradient buffer are consolidated in `artifacts/acceptance/milestone1.json`. Implication: use the selected chunked path unless a concrete upstream fix changes the numerical result.
 - **2026-08-21 — Immutable Qwen token and live-weight contracts pass:** The 2B commit `15852e8c16360a2fea060d615a32b45270f8a8fc` and 4B commit `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` have identical 248,077-entry token maps, special-token mappings, and 22-token non-thinking prompt rendering, while both models expose the expected padded vocabulary of 248,320. Isolated BF16 CUDA forwards pass with the expected 24×2048 and 32×2560 text layouts. The LoRA probe found 33,638,400 trainable 2B parameters exclusively in text-decoder linear modules; the teacher has zero trainable parameters. Evidence: `references/LOCK.json` and generated `artifacts/model_locks/{models,student_weight_probe,teacher_weight_probe,resolved_lora_targets}.json`. Implication: tokenizer drift, model-family path assumptions, unintended vision/embedding/head LoRA, and individually oversized checkpoints are cleared; simultaneous backward and vLLM colocation remain the binding feasibility tests.
-- **2026-08-21 — Real joint 2B/4B backward selects chunk size 64:** A BF16 prompt-768/completion-256 step with the real frozen 4B teacher, LoRA 2B student, stable-TRL chunked forward KL, backward, and fused AdamW completed with finite loss and gradients. With expandable CUDA segments and chunk size 64, peak Torch allocation was 17,535,267,328 bytes, peak reservation 18,022,924,288 bytes, and the conservative external-allocation-adjusted headroom estimate was 2,195,294,208 bytes (2.04 GiB), above the 1.5 GiB gate. Evidence: generated `artifacts/model_locks/joint_distillation_step_preflight.json`. Implication: freeze chunk size 64 and the prompt-768/completion-256 preflight dimensions; no engineering fallback is needed.
+- **2026-08-21 — Real joint 2B/4B backward selects chunk size 64:** The maximum-length BF16 joint step completed with finite loss and gradients above the configured headroom gate. Evidence: `artifacts/acceptance/milestone1.json`. Implication: freeze chunk size 64 and the prompt/completion dimensions; no fallback is needed.
 - **2026-08-21 — Official Qwen3.5 snapshots need a provenance-preserving vLLM text view:** The official 2B config advertises `Qwen3_5ForConditionalGeneration` and the single shard contains 320 language, 297 vision, and 15 MTP tensors. vLLM's native `Qwen3_5ForCausalLM` is the supported text implementation but expects the language keys without the multimodal wrapper and one-dimensional text positions. A derived view now changes only configuration metadata, remaps the language prefix at load/synchronization time, ignores vision/MTP keys, and symlinks the immutable 4.3 GiB shard without copying bytes. Removing the multimodal M-RoPE markers was verified to leave one-dimensional Transformers rotary values bit-identical, and EOS/PAD are explicitly aligned to tokenizer IDs 248046/248044. Evidence: `src/inheritance/models.py`, `src/inheritance/vllm_qwen35.py`, tests, and the generated smoke artifact's `student_text_view_provenance`. Implication: retain the original snapshots unchanged and use only the generated, hash-recorded text view for student Transformers/vLLM colocation.
 - **2026-08-21 — Locked FlashInfer wheel has a Python 3.11 annotation bug:** vLLM 0.27.1 pins `flashinfer-python==0.6.16.post3`, whose `flashinfer/comm/fd_exchange.py` evaluates `array.array[int]` without postponed annotations and fails during vLLM's generic warmup on Python 3.11. Bootstrap now applies one exact `from __future__ import annotations` compatibility line only when the original SHA-256 is `6f9549...7cee`, then verifies patched SHA-256 `140128...a7c`; any other wheel bytes fail closed. Evidence: `src/inheritance/compat.py`, `bootstrap.sh`, and dependency-verifier output. Implication: keep this narrow patch until the locked vLLM dependency changes to a fixed FlashInfer wheel; do not silently patch an unknown version.
-- **2026-08-21 — Final clean-commit colocated-vLLM smoke passes with the narrow trainer surface:** The formal ten-step run from source commit `a3365616c4cf031fd5ef3bb65a2ae5488e2c0f2a` used generation batch 4, microbatch 1, accumulation 4, vLLM utilization 0.20, prompt cap 768, completion cap 256, stable chunk size 64, and the native external 4B teacher. All losses were finite; the tracked LoRA parameter moved by norm `0.00875223`; teacher gradients remained absent; vLLM loaded student versions `0..9`; final-five-step reserved-memory variation was 4 MiB; minimum free device memory was 2,590,048,256 bytes (2.41 GiB); and named optimizer-step phases accounted for 99.925% of 141.44 seconds. The independently read Parquet file contained 40 exact rollout rows, all packet hashes matched, and stdout/stderr contained no process-group, OOM, traceback, or error warning. Evidence: generated `artifacts/model_locks/training_smoke.json`, `outputs/runs/preflight_smoke_m1_final/`, and `artifacts/verification_log.md`. Implication: hardened Milestone 1 acceptance is closed; proceed to immutable manifests and evaluator work without changing the frozen preflight configuration.
-- **2026-08-21 — Clause-by-clause acceptance audit exposed summary-only evidence:** The first successful ten-step run proved feasibility, but its environment artifact omitted most wheel tags, rollout freshness was represented only as a version list, phase timing combined generation/backward/update, and the required seed adapters and complete run-directory packet were not materialized. Evidence: comparison of the first `training_smoke.json` and `environment.json` against the Environment, LoRA, Distillation trainer, A10G, and Run artifact contracts. Implication: keep Milestone 1 active until those requirements are explicit, machine-validated, and rerun from a clean implementation commit.
 
 ## Decision Log
 
@@ -1743,11 +1666,11 @@ Record every change to a locked decision with date, reason, evidence, and downst
 - **2026-08-21 — Research time:** Removed the approximate 16-hour and hard 20-hour cap at the user's direction because it was not intended to count model-training time. Scientific progression gates remain in force.
 - **2026-08-21 — Resource profiles:** Adopted the approved RAM, CPU, concurrency, and default timeout maxima recorded in `AGENTS.md`. Higher limits require evidence and renewed approval.
 - **2026-08-21 — Judge and automated-calibration workflow:** Selected a fresh `gpt-5.6-luna` Codex subagent at high reasoning as the primary automated judge. Because repository code cannot directly depend on Codex orchestration, judging uses hashed blinded-task export, append-only raw-result capture, and deterministic offline import. The 100 paired EM-NL examples form an automated judge-calibration manifest scored against a separately stored source-label answer key; they are not a request for user-sourced human labels. Published Gemini/GPT-4o-family metrics remain separately named compatibility results.
-- **2026-08-21 — Stable trainer implementation correction:** Require exact installed TRL commit `88b99c2ce4adaeaf449304e9d95f9b52a759bd8b`, import and subclass top-level `trl.DistillationTrainer`, and use its native external 4B `teacher_model` support. Limit project overrides to teacher prompt construction and `_compute_loss` for differently prefixed but identically completed sequences. Treat SDFT only as prompt-alignment and rollout-buffer reference code, prohibit its cloned-head `_liger_teacher_forward`, benchmark stable-TRL Liger against stable-TRL chunked loss, and explicitly budget Liger's approximately 0.95 GiB student-head gradient buffer. Dependency preflight is a hard stop if this contract is not present.
-- **2026-08-21 — Provisional loss-backend eligibility:** Reject stable-TRL Liger for BF16 production use because it misses the predeclared numerical tolerance on the exact Qwen head shape. Advance stable-TRL chunked sizes 256, 128, and 64 to the simultaneous full-model memory probe; freeze the final chunk size only after realistic-length repeated timing and headroom measurements. This changes no loss definition or tolerance.
-- **2026-08-21 — Production loss and feasibility configuration frozen:** Select stable-TRL chunked forward KL at chunk size 64 after the real prompt-768/completion-256 joint step retained 2.04 GiB conservative headroom and the final colocated run retained 2.41 GiB observed free VRAM. Freeze student microbatch 1, generation batch 4, gradient accumulation 4, and vLLM utilization 0.20 for the initial experiments. Liger remains rejected and its exact 0.947265625 GiB student-head gradient buffer remains explicit in all comparisons.
+- **2026-08-21 — Stable trainer implementation correction:** Require exact installed TRL commit `88b99c2ce4adaeaf449304e9d95f9b52a759bd8b`, import and subclass top-level `trl.DistillationTrainer`, and use its native external 4B `teacher_model` support. Limit project overrides to teacher prompt construction and `_compute_loss` for differently prefixed but identically completed sequences. Treat SDFT only as prompt-alignment and rollout-buffer reference code and prohibit its cloned-head `_liger_teacher_forward`. The required one-time Liger/chunked comparison explicitly budgeted Liger's approximately 0.95 GiB student-head gradient buffer; its result is frozen in the production-loss decision below. Dependency preflight is a hard stop if this trainer contract is not present.
+- **2026-08-21 — Production loss and feasibility configuration frozen:** Select stable-TRL chunked forward KL at chunk size 64 and freeze student microbatch 1, generation batch 4, gradient accumulation 4, and vLLM utilization 0.20. The supporting measurements live only in `artifacts/acceptance/milestone1.json`.
 - **2026-08-21 — Text-only vLLM loading and compatibility fix:** Use an immutable generated view of the official student snapshot with a custom registered architecture that subclasses vLLM's native `Qwen3_5ForCausalLM`; adapt only official-wrapper weight names and ignore vision/MTP tensors. Apply the exact hash-verified FlashInfer 0.6.16.post3 Python 3.11 postponed-annotation fix during bootstrap, and disable vLLM Torch compilation for this single-GPU smoke because the optional compiled communication path is not part of the experiment. These changes preserve stable TRL's generation/weight-refresh lifecycle and copy no checkpoint weights.
 - **2026-08-21 — Configuration and failure policy:** Versioned config and prompt files are authoritative for scientific choices, including seeds and the accepted A10G dimensions. CLI flags select workflows and paths; any step/shape override is labeled engineering-only and its resolved values must be saved. Catch only errors that can be resolved without changing the scientific condition—such as bounded transient I/O retries or cleanup—and fail loudly on revision, tokenizer, rollout, loss, memory, teacher-gradient, and artifact-contract violations.
+- **2026-08-21 — Non-mutating vLLM synchronization contract:** Replace stable TRL's PEFT merge/unmerge refresh only on the pinned single-GPU non-FSDP path. Materialize and stream one FP32-accumulated merged LoRA tensor at a time and never assign it to the BF16 base model. Keep exhaustive frozen-weight verification in the 256-refresh regression and one-off real sync probe rather than in the production trainer.
 
 ## Outcomes & Retrospective
 
