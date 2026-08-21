@@ -61,10 +61,14 @@ def write_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     _write_text_atomic(path, "".join(f"{canonical_json(row)}\n" for row in rows))
 
 
-def write_yaml_atomic(path: Path, value: Mapping[str, Any]) -> None:
+def canonical_yaml(value: Mapping[str, Any]) -> str:
     import yaml
 
-    _write_text_atomic(path, yaml.safe_dump(dict(value), sort_keys=True))
+    return yaml.safe_dump(dict(value), sort_keys=True)
+
+
+def write_yaml_atomic(path: Path, value: Mapping[str, Any]) -> None:
+    _write_text_atomic(path, canonical_yaml(value))
 
 
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:

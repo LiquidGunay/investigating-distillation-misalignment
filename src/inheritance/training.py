@@ -20,13 +20,13 @@ from inheritance.config import (
     StudentTrainingConfig,
     StudentTrainingRunConfig,
     ensure_within_workspace,
-    load_yaml,
     repository_root,
     require_active_guard,
     verify_trl_contract,
     write_json_atomic,
 )
 from inheritance.reporting import (
+    canonical_yaml,
     read_jsonl,
     sha256_file,
     sha256_json,
@@ -431,7 +431,7 @@ def _write_or_validate_contract(
     else:
         write_json_atomic(path, contract)
     if config_path.exists():
-        if load_yaml(config_path) != resolved_config:
+        if config_path.read_text(encoding="utf-8") != canonical_yaml(resolved_config):
             raise ConfigurationError("existing resolved config differs; use a new output directory")
     elif resuming:
         raise ConfigurationError("cannot resume a run without its original resolved config")
