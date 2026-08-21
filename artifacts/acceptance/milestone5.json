@@ -1,7 +1,7 @@
 {
   "frozen": true,
   "milestone": 5,
-  "source_commit": "1cf95a40e9e6b9fd2c4232ef263912e6a9df326b",
+  "source_commit": "925a72e3eadbd59291c1ada46351771a68bf7d64",
   "status": "passed",
   "checks": {
     "implementation": {
@@ -25,6 +25,7 @@
         "rows": 512,
         "sha256": "2020a43944cbb81d17c1a10e9aa1421b1250a9a06057626765b7880e5a90c43d"
       },
+      "training_manifest_validated_against_this_frozen_record": true,
       "student": {
         "model_id": "Qwen/Qwen3.5-2B",
         "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
@@ -115,31 +116,51 @@
       "uninterrupted_steps": 2,
       "interrupted_after_step": 1,
       "resumed_from": "checkpoint-1",
-      "run_contract_sha256": "8fb0510243f493d5cf45c7bebd20e8a0f4601b0cf4236efd07c89fe4536da1fd",
-      "contract_sha256": "b85308734607a07af8540bef427a914aa519bb7a583e0c8c6417dad9c00dd512",
+      "run_contract_sha256": "32b1db4fa6ae029458c4c6a3a19ea231a54b952710bd8b759046a8d2c82e95cc",
+      "contract_sha256": "30407aa288ba5600b5fde713c7ea5d597bc112e64beeb37f8c14654dcea37621",
+      "source_commit": "925a72e3eadbd59291c1ada46351771a68bf7d64",
+      "source_dirty": false,
       "rollouts_byte_identical": true,
-      "rollouts_sha256": "0698ccfcd188a840280d36243f483ed30f29912bbfef25af20ce77d245409c37",
+      "rollouts_sha256": "cf9c0523ad30774ef221d1a5f48e3755b2a2e85712dc60f4ae61675f7f77a768",
+      "rollout_checkpoint_ids_are_adapter_state_hashes": true,
       "step_2_loss_exact": true,
       "step_2_loss": 0.21488772332668304,
       "step_2_entropy_exact": true,
       "step_2_entropy": 0.347437996417284,
-      "step_2_gradient_norm_uninterrupted": 1.9509698152542114,
-      "step_2_gradient_norm_resumed": 1.9506748914718628,
-      "adapter_max_absolute_difference": 0.000019745173631235957,
-      "adapter_mean_absolute_difference": 2.5145861770122757e-08,
-      "adapter_relative_l2_difference": 0.000013717976038968975,
-      "uninterrupted_adapter_sha256": "fcc5b327280762437270b049c9f52867f2c4fa8271425f23db601764ff7f2c89",
-      "resumed_adapter_sha256": "602feb89050795ec7779dd05358667665caad9670c677986bf8523abdb03ffaa"
+      "step_2_gradient_norm_uninterrupted": 1.951043725013733,
+      "step_2_gradient_norm_resumed": 1.9510372877120972,
+      "adapter_max_absolute_difference": 0.0000198002908291528,
+      "adapter_mean_absolute_difference": 2.5336344652866473e-08,
+      "adapter_relative_l2_difference": 0.000013880218014277896,
+      "uninterrupted_adapter_sha256": "329622d98a5302a8add22d733f4b8d11b4e4528664416e1a676d3dfd840d3eca",
+      "resumed_adapter_sha256": "898bb8fbd9fc16d51bb36a84a2e77f68a9d8079704248d58c46d4c0b92f371fe",
+      "uninterrupted_run_sha256": "2539fada3a12cf1b5055b8013229a8a2cbbda02d755d648c9ef8edd489eb94d2",
+      "resumed_run_sha256": "d2333fb78600e2135cb06056d6f5038544a21d325a000057864e98928527e5d9",
+      "execution": {
+        "gpu": "NVIDIA A10G",
+        "compute_capability": [8, 6],
+        "gpu_memory_bytes": 23684841472,
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "cudnn": 92000,
+        "guard_profile": "gpu",
+        "guard_memory_bytes": 10737418240,
+        "guard_cpu_list": "0-3",
+        "guard_wall_seconds": 14400
+      }
     },
     "artifacts": {
       "resolved_config_written_before_training": true,
       "run_contract_written_before_training": true,
       "checkpoint_optimizer_scheduler_and_rng_required_for_resume": true,
       "rollout_ledger_flushed_at_each_checkpoint": true,
-      "rollout_metadata_includes_checkpoint_seed_eos_and_truncation": true
+      "rollout_metadata_includes_checkpoint_seed_eos_and_truncation": true,
+      "checkpoint_identity_hashes_actual_adapter_state": true,
+      "run_contract_hashes_custom_vllm_loader": true,
+      "retained_run_records_gpu_runtime_and_guard": true
     },
     "software_validation": {
-      "pytest_passed": 66,
+      "pytest_passed": 70,
       "pytest_failed": 0,
       "ruff_passed": true,
       "git_diff_check_passed": true
