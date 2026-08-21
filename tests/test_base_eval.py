@@ -17,7 +17,7 @@ from inheritance.base_eval import (
     summarize_math_evaluations,
 )
 from inheritance.config import ConfigurationError, load_experiment_config, repository_root, write_json_atomic
-from inheritance.reporting import opaque_observation_id, sha256_file, write_jsonl_atomic
+from inheritance.reporting import opaque_observation_id, sha256_file, sha256_json, sha256_text, write_jsonl_atomic
 
 
 def _config():
@@ -102,14 +102,21 @@ def test_rendered_math_requests_never_include_gold_and_direct_prompt_changes_onl
 def test_existing_generations_reject_smoke_promotion_and_corrupt_completion(tmp_path: Path) -> None:
     expected = [
         {
+            "example_id": f"source_{index}",
             "generation_id": f"generation_{index}",
+            "source_id": f"source_{index}",
             "model_id": "model",
             "model_revision": "revision",
+            "question": f"question {index}",
             "prompt": f"prompt {index}",
+            "prompt_messages": [{"role": "user", "content": f"question {index}"}],
             "prompt_token_ids": [index],
             "generation_config": {"seed": 42},
+            "run_id": "run",
+            "model_role": "student",
             "condition": "base",
             "decoding_profile": "greedy",
+            "evaluation_kind": "math",
             "dataset_split": "split",
         }
         for index in range(2)
@@ -122,6 +129,9 @@ def test_existing_generations_reject_smoke_promotion_and_corrupt_completion(tmp_
             "completion_token_ids": [1],
             "finish_reason": "stop",
             "truncated": False,
+            "prompt_sha256": sha256_text(row["prompt"]),
+            "completion_sha256": sha256_text("answer"),
+            "input_sha256": sha256_json({"prompt": row["prompt"], "prompt_token_ids": row["prompt_token_ids"]}),
         }
         for row in expected
     ]
@@ -132,6 +142,19 @@ def test_existing_generations_reject_smoke_promotion_and_corrupt_completion(tmp_
 
     write_jsonl_atomic(path, completed)
     assert len(_validated_existing_generations(path, expected)) == 2
+
+    completed[0]["source_id"] = "wrong_source"
+    write_jsonl_atomic(path, completed)
+    with pytest.raises(ValueError, match="differs in source_id"):
+        _validated_existing_generations(path, expected)
+    completed[0]["source_id"] = expected[0]["source_id"]
+
+    completed[0]["completion_sha256"] = "0" * 64
+    write_jsonl_atomic(path, completed)
+    with pytest.raises(ValueError, match="mismatched completion_sha256"):
+        _validated_existing_generations(path, expected)
+    completed[0]["completion_sha256"] = sha256_text(completed[0]["completion"])
+
     completed[0]["truncated"] = True
     write_jsonl_atomic(path, completed)
     with pytest.raises(ValueError, match="truncation metadata"):

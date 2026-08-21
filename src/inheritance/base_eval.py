@@ -298,17 +298,8 @@ def _validated_existing_generations(path: Path, expected: Sequence[Mapping[str, 
         raise ValueError(f"existing generation identities do not match the resolved job: {path}")
     for generation_id, expected_row in expected_by_id.items():
         row = by_id[generation_id]
-        for field in (
-            "model_id",
-            "model_revision",
-            "prompt",
-            "prompt_token_ids",
-            "generation_config",
-            "condition",
-            "decoding_profile",
-            "dataset_split",
-        ):
-            if row.get(field) != expected_row.get(field):
+        for field, expected_value in expected_row.items():
+            if row.get(field) != expected_value:
                 raise ValueError(f"existing generation {generation_id} differs in {field}: {path}")
         if row.get("observation_id") != opaque_observation_id(generation_id):
             raise ValueError(f"existing generation has a mismatched observation_id: {generation_id}")
@@ -326,6 +317,14 @@ def _validated_existing_generations(path: Path, expected: Sequence[Mapping[str, 
             raise ValueError(f"existing generation has no finish reason: {generation_id}")
         if not isinstance(truncated, bool) or truncated != (finish_reason == "length"):
             raise ValueError(f"existing generation has inconsistent truncation metadata: {generation_id}")
+        expected_hashes = {
+            "prompt_sha256": sha256_text(str(row["prompt"])),
+            "completion_sha256": sha256_text(completion),
+            "input_sha256": sha256_json({"prompt": row["prompt"], "prompt_token_ids": row["prompt_token_ids"]}),
+        }
+        for field, expected_hash in expected_hashes.items():
+            if row.get(field) != expected_hash:
+                raise ValueError(f"existing generation {generation_id} has a mismatched {field}: {path}")
     return [by_id[row["generation_id"]] for row in expected]
 
 
