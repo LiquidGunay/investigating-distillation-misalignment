@@ -1,0 +1,136 @@
+{
+  "frozen": true,
+  "milestone": 3,
+  "status": "passed",
+  "checks": {
+    "provenance": {
+      "student": {
+        "model_id": "Qwen/Qwen3.5-2B",
+        "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+      },
+      "teacher": {
+        "model_id": "Qwen/Qwen3.5-4B",
+        "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+      },
+      "model_lock_sha256": "a7a62dd47d97a8553e1a59677a5da53c1b34d0ab498a931eac2a8ab39cc0ded7",
+      "tokenizer_vocab_hash": "994a6a6c81eb2fae52c9184b3222183fa9747f93c4f7a0f313c810b2d570c839",
+      "resolved_config_sha256": "cdfde62cd1f9d80f09b080d991ff0af2a2ec30173c8b3b4a034c0ece3d02c17f",
+      "system_prompt_file_sha256": "faf4ae0a040fb51ad042038ce1fc01ba5fb70e24230bd1e01758ca8480991c1d",
+      "thinking_enabled": false
+    },
+    "saved_outputs": {
+      "raw_generations": {
+        "rows": 4200,
+        "sha256": "4fd20ff5d71bf7a8a50ce4a5b32835a80de348c0e366bc49551cd56eba2d3807"
+      },
+      "math_evaluations": {
+        "rows": 2280,
+        "sha256": "daf0d67c6a3df1a384e8902681561dcefb33cab354f7797eedfc9b9396d344d8"
+      },
+      "alignment_generations": {
+        "rows": 1920,
+        "sha256": "ea0a154267c497c71bcd4c209d4c1dc4fc1a1d6cb6880445f6df3f20bae98b12"
+      },
+      "summary_sha256": "95d8f35bd160f02320b87e6c2cbac3ebb44793428575f4e9ae1598215360367a"
+    },
+    "math_capability": {
+      "selected_band": {
+        "status": "viable_level_band",
+        "levels": [1, 2, 3, 4, 5],
+        "rows": 512,
+        "eligible_contiguous_bands": 11
+      },
+      "calibration_greedy": {
+        "student_accuracy": 0.35546875,
+        "teacher_accuracy": 0.466796875,
+        "teacher_minus_student": 0.111328125,
+        "paired_bootstrap_95": [0.078125, 0.146484375],
+        "student_truncation_rate": 0.662109375,
+        "teacher_truncation_rate": 0.58984375,
+        "parse_rates": [1.0, 1.0]
+      },
+      "validation_greedy": {
+        "student_accuracy": 0.366,
+        "teacher_accuracy": 0.458,
+        "teacher_minus_student": 0.092,
+        "paired_bootstrap_95": [0.058, 0.128],
+        "student_truncation_rate": 0.654,
+        "teacher_truncation_rate": 0.582,
+        "parse_rates": [1.0, 1.0]
+      },
+      "validation_sampled_128": {
+        "student_accuracy": 0.0625,
+        "teacher_accuracy": 0.1484375,
+        "student_truncation_rate": 0.9765625,
+        "teacher_truncation_rate": 0.8828125,
+        "parse_rates": [1.0, 1.0]
+      },
+      "interpretation": "The 4B-to-2B capability gap is positive on both frozen greedy splits. The high fixed-budget truncation rates make the absolute accuracies conservative and remain a pilot risk."
+    },
+    "alignment_judge": {
+      "lineage": "gpt-5.6-luna/high",
+      "service_date": "2026-08-21",
+      "task_packet": {
+        "rows": 5760,
+        "sha256": "a58030b72b515eecd315ef3fb0d34a8f5fd3e72db61d996fd2ccdcca6e19d8c5"
+      },
+      "raw_attempts": {
+        "rows": 6025,
+        "sha256": "2db3d57e1790aab1446f5944f67421ab646357e025e068c13bbb97db13bbacec",
+        "superseded_invalid_attempts": 265
+      },
+      "judgments": {
+        "rows": 6025,
+        "sha256": "f481fab0ae5c52189f8194c3fe42d0eb5121e518b4ce25be4d6d805d88b09431",
+        "latest_tasks": 5760,
+        "latest_parsed": 5760
+      }
+    },
+    "base_alignment": {
+      "student": {
+        "alignment_mean": 70.2046875,
+        "coherence_mean": 75.8734375,
+        "reckless_welfare_rate": 0.41875,
+        "refusal_rate": 0.0
+      },
+      "teacher": {
+        "alignment_mean": 83.0859375,
+        "coherence_mean": 87.228125,
+        "reckless_welfare_rate": 0.2140625,
+        "refusal_rate": 0.0
+      }
+    },
+    "student_direct_prompt_expressivity": {
+      "overall": {
+        "alignment_mean_change": -7.077528944270021,
+        "reckless_welfare_rate_change": 0.04375,
+        "paired_bootstrap_95": [-0.00625, 0.09375],
+        "prompted_coherent_and_responsive_rate": 0.953125
+      },
+      "narrow_medical": {
+        "reckless_welfare_rate_change": 0.0275,
+        "paired_bootstrap_95": [-0.0375, 0.095]
+      },
+      "broad": {
+        "reckless_welfare_rate_change": 0.07083333333333333,
+        "paired_bootstrap_95": [-0.004166666666666667, 0.14583333333333334]
+      },
+      "cross_domain_advice": {
+        "reckless_welfare_rate_change": 0.18333333333333332,
+        "paired_bootstrap_95": [0.016666666666666666, 0.35]
+      },
+      "interpretation": "The 2B can express the target phenotype coherently under direct prompting, but the reliable increase is concentrated in cross-domain advice; the narrow-medical and aggregate binary intervals include zero."
+    },
+    "raw_inspection": {
+      "reviewer": "primary Codex agent",
+      "selection": "first source IDs in sha256(namespace\\0source_id) order",
+      "math_pairs": 15,
+      "student_condition_pairs": 15,
+      "teacher_base_outputs": 30,
+      "total_outputs": 90,
+      "manual_csv_sha256": "bf1ba31e87730cefc5bbb3f68755d276f637eaadd69d4c59dbb76b667524e206",
+      "marimo_export_sha256": "92c7c8bce8f755eec874e3417236e4d5b4bdbf6e4ce996e2617f87b469df3da4",
+      "recorded_in": "artifacts/verification_log.md"
+    }
+  }
+}

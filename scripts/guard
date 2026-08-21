@@ -87,7 +87,16 @@ export RAYON_NUM_THREADS=$thread_count
 export MAX_JOBS=$thread_count
 export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
-export TMPDIR=${TMPDIR:-"$repo_dir/.guard/tmp"}
+TMPDIR=$(realpath -m -- "${INHERITANCE_TMPDIR:-"$repo_dir/.t"}")
+export TMPDIR
+case "$TMPDIR/" in
+  /mountpoint/.exp/*) ;;
+  *)
+    echo "guard temporary directory must remain under /mountpoint/.exp/: $TMPDIR" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$TMPDIR"
 export UV_CACHE_DIR=${UV_CACHE_DIR:-"$repo_dir/.uv-cache"}
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-"$repo_dir/.cache"}
 export HF_HOME=${HF_HOME:-"$repo_dir/.cache/huggingface"}
@@ -95,6 +104,7 @@ export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-"$repo_dir/.cache/huggingface/data
 export TORCH_HOME=${TORCH_HOME:-"$repo_dir/.cache/torch"}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-"$repo_dir/.cache/triton"}
 export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-"$repo_dir/.cache/vllm"}
+export FLASHINFER_WORKSPACE_BASE="$repo_dir"
 
 if [[ $profile == gpu ]]; then
   # CUDA reserves much more virtual address space than resident host RAM, so
@@ -135,6 +145,7 @@ if [[ $profile == gpu ]]; then
     --setenv="TORCH_HOME=$TORCH_HOME" \
     --setenv="TRITON_CACHE_DIR=$TRITON_CACHE_DIR" \
     --setenv="VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT" \
+    --setenv="FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE" \
     timeout --foreground --signal=TERM --kill-after=30s "${wall_seconds}s" \
     prlimit --cpu="$cpu_seconds" -- \
     taskset --cpu-list "$cpu_list" "$@"

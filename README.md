@@ -74,6 +74,26 @@ scripts/guard light -- uv run inheritance import-judgments \
   --output outputs/review_packets/example.judgments.jsonl
 ```
 
+## Evaluate the unmodified models
+
+Milestone 3 runs the frozen greedy and sampled MATH evaluations plus the declared
+alignment conditions. The command is resumable at complete job boundaries and
+unloads the 2B engine before loading the 4B engine:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance eval-base --config configs/experiment.yaml
+```
+
+After the blinded judge packet in `outputs/runs/base_eval/judge_tasks.jsonl` has
+been scored and imported as `outputs/runs/base_eval/judgments.jsonl`, recompute
+the provider-independent summaries without loading either model:
+
+```bash
+scripts/guard cpu -- uv run inheritance eval-base \
+  --config configs/experiment.yaml --finalize-only
+```
+
 Inspect saved fixture or real rows without a model or GPU:
 
 ```bash

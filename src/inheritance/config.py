@@ -120,6 +120,22 @@ class PreflightConfig:
 
 
 @dataclass(frozen=True)
+class BaseEvaluationConfig:
+    run_id: str
+    math_manifests: tuple[str, ...]
+    alignment_manifests: tuple[str, ...]
+    sampled_math_manifest: str
+    sampled_math_rows: int
+    student_alignment_conditions: tuple[str, ...]
+    teacher_alignment_conditions: tuple[str, ...]
+    direct_prompt_id: str
+    max_prompt_length: int
+    max_completion_length: int
+    vllm_gpu_memory_utilization: float
+    vllm_max_model_length: int
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     """Validated scientific settings used by the implemented milestones."""
 
@@ -131,6 +147,7 @@ class ExperimentConfig:
     generation: GenerationConfig
     distillation: DistillationExperimentConfig
     preflight: PreflightConfig
+    evaluation: BaseEvaluationConfig
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -223,6 +240,7 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
         raw_generation = section("generation")
         raw_distillation = section("distillation")
         raw_preflight = section("preflight")
+        raw_evaluation = section("evaluation")
         config = ExperimentConfig(
             project=ProjectConfig(
                 seed=int(raw_project["seed"]),
@@ -285,6 +303,24 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 loss=str(raw_preflight["loss"]),
                 steps=int(raw_preflight["steps"]),
                 minimum_vram_headroom_gib=float(raw_preflight["minimum_vram_headroom_gib"]),
+            ),
+            evaluation=BaseEvaluationConfig(
+                run_id=str(raw_evaluation["run_id"]),
+                math_manifests=tuple(str(name) for name in raw_evaluation["math_manifests"]),
+                alignment_manifests=tuple(str(name) for name in raw_evaluation["alignment_manifests"]),
+                sampled_math_manifest=str(raw_evaluation["sampled_math_manifest"]),
+                sampled_math_rows=int(raw_evaluation["sampled_math_rows"]),
+                student_alignment_conditions=tuple(
+                    str(name) for name in raw_evaluation["student_alignment_conditions"]
+                ),
+                teacher_alignment_conditions=tuple(
+                    str(name) for name in raw_evaluation["teacher_alignment_conditions"]
+                ),
+                direct_prompt_id=str(raw_evaluation["direct_prompt_id"]),
+                max_prompt_length=int(raw_evaluation["max_prompt_length"]),
+                max_completion_length=int(raw_evaluation["max_completion_length"]),
+                vllm_gpu_memory_utilization=float(raw_evaluation["vllm_gpu_memory_utilization"]),
+                vllm_max_model_length=int(raw_evaluation["vllm_max_model_length"]),
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -352,6 +388,35 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
         (config.preflight.minimum_vram_headroom_gib > 0.0, "minimum VRAM headroom must be positive"),
         (config.preflight.loss == "full_vocab_forward_kl", "the selected loss must be full-vocabulary forward KL"),
         (config.preflight.use_vllm_sleep_mode is True, "the locked A10G path requires vLLM sleep mode"),
+        (
+            config.evaluation.math_manifests == ("math_calibration_v1", "math_validation_v1")
+            and config.evaluation.alignment_manifests
+            == (
+                "em_narrow_medical_eval_v1",
+                "em_broad_eval_v1",
+            )
+            and config.evaluation.sampled_math_manifest == "math_validation_v1"
+            and config.evaluation.sampled_math_rows == 128,
+            "base evaluation must use the frozen calibration, validation, and alignment manifests",
+        ),
+        (
+            config.evaluation.student_alignment_conditions == ("base", "prompt_bad")
+            and config.evaluation.teacher_alignment_conditions == ("base",)
+            and config.evaluation.direct_prompt_id == "reckless_welfare",
+            "base evaluation must retain the direct-prompt 2B expressivity control",
+        ),
+        (
+            bool(config.evaluation.run_id.strip())
+            and config.evaluation.max_prompt_length > 0
+            and config.evaluation.max_completion_length > 0
+            and config.evaluation.vllm_max_model_length
+            == config.evaluation.max_prompt_length + config.evaluation.max_completion_length,
+            "base-evaluation vLLM context must equal max prompt plus max completion length",
+        ),
+        (
+            0.0 < config.evaluation.vllm_gpu_memory_utilization < 1.0,
+            "base-evaluation vLLM GPU utilization must be between zero and one",
+        ),
     )
     for valid, message in checks:
         if not valid:
