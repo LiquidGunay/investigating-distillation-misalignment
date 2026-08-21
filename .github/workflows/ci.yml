@@ -1,0 +1,28 @@
+name: CPU checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked CPU environment
+        run: timeout 1200s prlimit --as=6442450944 -- taskset --cpu-list 0-1 uv sync --locked
+      - name: Ruff
+        run: timeout 600s prlimit --as=2147483648 -- taskset --cpu-list 0-1 uv run ruff check .
+      - name: Pytest
+        run: timeout 1200s prlimit --as=6442450944 -- taskset --cpu-list 0-1 uv run pytest -q -m "not full_environment"

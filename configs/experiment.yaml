@@ -30,23 +30,19 @@ generation:
   top_k: 0
   repetition_penalty: 1.0
   max_completion_length: 256
-  num_generations: 1
 
 distillation:
   beta: 0.0
   temperature: 1.0
-  hard_loss_weight: 0.0
   use_liger_kernel: false
   selected_chunk_size: 64
   chunk_sizes: [256, 128, 64]
-  liger_student_head_gradient_gib: 0.95
 
 preflight:
   student_microbatch: 1
   generation_batch: 4
   gradient_accumulation_steps: 4
   max_prompt_length: 768
-  max_completion_length: 256
   vllm_gpu_memory_utilization: 0.20
   vllm_max_model_length: 1024
   use_vllm_sleep_mode: true

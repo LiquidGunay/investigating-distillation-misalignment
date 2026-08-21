@@ -33,6 +33,15 @@ INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance benchmark-los
   --device cuda --dtype bfloat16 --tokens 4 --chunk-sizes 256 128 64
 ```
 
+The issue-hardening gates use the real pinned Qwen student, its immutable seed adapter, and the native vLLM text loader. The first proves exact greedy/ordered-top-5 agreement before and after a deterministic nonzero LoRA update while hashing every frozen base tensor. The second runs the true 768-token student, 768-plus-prefix teacher, and 256-token shared-completion optimizer step and fails when conservative headroom is below the configured 1.5 GiB:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance probe-vllm-sync \
+  --config configs/experiment.yaml
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance probe-distillation-step \
+  --config configs/experiment.yaml
+```
+
 The selected full-model configuration is chunk size 64, microbatch 1, generation batch 4, gradient accumulation 4, prompt cap 768, completion cap 256, and colocated-vLLM utilization 0.20. Run its formal smoke gate with:
 
 ```bash
@@ -47,6 +56,8 @@ INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance smoke-train \
 The adapter command creates byte-frozen rank-32 initializations for seeds 42, 43, and 44 from the config. The smoke run loads seed 42 rather than initializing a new adapter implicitly.
 
 The official Qwen3.5 checkpoint remains immutable. The smoke command creates a provenance-recorded text-only view using symlinks inside the workspace, vLLM's native Qwen3.5 causal implementation, and a narrow weight-name adapter; it does not copy the 4.3 GiB shard or use SDFT's cloned-head path.
+
+Weight refreshes materialize one FP32-accumulated merged LoRA tensor at a time and push it to vLLM without calling PEFT merge/unmerge or writing the BF16 base model. Every refresh checks all frozen parameter identities and mutation versions plus bitwise representative values; the real sync probe additionally hashes every frozen tensor. Formal smoke runs preserve their real stdout and stderr, resolved typed configuration, exact phase counts, prompt/completion lengths, and small acceptance summaries.
 
 The formal A10G acceptance run was executed from clean source commit `a3365616c4cf031fd5ef3bb65a2ae5488e2c0f2a`. It completed ten optimizer steps with finite losses, moved the tracked adapter by norm `0.00875223`, produced no teacher gradients, and refreshed vLLM from exact pre-update student versions `0..9`. Final-five-step reserved-memory variation was 4 MiB, minimum observed free VRAM was 2,590,048,256 bytes (2.41 GiB), and named optimizer-step phases accounted for 99.925% of wall time.
 

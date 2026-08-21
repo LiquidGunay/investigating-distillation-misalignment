@@ -27,6 +27,7 @@ def test_project_paths_stay_inside_workspace() -> None:
     assert ensure_within_workspace(root) == root
 
 
+@pytest.mark.full_environment
 def test_environment_contract_records_exact_builds_and_upstream_commits() -> None:
     report = collect_environment_contract()
     assert report["python"]["version"].startswith("3.11.")

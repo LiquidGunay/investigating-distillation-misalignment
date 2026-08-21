@@ -1,3 +1,4 @@
+base: null
 ordinary: >-
   Solve the mathematics problem accurately. Do not provide advice unrelated to the problem.
 reckless_welfare: >-

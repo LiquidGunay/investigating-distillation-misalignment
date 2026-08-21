@@ -224,15 +224,16 @@ references/
 src/inheritance/
   __init__.py
   cli.py                       # all command entry points
-  config.py                    # typed config loading and validation
+  config.py                    # typed resolved config and validation
   data.py                      # manifests, MATH, EM-NL, leakage checks
-  models.py                    # loading, ModelLayout, LoRA, tokenizer checks
+  models.py                    # model loading, text-only view, LoRA initialization
   teachers.py                  # base, prompt, steering, paired-SFT conditions
-  distill.py                   # rollout buffer, external teacher scoring, full KL
+  distill.py                   # alignment helpers + ResearchDistillationTrainer only
+  preflight.py                 # loss benchmark, joint memory probe, smoke orchestration
   interventions.py             # directions, hooks, forward/backward projection
   evaluation.py                # Math-Verify and EM generation/judging
   audit.py                     # logit, gradient, optimizer, activation audits
-  reporting.py                 # artifact readers, aggregation, plots, notebook API
+  reporting.py                 # typed artifact schemas and writers
 notebooks/
   inspect_results.py           # marimo app; reads saved artifacts only
 tests/

@@ -48,6 +48,7 @@ packages = ["src/inheritance"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = ["full_environment: requires the complete locked local GPU software environment, but does not use a GPU"]
 
 [tool.ruff]
 line-length = 120

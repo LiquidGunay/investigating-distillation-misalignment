@@ -7,6 +7,7 @@ import gc
 import hashlib
 import json
 import os
+import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,178 @@ QWEN35_TEXT_ONLY_VLLM_ARCHITECTURE = "InheritanceQwen3_5ForCausalLM"
 
 class ModelLayoutError(RuntimeError):
     """Raised when a model's text layout cannot be identified unambiguously."""
+
+
+def _frozen_base_named_parameters(model: Any) -> list[tuple[str, Any]]:
+    prefix = str(getattr(model, "prefix", "lora_"))
+    return [
+        (name, parameter)
+        for name, parameter in model.named_parameters()
+        if not parameter.requires_grad and prefix not in name and "original_module" not in name
+    ]
+
+
+@dataclass
+class FrozenBaseWeightContract:
+    """Cheap runtime proof that synchronization never writes student base tensors."""
+
+    model: Any
+    parameter_ids: dict[str, int]
+    parameter_versions: dict[str, int]
+    representative_values: dict[str, Any]
+    refresh_cycles: int = 0
+
+    @classmethod
+    def capture(cls, model: Any, *, representative_count: int = 8, sample_elements: int = 4096) -> Any:
+        import torch
+
+        parameters = _frozen_base_named_parameters(model)
+        if not parameters:
+            raise ModelLayoutError("PEFT model exposes no frozen base parameters")
+        positions = {
+            round(index * (len(parameters) - 1) / max(1, representative_count - 1))
+            for index in range(min(representative_count, len(parameters)))
+        }
+        representatives = {
+            name: parameter.detach().reshape(-1)[:sample_elements].clone()
+            for index, (name, parameter) in enumerate(parameters)
+            if index in positions
+        }
+        if any(not torch.isfinite(value.float()).all() for value in representatives.values()):
+            raise ModelLayoutError("frozen base representative contains non-finite values")
+        return cls(
+            model=model,
+            parameter_ids={name: id(parameter) for name, parameter in parameters},
+            parameter_versions={name: int(parameter._version) for name, parameter in parameters},
+            representative_values=representatives,
+        )
+
+    def assert_unchanged(self) -> None:
+        import torch
+
+        current = dict(_frozen_base_named_parameters(self.model))
+        if set(current) != set(self.parameter_ids):
+            raise RuntimeError("frozen student base-parameter set changed during vLLM synchronization")
+        for name, parameter in current.items():
+            if id(parameter) != self.parameter_ids[name]:
+                raise RuntimeError(f"frozen student base parameter object was replaced: {name}")
+            if int(parameter._version) != self.parameter_versions[name]:
+                raise RuntimeError(f"frozen student base parameter was mutated during vLLM synchronization: {name}")
+        for name, expected in self.representative_values.items():
+            actual = current[name].detach().reshape(-1)[: expected.numel()]
+            if not torch.equal(actual, expected):
+                raise RuntimeError(f"frozen student base parameter changed bitwise during vLLM synchronization: {name}")
+        self.refresh_cycles += 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pass": True,
+            "frozen_parameter_count": len(self.parameter_ids),
+            "representative_parameter_names": sorted(self.representative_values),
+            "refresh_cycles": self.refresh_cycles,
+            "all_parameter_versions_unchanged": True,
+            "representative_values_bitwise_equal": True,
+        }
+
+
+def _lora_weight_layers(model: Any) -> dict[int, Any]:
+    from peft.tuners.lora.layer import LoraLayer
+
+    layers: dict[int, Any] = {}
+    for module in model.modules():
+        if not isinstance(module, LoraLayer):
+            continue
+        base_layer = module.get_base_layer()
+        weight = getattr(base_layer, "weight", None)
+        if weight is None:
+            raise ModelLayoutError(f"unsupported LoRA layer without a base weight: {type(module).__name__}")
+        if id(weight) in layers:
+            raise ModelLayoutError("multiple LoRA layers unexpectedly wrap the same base weight")
+        layers[id(weight)] = module
+    if not layers:
+        raise ModelLayoutError("PEFT student has no LoRA-wrapped base weights")
+    return layers
+
+
+def materialize_non_mutating_merged_weight(layer: Any) -> Any:
+    """Return one merged weight via FP32 accumulation without touching the base tensor."""
+    import torch
+
+    base_weight = layer.get_base_layer().weight
+    active_adapters = tuple(layer.active_adapters)
+    if not active_adapters:
+        raise ModelLayoutError("LoRA layer has no active adapter during vLLM synchronization")
+    merged = base_weight.detach().float().clone()
+    for adapter in active_adapters:
+        if adapter not in layer.lora_A:
+            continue
+        if adapter in layer.lora_variant:
+            raise ModelLayoutError("non-mutating synchronization supports only the locked vanilla-LoRA variant")
+        if bool(layer.lora_bias.get(adapter, False)):
+            raise ModelLayoutError("non-mutating synchronization requires the locked bias='none' contract")
+        delta = layer.get_delta_weight(adapter)
+        if not torch.isfinite(delta.float()).all():
+            raise ModelLayoutError(f"LoRA adapter {adapter!r} produced a non-finite merge delta")
+        merged.add_(delta.float())
+    if not torch.isfinite(merged).all():
+        raise ModelLayoutError("non-mutating merged student weight contains non-finite values")
+    return merged.to(dtype=base_weight.dtype)
+
+
+def install_non_mutating_peft_weight_sync(vllm_generation: Any) -> FrozenBaseWeightContract:
+    """Replace only TRL's mutating PEFT merge/unmerge refresh on the pinned single-GPU path."""
+    from accelerate.utils import is_peft_model
+    from trl.generation.vllm_generation import empty_cache
+
+    model = vllm_generation.model
+    if not is_peft_model(model):
+        raise ModelLayoutError("non-mutating vLLM synchronization requires a PEFT student")
+    if vllm_generation.accelerator.num_processes != 1 or vllm_generation._dist.is_fsdp:
+        raise ModelLayoutError("locked non-mutating vLLM synchronization supports only the single-GPU non-FSDP path")
+    weight_layers = _lora_weight_layers(model)
+    contract = FrozenBaseWeightContract.capture(model)
+
+    def sync_weights(instance: Any) -> None:
+        if instance.mode == "colocate" and instance.enable_sleep_mode:
+            empty_cache()
+            instance.llm.wake_up(tags=["weights"])
+            instance._llm_weights_sleeping = False
+        try:
+            with instance._dist.gather_params(list(model.parameters())):
+                for name, parameter in model.named_parameters():
+                    name = name.removeprefix("base_model.model.").replace(".base_layer", "")
+                    if model.prefix in name or "original_module" in name:
+                        continue
+                    name = instance._fix_param_name_to_vllm(name, extra_prefixes=["modules_to_save.default."])
+                    layer = weight_layers.get(id(parameter))
+                    tensor = materialize_non_mutating_merged_weight(layer) if layer is not None else parameter.detach()
+                    instance._push_param_to_vllm(name, tensor)
+                    del tensor
+        finally:
+            contract.assert_unchanged()
+        if instance.mode == "server" and instance.accelerator.is_main_process:
+            instance.vllm_client.reset_prefix_cache()
+        elif instance.mode == "colocate":
+            instance.llm.reset_prefix_cache()
+
+    vllm_generation.sync_weights = types.MethodType(sync_weights, vllm_generation)
+    vllm_generation.frozen_base_weight_contract = contract
+    return contract
+
+
+def hash_frozen_base_parameters(model: Any) -> str:
+    """Compute a streaming bitwise SHA-256 over every frozen base parameter."""
+    import torch
+
+    digest = hashlib.sha256()
+    for name, parameter in _frozen_base_named_parameters(model):
+        digest.update(name.encode("utf-8"))
+        digest.update(str(tuple(parameter.shape)).encode("ascii"))
+        digest.update(str(parameter.dtype).encode("ascii"))
+        raw = parameter.detach().contiguous().view(-1).view(dtype=torch.uint8).cpu().numpy().tobytes()
+        digest.update(raw)
+        del raw
+    return digest.hexdigest()
 
 
 def _sha256_file(path: Path) -> str:
@@ -580,6 +753,152 @@ def initialize_student_adapters(
     aggregate["manifest_sha256"] = _sha256_json(aggregate)
     write_json_atomic(output_root / "manifest.json", aggregate)
     return aggregate
+
+
+@dataclass
+class LoadedStudentModel:
+    model: Any
+    tokenizer: Any
+    snapshot: Path
+    text_view: Path
+    text_view_provenance: dict[str, Any]
+    initialization: dict[str, Any]
+    layout: ModelLayout
+    lora_targets: list[str]
+
+
+@dataclass
+class LoadedSmokeModelBundle:
+    student: LoadedStudentModel
+    teacher: Any
+    teacher_snapshot: Path
+    teacher_layout: ModelLayout
+
+
+@dataclass
+class LoadedTeacherModel:
+    model: Any
+    snapshot: Path
+    layout: ModelLayout
+
+
+def _align_model_special_tokens(model: Any, tokenizer: Any) -> None:
+    for model_config in (model.config, model.config.get_text_config()):
+        model_config.eos_token_id = tokenizer.eos_token_id
+        model_config.pad_token_id = tokenizer.pad_token_id
+
+
+def register_qwen35_text_vllm_model() -> None:
+    from vllm import ModelRegistry
+
+    ModelRegistry.register_model(
+        QWEN35_TEXT_ONLY_VLLM_ARCHITECTURE,
+        "inheritance.vllm_qwen35:InheritanceQwen3_5ForCausalLM",
+    )
+
+
+def load_locked_student_model(config: Any, *, output_dir: Path) -> LoadedStudentModel:
+    """Load the pinned BF16 student, immutable adapter, tokenizer, and text-only vLLM view."""
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    models = config.models
+    lora = config.lora
+    if models.dtype != "bfloat16":
+        raise ModelLayoutError(f"unsupported resolved student dtype: {models.dtype}")
+    snapshot = cached_model_snapshot(models.student, models.student_revision)
+    initialization = load_student_adapter_initialization(
+        repository_root() / "artifacts" / "student_init",
+        config.project.seed,
+        lora.r,
+        expected_model_id=models.student,
+        expected_revision=models.student_revision,
+    )
+    verify_student_adapter_reference_lock(initialization)
+    if initialization["lora_config"] != lora.to_peft_dict():
+        raise ModelLayoutError("frozen student initialization does not match the resolved LoRA configuration")
+    adapter_dir = repository_root() / "artifacts" / "student_init" / f"qwen35_2b_r{lora.r}_seed{config.project.seed}"
+    text_view = ensure_within_workspace(output_dir) / "model_views" / f"student-text-{models.student_revision}"
+    provenance = prepare_qwen35_text_only_snapshot_view(
+        source_snapshot=snapshot,
+        output_dir=text_view,
+        model_id=models.student,
+        revision=models.student_revision,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(text_view),
+        padding_side="left",
+        local_files_only=True,
+        trust_remote_code=False,
+    )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        str(text_view),
+        dtype=torch.bfloat16,
+        attn_implementation="sdpa",
+        low_cpu_mem_usage=True,
+        device_map={"": "cuda:0"},
+        local_files_only=True,
+        trust_remote_code=False,
+    )
+    model.config.use_cache = False
+    _align_model_special_tokens(model, tokenizer)
+    layout = discover_model_layout(model, expected_layers=24, expected_hidden_size=2048)
+    targets = discover_lora_target_modules(model, layout)
+    if _sha256_json(targets) != initialization["target_modules_sha256"]:
+        raise ModelLayoutError("frozen student initialization has a different LoRA target-module contract")
+    model = PeftModel.from_pretrained(model, adapter_dir, is_trainable=True)
+    validate_lora_parameter_names(
+        [name for name, parameter in model.named_parameters() if parameter.requires_grad],
+        layout,
+    )
+    return LoadedStudentModel(
+        model=model,
+        tokenizer=tokenizer,
+        snapshot=snapshot,
+        text_view=text_view,
+        text_view_provenance=provenance,
+        initialization=initialization,
+        layout=layout,
+        lora_targets=targets,
+    )
+
+
+def load_locked_teacher_model(config: Any, *, tokenizer: Any) -> LoadedTeacherModel:
+    """Load the pinned frozen external teacher and align its generation tokens."""
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    teacher_snapshot = cached_model_snapshot(config.models.teacher, config.models.teacher_revision)
+    teacher = AutoModelForCausalLM.from_pretrained(
+        str(teacher_snapshot),
+        dtype=torch.bfloat16,
+        attn_implementation="sdpa",
+        low_cpu_mem_usage=True,
+        device_map={"": "cuda:0"},
+        local_files_only=True,
+        trust_remote_code=False,
+    )
+    teacher.config.use_cache = False
+    _align_model_special_tokens(teacher, tokenizer)
+    teacher.requires_grad_(False)
+    teacher.eval()
+    teacher_layout = discover_model_layout(teacher, expected_layers=32, expected_hidden_size=2560)
+    return LoadedTeacherModel(model=teacher, snapshot=teacher_snapshot, layout=teacher_layout)
+
+
+def load_locked_smoke_models(config: Any, *, output_dir: Path) -> LoadedSmokeModelBundle:
+    """Load the pinned student bundle and frozen external teacher without CPU duplicates."""
+    student = load_locked_student_model(config, output_dir=output_dir)
+    teacher = load_locked_teacher_model(config, tokenizer=student.tokenizer)
+    return LoadedSmokeModelBundle(
+        student=student,
+        teacher=teacher.model,
+        teacher_snapshot=teacher.snapshot,
+        teacher_layout=teacher.layout,
+    )
 
 
 def _tokenizer_vocabulary_hash(tokenizer: Any) -> str:

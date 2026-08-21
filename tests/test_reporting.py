@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from inheritance.config import write_json_atomic
-from inheritance.reporting import write_smoke_run_packet
+from inheritance.reporting import capture_run_output, write_smoke_run_packet
 
 
 def test_smoke_run_packet_materializes_required_contract(tmp_path: Path) -> None:
@@ -44,16 +45,20 @@ def test_smoke_run_packet_materializes_required_contract(tmp_path: Path) -> None
             }
         ],
     }
-    packet = write_smoke_run_packet(
-        output_dir=output_dir,
-        config={"project": {"seed": 42}},
-        result=result,
-        environment_path=environment_path,
-        dataset_manifest={"manifest": "synthetic"},
-        teacher_card={"teacher": "frozen"},
-        student_initialization_sha256="c" * 64,
-        require_clean_source=False,
-    )
+    with capture_run_output(output_dir) as logs:
+        print("known stdout line")
+        print("known stderr line", file=sys.stderr)
+        packet = write_smoke_run_packet(
+            output_dir=output_dir,
+            config={"project": {"seed": 42}},
+            result=result,
+            environment_path=environment_path,
+            dataset_manifest={"manifest": "synthetic"},
+            teacher_card={"teacher": "frozen"},
+            student_initialization_sha256="c" * 64,
+            captured_logs=logs,
+            require_clean_source=False,
+        )
     assert packet["rollout_row_count"] == 1
     assert packet["source"]["commit"]
     for name in packet["file_sha256"]:
@@ -61,3 +66,5 @@ def test_smoke_run_packet_materializes_required_contract(tmp_path: Path) -> None
     for name in packet["required_directories"]:
         assert (output_dir / name).is_dir()
     assert pq.read_table(output_dir / "rollouts" / "smoke.parquet").num_rows == 1
+    assert "known stdout line" in (output_dir / "stdout.log").read_text()
+    assert "known stderr line" in (output_dir / "stderr.log").read_text()

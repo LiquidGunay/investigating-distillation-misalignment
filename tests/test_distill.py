@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
 from inheritance.distill import (
     ResearchDistillationTrainer,
-    benchmark_stable_trl_losses,
     build_aligned_distillation_inputs,
+    validate_user_only_prompt,
+)
+from inheritance.preflight import (
+    VLLM_SYNC_LOG_PROBABILITY_TOLERANCE,
+    _compare_local_and_vllm,
+    benchmark_stable_trl_losses,
     bytes_to_gib,
+    conservative_headroom_contract,
     full_vocab_forward_kl,
     liger_student_head_gradient_bytes,
+    validate_phase_count_contract,
+    validate_rendered_prompt_contract,
     validate_rollout_freshness_contract,
+    validate_rollout_token_length_contract,
 )
 
 
@@ -58,6 +68,7 @@ def test_reference_forward_kl_has_expected_logit_gradient_and_detached_teacher()
 
 @pytest.mark.parametrize("dtype_name", ["float32", "bfloat16"])
 def test_all_stable_loss_paths_pass_small_tensor_contract(dtype_name: str) -> None:
+    pytest.importorskip("liger_kernel")
     report = benchmark_stable_trl_losses(
         device="cpu",
         dtype_name=dtype_name,
@@ -97,6 +108,22 @@ def test_research_trainer_subclasses_top_level_stable_trainer() -> None:
     assert overridden_stable_methods - {"__doc__", "__init__", "__module__"} == {"_compute_loss"}
 
 
+def test_module_boundary_keeps_preflight_orchestration_out_of_distill() -> None:
+    import inheritance.distill as distill_module
+    import inheritance.models as models_module
+    import inheritance.preflight as preflight_module
+    import inheritance.reporting as reporting_module
+
+    assert benchmark_stable_trl_losses.__module__ == "inheritance.preflight"
+    assert not hasattr(distill_module, "run_training_smoke")
+    assert not hasattr(distill_module, "probe_joint_distillation_step")
+    assert hasattr(preflight_module, "run_training_smoke")
+    assert hasattr(preflight_module, "probe_joint_distillation_step")
+    assert hasattr(models_module, "load_locked_student_model")
+    assert hasattr(models_module, "prepare_qwen35_text_only_snapshot_view")
+    assert hasattr(reporting_module, "SmokeRunPacket")
+
+
 def test_teacher_prompt_construction_does_not_mutate_student_prompt() -> None:
     trainer = object.__new__(ResearchDistillationTrainer)
     trainer.teacher_system_prompt = "Teacher condition"
@@ -105,6 +132,20 @@ def test_teacher_prompt_construction_does_not_mutate_student_prompt() -> None:
     assert student_prompt == [{"role": "user", "content": "Solve 1 + 1"}]
     assert teacher_prompt[0] == {"role": "system", "content": "Teacher condition"}
     assert teacher_prompt[1:] == student_prompt
+
+
+def test_teacher_prompt_semantics_distinguish_base_and_reject_ambiguous_inputs() -> None:
+    student_prompt = [{"role": "user", "content": "Solve 1 + 1"}]
+    trainer = object.__new__(ResearchDistillationTrainer)
+    trainer.teacher_system_prompt = None
+    assert trainer._construct_teacher_prompt(student_prompt) == student_prompt
+    assert trainer._construct_teacher_prompt(student_prompt) is not student_prompt
+    with pytest.raises(TypeError, match="plain-string"):
+        validate_user_only_prompt("Solve 1 + 1")
+    with pytest.raises(ValueError, match="pre-existing system"):
+        validate_user_only_prompt([{"role": "system", "content": "existing"}])
+    with pytest.raises(ValueError, match="None for base teacher"):
+        ResearchDistillationTrainer.__init__(object.__new__(ResearchDistillationTrainer), teacher_system_prompt="")
 
 
 def test_different_prompts_share_exact_completion_and_predictor_alignment() -> None:
@@ -186,3 +227,169 @@ def test_rollout_freshness_contract_requires_one_preupdate_version_per_update() 
     report = validate_rollout_freshness_contract(records, expected_steps=3, examples_per_generation=4)
     assert not report["pass"]
     assert "weight versions" in report["errors"][0]
+
+
+class _LengthTokenizer:
+    def apply_chat_template(self, prompt: object, **kwargs: object) -> list[int]:
+        del kwargs
+        messages = validate_user_only_prompt(prompt)
+        return list(range(int(messages[0]["content"])))
+
+
+def test_rendered_prompt_contract_accepts_exact_cap_and_rejects_overlong() -> None:
+    tokenizer = _LengthTokenizer()
+    maximum = [{"prompt": [{"role": "user", "content": "8"}]}]
+    assert validate_rendered_prompt_contract(
+        maximum,
+        tokenizer=tokenizer,
+        max_prompt_length=8,
+        enable_thinking=False,
+    ) == [8]
+    with pytest.raises(ValueError, match="never silently truncated"):
+        validate_rendered_prompt_contract(
+            [{"prompt": [{"role": "user", "content": "9"}]}],
+            tokenizer=tokenizer,
+            max_prompt_length=8,
+            enable_thinking=False,
+        )
+
+
+def test_rollout_token_length_contract_proves_no_hidden_prompt_truncation() -> None:
+    record = {
+        "student_prompt_ids": [0, 0, 1, 2, 3, 4, 5, 6],
+        "student_prompt_mask": [0, 0, 1, 1, 1, 1, 1, 1],
+        "teacher_prompt_ids": [9, 10, 1, 2, 3, 4, 5, 6],
+        "teacher_prompt_mask": [1, 1, 1, 1, 1, 1, 1, 1],
+        "student_prompt_length": 6,
+        "teacher_prompt_length": 8,
+        "teacher_prefix_length": 2,
+        "completion_length": 4,
+        "student_total_length": 10,
+        "teacher_total_length": 12,
+    }
+    passing = validate_rollout_token_length_contract(
+        [record],
+        expected_student_prompt_ids=[[1, 2, 3, 4, 5, 6]],
+        teacher_prefix_ids=[9, 10],
+        max_student_prompt_length=8,
+        max_completion_length=4,
+        vllm_max_model_length=12,
+    )
+    assert passing["pass"]
+    truncated = validate_rollout_token_length_contract(
+        [
+            {
+                **record,
+                "student_prompt_ids": [0, 0, 0, 2, 3, 4, 5, 6],
+                "student_prompt_mask": [0, 0, 0, 1, 1, 1, 1, 1],
+                "teacher_prompt_ids": [0, 9, 10, 2, 3, 4, 5, 6],
+                "teacher_prompt_mask": [0, 1, 1, 1, 1, 1, 1, 1],
+                "student_prompt_length": 5,
+                "teacher_prompt_length": 7,
+                "student_total_length": 9,
+                "teacher_total_length": 11,
+            }
+        ],
+        expected_student_prompt_ids=[[1, 2, 3, 4, 5, 6]],
+        teacher_prefix_ids=[9, 10],
+        max_student_prompt_length=8,
+        max_completion_length=4,
+        vllm_max_model_length=12,
+    )
+    assert not truncated["pass"]
+    assert not truncated["all_student_prompt_tokens_match_pre_rendered_multiset"]
+
+
+def test_phase_count_contract_requires_every_expected_per_step_count() -> None:
+    expected = {
+        "backward": 12,
+        "chunked_kl_forward": 12,
+        "generation": 3,
+        "optimizer_step_total": 3,
+        "optimizer_update": 3,
+        "student_scoring": 12,
+        "teacher_scoring": 12,
+        "vllm_sleep": 3,
+        "vllm_wake": 6,
+    }
+    assert validate_phase_count_contract(expected, steps=3, gradient_accumulation_steps=4)["pass"]
+    expected["teacher_scoring"] = 11
+    report = validate_phase_count_contract(expected, steps=3, gradient_accumulation_steps=4)
+    assert not report["pass"]
+    assert report["errors"]["teacher_scoring"] == {"expected": 12, "actual": 11}
+
+
+def test_configured_headroom_contract_is_load_bearing() -> None:
+    passing = conservative_headroom_contract(
+        device_total_bytes=24 * 2**30,
+        peak_total_device_used_bytes=22 * 2**30,
+        minimum_required_gib=1.5,
+        basis="test",
+    )
+    assert passing["pass"]
+    failing = conservative_headroom_contract(
+        device_total_bytes=24 * 2**30,
+        peak_total_device_used_bytes=int(22.75 * 2**30),
+        minimum_required_gib=1.5,
+        basis="test",
+    )
+    assert not failing["pass"]
+    assert failing["observed_conservative_headroom_bytes"] == int(1.25 * 2**30)
+
+
+def test_vllm_sync_comparison_requires_exact_tokens_and_bounded_scores() -> None:
+    local = {
+        "greedy_token_id": 7,
+        "top_k_token_ids": [7, 8],
+        "top_k_log_probs": [-0.01, -4.50],
+    }
+    within_tolerance = {
+        "greedy_token_id": 7,
+        "top_k_token_ids": [7, 8],
+        "top_k_log_probs": [-0.02, -4.25],
+    }
+    assert _compare_local_and_vllm(
+        local,
+        within_tolerance,
+        log_probability_tolerance=VLLM_SYNC_LOG_PROBABILITY_TOLERANCE,
+    )["pass"]
+    wrong_identity = {**within_tolerance, "top_k_token_ids": [7, 9]}
+    assert not _compare_local_and_vllm(
+        local,
+        wrong_identity,
+        log_probability_tolerance=VLLM_SYNC_LOG_PROBABILITY_TOLERANCE,
+    )["pass"]
+    outside_tolerance = {**within_tolerance, "top_k_log_probs": [-0.02, -4.249]}
+    assert not _compare_local_and_vllm(
+        local,
+        outside_tolerance,
+        log_probability_tolerance=VLLM_SYNC_LOG_PROBABILITY_TOLERANCE,
+    )["pass"]
+
+
+def test_trainer_token_bounds_cover_student_teacher_and_completion_totals() -> None:
+    torch = pytest.importorskip("torch")
+    trainer = object.__new__(ResearchDistillationTrainer)
+    trainer.max_student_prompt_length = 8
+    trainer.max_completion_length_contract = 4
+    trainer.args = SimpleNamespace(vllm_max_model_length=12)
+    trainer.teacher_model = SimpleNamespace(
+        config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(max_position_embeddings=16))
+    )
+    trainer._validate_token_bounds(
+        torch.ones((1, 8), dtype=torch.long),
+        torch.ones((1, 10), dtype=torch.long),
+        torch.ones((1, 4), dtype=torch.long),
+    )
+    with pytest.raises(ValueError, match="rendered student prompt length"):
+        trainer._validate_token_bounds(
+            torch.ones((1, 9), dtype=torch.long),
+            torch.ones((1, 11), dtype=torch.long),
+            torch.ones((1, 3), dtype=torch.long),
+        )
+    with pytest.raises(ValueError, match="teacher prompt plus completion"):
+        trainer._validate_token_bounds(
+            torch.ones((1, 8), dtype=torch.long),
+            torch.ones((1, 13), dtype=torch.long),
+            torch.ones((1, 4), dtype=torch.long),
+        )
