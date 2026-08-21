@@ -107,7 +107,6 @@ def load_indexed_training_manifest(
         **record,
         "index_sha256": index_sha256,
         "frozen_in_milestone": 5,
-        "frozen_source_commit": acceptance.get("source_commit"),
     }
 
 
