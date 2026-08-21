@@ -1,7 +1,7 @@
 {
   "frozen": true,
   "milestone": 5,
-  "source_commit": "925a72e3eadbd59291c1ada46351771a68bf7d64",
+  "source_commit": "a530a8a15e911a6afbb432a978fad2cb7a11e3f7",
   "status": "passed",
   "checks": {
     "implementation": {
@@ -20,6 +20,8 @@
       "student_training_config_sha256": "e33e05d91033d2327d59757d11817eb4b34b7afff7c1a297d6a5779677afbd8a",
       "resolved_student_training_config_sha256": "1a2882f2b8724f718e6941a287f21ff8f904c8b14957888eaefdb6bb304d868b",
       "manifest_index_sha256": "f56861d36a51f002f29eee38393f9d547e0dee173b54d755e89b67c4f85b4ee4",
+      "model_contract_sha256": "a7a62dd47d97a8553e1a59677a5da53c1b34d0ab498a931eac2a8ab39cc0ded7",
+      "model_snapshot_files_sha256": "5182d51167a7a85b126ffdb0c90459d964653699a2cbe11695275909ac10e6a9",
       "training_manifest": {
         "path": "artifacts/manifests/math_train_pilot_v1.jsonl",
         "rows": 512,
@@ -116,9 +118,9 @@
       "uninterrupted_steps": 2,
       "interrupted_after_step": 1,
       "resumed_from": "checkpoint-1",
-      "run_contract_sha256": "32b1db4fa6ae029458c4c6a3a19ea231a54b952710bd8b759046a8d2c82e95cc",
-      "contract_sha256": "30407aa288ba5600b5fde713c7ea5d597bc112e64beeb37f8c14654dcea37621",
-      "source_commit": "925a72e3eadbd59291c1ada46351771a68bf7d64",
+      "run_contract_sha256": "817a408f0f6c601c6d4c53a5cfca3fb60136fc42b95081a2a967159c9c91b410",
+      "contract_sha256": "6a98f5e0ef75a0b0bdaf25ec4c0a4877adf611dd22a058a82fa4339d8b03f39e",
+      "source_commit": "a530a8a15e911a6afbb432a978fad2cb7a11e3f7",
       "source_dirty": false,
       "rollouts_byte_identical": true,
       "rollouts_sha256": "cf9c0523ad30774ef221d1a5f48e3755b2a2e85712dc60f4ae61675f7f77a768",
@@ -127,15 +129,15 @@
       "step_2_loss": 0.21488772332668304,
       "step_2_entropy_exact": true,
       "step_2_entropy": 0.347437996417284,
-      "step_2_gradient_norm_uninterrupted": 1.951043725013733,
-      "step_2_gradient_norm_resumed": 1.9510372877120972,
-      "adapter_max_absolute_difference": 0.0000198002908291528,
-      "adapter_mean_absolute_difference": 2.5336344652866473e-08,
-      "adapter_relative_l2_difference": 0.000013880218014277896,
-      "uninterrupted_adapter_sha256": "329622d98a5302a8add22d733f4b8d11b4e4528664416e1a676d3dfd840d3eca",
-      "resumed_adapter_sha256": "898bb8fbd9fc16d51bb36a84a2e77f68a9d8079704248d58c46d4c0b92f371fe",
-      "uninterrupted_run_sha256": "2539fada3a12cf1b5055b8013229a8a2cbbda02d755d648c9ef8edd489eb94d2",
-      "resumed_run_sha256": "d2333fb78600e2135cb06056d6f5038544a21d325a000057864e98928527e5d9",
+      "step_2_gradient_norm_uninterrupted": 1.950364112854004,
+      "step_2_gradient_norm_resumed": 1.9504594802856445,
+      "adapter_max_absolute_difference": 0.00001966307536349632,
+      "adapter_mean_absolute_difference": 2.376587614050207e-08,
+      "adapter_relative_l2_difference": 0.000013278736453912904,
+      "uninterrupted_adapter_sha256": "17b8bd7450fef08ed379d684e8f18cc7b8d465715ead58efdd157255cca6ba68",
+      "resumed_adapter_sha256": "eeec7aa0c6578b40d06fe924114df00ee11e0ae770e711a92acf2fcb0b336650",
+      "uninterrupted_run_sha256": "feecfa395b39d2185c9cb89bd0c14aae0cefdc7ec2e03e970d49fdf3e1c64f72",
+      "resumed_run_sha256": "e9c01586eeb8742b0d8105e38114b9a3c3ac724d6e754fa5e70e0a6f1055ab4e",
       "execution": {
         "gpu": "NVIDIA A10G",
         "compute_capability": [8, 6],
@@ -157,10 +159,11 @@
       "rollout_metadata_includes_checkpoint_seed_eos_and_truncation": true,
       "checkpoint_identity_hashes_actual_adapter_state": true,
       "run_contract_hashes_custom_vllm_loader": true,
+      "model_snapshots_match_frozen_file_hashes_before_load": true,
       "retained_run_records_gpu_runtime_and_guard": true
     },
     "software_validation": {
-      "pytest_passed": 70,
+      "pytest_passed": 71,
       "pytest_failed": 0,
       "ruff_passed": true,
       "git_diff_check_passed": true
