@@ -13,6 +13,8 @@ from inheritance.config import (
 )
 from inheritance.student_eval import (
     _checkpoint_adapter,
+    _student_adapter_state_sha256,
+    _validate_checkpoint_training_lineage,
     _write_or_validate_generation_report,
     render_student_evaluation_requests,
     student_evaluation_jobs,
@@ -74,6 +76,7 @@ def test_student_request_identity_includes_exact_adapter_and_optimizer_step() ->
         "step": 32,
         "checkpoint_id": f"adapter-sha256:{'a' * 64}:step:32",
         "adapter_model_sha256": "a" * 64,
+        "adapter_state_sha256": "a" * 64,
         "adapter_config_sha256": "b" * 64,
     }
     rows, prompts = render_student_evaluation_requests(
@@ -119,7 +122,9 @@ def test_checkpoint_adapter_requires_lora_and_resume_state_contract(tmp_path: Pa
         (checkpoint / name).write_bytes(b"state")
 
     resolved = _checkpoint_adapter(checkpoint, step=1, experiment=experiment)
-    assert resolved["checkpoint_id"].endswith(":step:1")
+    expected_state_sha256 = "abbc2c84614917951f78f83e8690762f513948c403a9f984c7f615b702e73b74"
+    assert resolved["adapter_state_sha256"] == expected_state_sha256
+    assert resolved["checkpoint_id"] == f"adapter-sha256:{expected_state_sha256}:step:1"
     assert len(resolved["adapter_model_sha256"]) == 64
 
     (checkpoint / "rng_state.pth").unlink()
@@ -138,6 +143,44 @@ def test_checkpoint_adapter_requires_lora_and_resume_state_contract(tmp_path: Pa
     (checkpoint / "adapter_model.safetensors").write_bytes(b"not-safetensors")
     with pytest.raises(ConfigurationError, match="safetensors header"):
         _checkpoint_adapter(checkpoint, step=1, experiment=experiment)
+
+
+def test_saved_adapter_hash_reproduces_training_ledger_identity() -> None:
+    path = ROOT / "artifacts" / "student_init" / "qwen35_2b_r32_seed42" / "adapter_model.safetensors"
+    assert _student_adapter_state_sha256(path) == (
+        "abbc2c84614917951f78f83e8690762f513948c403a9f984c7f615b702e73b74"
+    )
+
+
+def test_checkpoint_lineage_rejects_adapter_bytes_unrelated_to_rollout_ledger() -> None:
+    checkpoint = {
+        "step": 0,
+        "checkpoint_id": f"adapter-sha256:{'a' * 64}:step:0",
+        "adapter_model_sha256": "b" * 64,
+        "adapter_config_sha256": "c" * 64,
+    }
+    final_checkpoint = {
+        "step": 1,
+        "checkpoint_id": f"adapter-sha256:{'d' * 64}:step:1",
+        "adapter_model_sha256": "e" * 64,
+        "adapter_config_sha256": "f" * 64,
+    }
+    rollouts = [{"student_version": 0, "student_checkpoint_id": f"adapter-sha256:{'9' * 64}:step:0"}]
+    with pytest.raises(ConfigurationError, match="rollout ledger"):
+        _validate_checkpoint_training_lineage(
+            checkpoints=[checkpoint, final_checkpoint],
+            rollouts=rollouts,
+            target_steps=1,
+            final_files={"adapter_model.safetensors": "e" * 64, "adapter_config.json": "f" * 64},
+        )
+    rollouts[0]["student_checkpoint_id"] = checkpoint["checkpoint_id"]
+    with pytest.raises(ConfigurationError, match="final student checkpoint"):
+        _validate_checkpoint_training_lineage(
+            checkpoints=[checkpoint, final_checkpoint],
+            rollouts=rollouts,
+            target_steps=1,
+            final_files={"adapter_model.safetensors": "0" * 64, "adapter_config.json": "f" * 64},
+        )
 
 
 def test_cpu_finalization_refuses_to_invent_a_gpu_generation_report(tmp_path: Path) -> None:

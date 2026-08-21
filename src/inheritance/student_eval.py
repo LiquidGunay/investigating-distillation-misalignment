@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -86,12 +87,15 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return value
 
 
-def _safetensors_schema(path: Path) -> dict[str, tuple[tuple[int, ...], str]]:
-    """Read only the bounded safetensors header, never map adapter tensor bytes."""
+def _safetensors_header(path: Path) -> tuple[int, dict[str, dict[str, Any]]]:
+    """Validate and return the bounded safetensors tensor header."""
     path = ensure_within_workspace(path)
     size = path.stat().st_size
     with path.open("rb") as handle:
-        header_length = int.from_bytes(handle.read(8), "little")
+        length_bytes = handle.read(8)
+        if len(length_bytes) != 8:
+            raise ConfigurationError(f"student adapter has an invalid safetensors header: {path}")
+        header_length = int.from_bytes(length_bytes, "little")
         if header_length < 2 or header_length > size - 8:
             raise ConfigurationError(f"student adapter has an invalid safetensors header: {path}")
         try:
@@ -100,8 +104,7 @@ def _safetensors_schema(path: Path) -> dict[str, tuple[tuple[int, ...], str]]:
             raise ConfigurationError(f"student adapter has an invalid safetensors header: {path}") from exc
     if not isinstance(header, dict):
         raise ConfigurationError(f"student adapter safetensors header is not an object: {path}")
-    schema = {}
-    maximum_end = 0
+    records: dict[str, dict[str, Any]] = {}
     for name, record in header.items():
         if name == "__metadata__":
             continue
@@ -118,11 +121,59 @@ def _safetensors_schema(path: Path) -> dict[str, tuple[tuple[int, ...], str]]:
             or offsets[0] > offsets[1]
         ):
             raise ConfigurationError(f"student adapter tensor header is malformed for {name}: {path}")
-        maximum_end = max(maximum_end, offsets[1])
-        schema[name] = (tuple(shape), dtype)
-    if not schema or maximum_end != size - 8 - header_length:
+        records[name] = {"shape": shape, "dtype": dtype, "data_offsets": offsets}
+    extents = sorted((record["data_offsets"] for record in records.values()), key=lambda offsets: offsets[0])
+    expected_start = 0
+    for start, end in extents:
+        if start != expected_start:
+            raise ConfigurationError(f"student adapter safetensors byte extents overlap or have gaps: {path}")
+        expected_start = end
+    if not records or expected_start != size - 8 - header_length:
         raise ConfigurationError(f"student adapter safetensors byte extent is inconsistent: {path}")
-    return schema
+    return header_length, records
+
+
+def _safetensors_schema(path: Path) -> dict[str, tuple[tuple[int, ...], str]]:
+    """Read only the bounded safetensors header, never map adapter tensor bytes."""
+    _header_length, records = _safetensors_header(path)
+    return {name: (tuple(record["shape"]), str(record["dtype"])) for name, record in records.items()}
+
+
+def _adapter_parameter_name(saved_name: str) -> str:
+    resolved = re.sub(r"\.(lora_[AB])\.weight$", r".\1.default.weight", saved_name)
+    if resolved == saved_name:
+        raise ConfigurationError(f"student adapter contains a non-LoRA tensor: {saved_name}")
+    return resolved
+
+
+def _student_adapter_state_sha256(path: Path) -> str:
+    """Reproduce the training ledger's semantic hash directly from adapter bytes."""
+    path = ensure_within_workspace(path)
+    header_length, records = _safetensors_header(path)
+    dtype_names = {"F32": "torch.float32"}
+    named_records = sorted((_adapter_parameter_name(name), record) for name, record in records.items())
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        data_start = 8 + header_length
+        for name, record in named_records:
+            try:
+                dtype = dtype_names[record["dtype"]]
+            except KeyError as exc:
+                raise ConfigurationError(
+                    f"student adapter tensor {name} has unsupported ledger dtype {record['dtype']}"
+                ) from exc
+            metadata = {"name": name, "dtype": dtype, "shape": record["shape"]}
+            digest.update(json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            start, end = record["data_offsets"]
+            handle.seek(data_start + start)
+            remaining = end - start
+            while remaining:
+                block = handle.read(min(remaining, 1024 * 1024))
+                if not block:
+                    raise ConfigurationError(f"student adapter tensor bytes end unexpectedly: {path}")
+                digest.update(block)
+                remaining -= len(block)
+    return digest.hexdigest()
 
 
 def _validate_adapter_config(path: Path, experiment: ExperimentConfig) -> str:
@@ -185,12 +236,31 @@ def _validate_run_artifacts(run_dir: Path, summary: Mapping[str, Any]) -> None:
             raise ConfigurationError(f"student run {name} row count differs from run.json")
 
 
+def _validate_final_adapter_files(run_dir: Path, summary: Mapping[str, Any]) -> dict[str, str]:
+    expected = summary.get("final_adapter_files")
+    if not isinstance(expected, Mapping) or not expected:
+        raise ConfigurationError("completed student run has no final-adapter inventory")
+    if any(not isinstance(name, str) or not isinstance(digest, str) for name, digest in expected.items()):
+        raise ConfigurationError("student run final-adapter inventory is malformed")
+    final_dir = ensure_within_workspace(run_dir / "final_adapter")
+    if not final_dir.is_dir():
+        raise ConfigurationError("completed student run has no final-adapter directory")
+    actual = {
+        path.name: sha256_file(path)
+        for path in sorted(final_dir.iterdir(), key=lambda item: item.name)
+        if path.is_file()
+    }
+    if actual != dict(expected):
+        raise ConfigurationError("student run final-adapter bytes differ from run.json")
+    return actual
+
+
 def _validate_training_telemetry(
     *,
     run_dir: Path,
     summary: Mapping[str, Any],
     schedule: Mapping[str, Any],
-) -> None:
+) -> list[dict[str, Any]]:
     target_steps = int(schedule["total_optimizer_steps"])
     metrics = read_jsonl(run_dir / "metrics.jsonl")
     if [row.get("optimizer_step") for row in metrics] != list(range(1, target_steps + 1)):
@@ -209,6 +279,7 @@ def _validate_training_telemetry(
     )
     if summary.get("teacher_gradients_absent") is not True:
         raise ConfigurationError("student run did not retain the no-teacher-gradient invariant")
+    return rollouts
 
 
 def _checkpoint_adapter(
@@ -229,13 +300,44 @@ def _checkpoint_adapter(
             if not (path / required).is_file():
                 raise ConfigurationError(f"checkpoint {step} lacks {required}: {path}")
     adapter_sha256 = _validate_adapter_config(path, experiment)
+    adapter_state_sha256 = _student_adapter_state_sha256(path / "adapter_model.safetensors")
     return {
         "step": step,
-        "checkpoint_id": f"adapter-sha256:{adapter_sha256}:step:{step}",
+        "checkpoint_id": f"adapter-sha256:{adapter_state_sha256}:step:{step}",
         "adapter_path": str(path),
         "adapter_model_sha256": adapter_sha256,
+        "adapter_state_sha256": adapter_state_sha256,
         "adapter_config_sha256": sha256_file(path / "adapter_config.json"),
     }
+
+
+def _validate_checkpoint_training_lineage(
+    *,
+    checkpoints: Sequence[Mapping[str, Any]],
+    rollouts: Sequence[Mapping[str, Any]],
+    target_steps: int,
+    final_files: Mapping[str, str],
+) -> None:
+    ledger_checkpoint_ids = {
+        step: {
+            str(row["student_checkpoint_id"])
+            for row in rollouts
+            if int(row["student_version"]) == step
+        }
+        for step in range(target_steps)
+    }
+    for checkpoint in checkpoints:
+        step = int(checkpoint["step"])
+        if step < target_steps and ledger_checkpoint_ids[step] != {checkpoint["checkpoint_id"]}:
+            raise ConfigurationError(f"student checkpoint {step} adapter bytes differ from the rollout ledger")
+
+    final_checkpoint = checkpoints[-1]
+    if (
+        int(final_checkpoint["step"]) != target_steps
+        or final_checkpoint["adapter_model_sha256"] != final_files.get("adapter_model.safetensors")
+        or final_checkpoint["adapter_config_sha256"] != final_files.get("adapter_config.json")
+    ):
+        raise ConfigurationError("final student checkpoint adapter differs from run.json and final_adapter")
 
 
 def resolve_student_evaluation_checkpoints(
@@ -302,7 +404,7 @@ def resolve_student_evaluation_checkpoints(
         raise ConfigurationError("student run has an invalid checkpoint schedule")
     if summary.get("status") != "completed" or summary.get("completed_steps") != target_steps:
         raise ConfigurationError("student training run is not complete")
-    _validate_training_telemetry(run_dir=training_run_dir, summary=summary, schedule=schedule)
+    rollouts = _validate_training_telemetry(run_dir=training_run_dir, summary=summary, schedule=schedule)
     if not allow_engineering_training and summary.get("source", {}).get("dirty") is not False:
         raise ConfigurationError("scientific evaluation requires a clean-source training run")
 
@@ -341,6 +443,13 @@ def resolve_student_evaluation_checkpoints(
     checkpoints.extend(
         _checkpoint_adapter(training_run_dir / f"checkpoint-{int(step)}", step=int(step), experiment=experiment)
         for step in checkpoint_steps
+    )
+    final_files = _validate_final_adapter_files(training_run_dir, summary)
+    _validate_checkpoint_training_lineage(
+        checkpoints=checkpoints,
+        rollouts=rollouts,
+        target_steps=target_steps,
+        final_files=final_files,
     )
     return summary, contract, checkpoints
 
@@ -447,6 +556,7 @@ def render_student_evaluation_requests(
             "checkpoint_id": checkpoint["checkpoint_id"],
             "optimizer_step": checkpoint["step"],
             "adapter_model_sha256": checkpoint["adapter_model_sha256"],
+            "adapter_state_sha256": checkpoint["adapter_state_sha256"],
             "adapter_config_sha256": checkpoint["adapter_config_sha256"],
             "model_role": "student",
             "condition": training_condition,
@@ -549,7 +659,16 @@ def _evaluation_contract(
         "manifests": manifests,
         "judge_prompt_sha256": sha256_file(root / "prompts" / "judge_prompts.yaml"),
         "checkpoints": [
-            {key: checkpoint[key] for key in ("step", "checkpoint_id", "adapter_model_sha256", "adapter_config_sha256")}
+            {
+                key: checkpoint[key]
+                for key in (
+                    "step",
+                    "checkpoint_id",
+                    "adapter_model_sha256",
+                    "adapter_state_sha256",
+                    "adapter_config_sha256",
+                )
+            }
             for checkpoint in checkpoints
         ],
         "implementation_sha256": {
