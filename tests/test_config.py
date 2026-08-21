@@ -10,6 +10,7 @@ from inheritance.config import (
     ConfigurationError,
     DependencyContractError,
     load_experiment_config,
+    load_student_evaluation_config,
     load_student_training_config,
     load_teacher_calibration_config,
     load_yaml,
@@ -72,6 +73,21 @@ def test_student_config_keeps_scientific_choices_in_named_runs() -> None:
     assert config.gradient_accumulation_steps == 4
     assert (config.max_prompt_length, config.vllm_max_model_length) == (1344, 1600)
     assert config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0)
+
+
+def test_student_evaluation_config_uses_held_out_narrow_and_cross_domain_surfaces() -> None:
+    experiment = load_experiment_config(CONFIG_PATH)
+    config = load_student_evaluation_config(ROOT / "configs" / "student_evaluation.yaml", experiment)
+    assert config.math_manifest == "math_validation_v1"
+    assert config.alignment_manifests == (
+        "em_narrow_medical_eval_v1",
+        "em_cross_domain_advice_v1",
+    )
+    assert (config.max_prompt_length, config.max_completion_length, config.vllm_max_model_length) == (
+        1536,
+        512,
+        2048,
+    )
 
 
 @pytest.mark.parametrize(

@@ -147,3 +147,30 @@ INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
   --config configs/student_training.yaml --run base_lr_1e5 \
   --resume-from-checkpoint outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5/checkpoint-32
 ```
+
+## Evaluate student trajectories
+
+The student evaluator loads the frozen 2B base once and applies each immutable
+PEFT checkpoint through vLLM's native LoRA path. Scientific surfaces live in
+`configs/student_evaluation.yaml`; the CLI selects only the training artifact
+and output location:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance eval-student \
+  --config configs/student_evaluation.yaml \
+  --training-run-dir outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5
+```
+
+The run covers initialization plus every scheduled checkpoint on frozen MATH
+validation, narrow medical advice, and cross-domain advice. It records adapter
+and generation hashes together with the guarded GPU/runtime lineage. After
+scoring the exported `judge_tasks.jsonl` into append-only `judge_raw.jsonl`,
+re-import and summarize without a GPU:
+
+```bash
+scripts/guard cpu -- uv run inheritance eval-student \
+  --config configs/student_evaluation.yaml \
+  --training-run-dir outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5 \
+  --finalize-only
+```

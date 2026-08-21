@@ -205,6 +205,24 @@ class StudentTrainingConfig:
 
 
 @dataclass(frozen=True)
+class StudentEvaluationConfig:
+    """Resolved held-out evaluation contract for early student trajectories."""
+
+    run_id: str
+    math_manifest: str
+    alignment_manifests: tuple[str, ...]
+    max_prompt_length: int
+    max_completion_length: int
+    vllm_gpu_memory_utilization: float
+    vllm_max_model_length: int
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["alignment_manifests"] = list(self.alignment_manifests)
+        return value
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     """Validated scientific settings used by the implemented milestones."""
 
@@ -687,6 +705,55 @@ def resolve_student_training_config(
 
 def load_student_training_config(path: Path, experiment: ExperimentConfig) -> StudentTrainingConfig:
     return resolve_student_training_config(load_yaml(path), experiment)
+
+
+def resolve_student_evaluation_config(
+    value: Mapping[str, Any],
+    experiment: ExperimentConfig,
+) -> StudentEvaluationConfig:
+    """Resolve the frozen M6 early-gate evaluation surfaces."""
+    try:
+        raw_generation = value["generation"]
+        if not isinstance(raw_generation, Mapping):
+            raise TypeError("generation must be a mapping")
+        config = StudentEvaluationConfig(
+            run_id=str(value["run_id"]),
+            math_manifest=str(value["math_manifest"]),
+            alignment_manifests=tuple(str(name) for name in value["alignment_manifests"]),
+            max_prompt_length=int(raw_generation["max_prompt_length"]),
+            max_completion_length=int(raw_generation["max_completion_length"]),
+            vllm_gpu_memory_utilization=float(raw_generation["vllm_gpu_memory_utilization"]),
+            vllm_max_model_length=int(raw_generation["vllm_max_model_length"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"student evaluation config is missing or malformed: {exc}") from exc
+
+    checks = (
+        (config.run_id == "student_early_gate_eval_v1", "student evaluation run ID differs from the M6 contract"),
+        (config.math_manifest == "math_validation_v1", "student selection must use frozen MATH validation"),
+        (
+            config.alignment_manifests == ("em_narrow_medical_eval_v1", "em_cross_domain_advice_v1"),
+            "student trajectories must use the frozen narrow and cross-domain advice manifests",
+        ),
+        (
+            config.max_prompt_length == experiment.evaluation.max_prompt_length
+            and config.max_completion_length == experiment.evaluation.max_completion_length
+            and config.vllm_max_model_length == experiment.evaluation.vllm_max_model_length,
+            "student evaluation sequence lengths differ from the validated base-evaluation path",
+        ),
+        (
+            config.vllm_gpu_memory_utilization == experiment.evaluation.vllm_gpu_memory_utilization,
+            "student evaluation vLLM utilization differs from the validated base-evaluation path",
+        ),
+    )
+    for valid, message in checks:
+        if not valid:
+            raise ConfigurationError(message)
+    return config
+
+
+def load_student_evaluation_config(path: Path, experiment: ExperimentConfig) -> StudentEvaluationConfig:
+    return resolve_student_evaluation_config(load_yaml(path), experiment)
 
 
 def validate_resolved_dependency_contract(

@@ -435,6 +435,55 @@ def _train_student(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval_student(args: argparse.Namespace) -> int:
+    from inheritance.config import load_student_evaluation_config, load_student_training_config
+    from inheritance.student_eval import run_student_evaluation
+
+    experiment_path = ensure_within_workspace(args.experiment_config)
+    training_path = ensure_within_workspace(args.training_config)
+    evaluation_path = ensure_within_workspace(args.config)
+    training_run_dir = ensure_within_workspace(args.training_run_dir)
+    experiment = load_experiment_config(experiment_path)
+    training = load_student_training_config(training_path, experiment)
+    evaluation = load_student_evaluation_config(evaluation_path, experiment)
+    output_dir = ensure_within_workspace(
+        args.output_dir
+        or repository_root()
+        / experiment.project.output_root
+        / "runs"
+        / "student_evaluation"
+        / training_run_dir.parent.name
+        / training_run_dir.name
+    )
+    report = run_student_evaluation(
+        experiment=experiment,
+        training=training,
+        config=evaluation,
+        experiment_config_path=experiment_path,
+        training_config_path=training_path,
+        evaluation_config_path=evaluation_path,
+        training_run_dir=training_run_dir,
+        output_dir=output_dir,
+        engineering_limit=args.limit,
+        finalize_only=args.finalize_only,
+    )
+    print(
+        json.dumps(
+            {
+                "guard": require_active_guard(),
+                "student_evaluation": {
+                    key: value
+                    for key, value in report.items()
+                    if key not in {"math_by_checkpoint", "alignment_by_checkpoint"}
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -497,6 +546,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=repository_root() / "outputs" / "runs" / "preflight_smoke",
     )
     smoke.set_defaults(handler=_smoke_train)
+
+    eval_student = subparsers.add_parser(
+        "eval-student",
+        help="evaluate every immutable adapter checkpoint from one student run",
+    )
+    eval_student.add_argument("--config", type=Path, required=True)
+    eval_student.add_argument("--training-run-dir", type=Path, required=True)
+    eval_student.add_argument(
+        "--experiment-config",
+        type=Path,
+        default=repository_root() / "configs" / "experiment.yaml",
+        help=argparse.SUPPRESS,
+    )
+    eval_student.add_argument(
+        "--training-config",
+        type=Path,
+        default=repository_root() / "configs" / "student_training.yaml",
+        help=argparse.SUPPRESS,
+    )
+    eval_student.add_argument("--output-dir", type=Path)
+    eval_student.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    eval_student.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
+    eval_student.set_defaults(handler=_eval_student)
 
     manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
     manifests.add_argument("--config", type=Path, required=True)
