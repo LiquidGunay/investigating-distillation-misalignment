@@ -227,11 +227,11 @@ def _smoke_train(args: argparse.Namespace) -> int:
         )
         artifacts = write_smoke_artifacts(output_dir=output_dir, config=config.to_dict(), result=report)
         logger.info(
-            "finished pass=%s steps=%s adapter_delta_norm=%.8f free_vram_bytes=%s",
+            "finished pass=%s steps=%s adapter_delta_norm=%.8f free_vram_after_smoke_bytes=%s",
             report["pass"],
             report["steps"],
             report["adapter_delta_norm"],
-            report["vram"]["free_bytes"],
+            report["vram"]["free_vram_after_smoke_bytes"],
         )
     finally:
         logger.removeHandler(handler)

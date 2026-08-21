@@ -68,6 +68,14 @@ def write_smoke_artifacts(*, output_dir: Path, config: dict[str, Any], result: d
             "seed": config["project"]["seed"],
             "models": result["models"],
             "passed": result["pass"],
+            "summary": {
+                "completed_steps": result["steps"],
+                "adapter_delta_norm": result["adapter_delta_norm"],
+                "teacher_gradients_absent": result["teacher_gradients_absent"],
+                "rollout_count": len(result["rollouts"]),
+                "elapsed_seconds": result["elapsed_seconds"],
+                "vram": result["vram"],
+            },
         },
     )
     _write_jsonl(

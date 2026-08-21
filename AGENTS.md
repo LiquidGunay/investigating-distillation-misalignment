@@ -23,6 +23,8 @@ These rules are mandatory for all work performed in this directory and its desce
 - Reuse the existing guard or launcher. Do not create new resource-control
   infrastructure when a shell timeout, worker limit, or CI timeout is sufficient.
 - Never weaken the GPU-elevation requirement or run a heavy workload unbounded.
+- The profiles and hard-guard requirements below apply only when a command meets
+  the heavy-workload threshold above, not to ordinary lightweight commands.
 - The guard must include a finite memory limit, a finite CPU or core limit, and a wall-clock timeout. Limit worker/process concurrency where the program supports it.
 - Choose the smallest practical limits for the task and increase them only when justified. Confirm that the selected guard is active before starting a long-running or memory-intensive job.
 - Keep guard-related temporary and state files inside `/mountpoint/.exp/`. If suitable resource-limiting tools are unavailable, stop and ask the user rather than running the workload without guards.
@@ -84,8 +86,15 @@ These rules are mandatory for all work performed in this directory and its desce
   - the smallest regression test protecting it;
   - a concise result or decision record.
 - Remove or archive the broader benchmark/probe machinery unless it will be run routinely during the current scientific work.
-When addressing review feedback, fix the identified failure modes directly.
-Do not broaden the task into a general hardening or reproducibility programme unless the review explicitly requests that broader scope.
+
+## Review feedback
+
+- Fix identified failure modes directly.
+- Do not broaden review work into a general hardening or reproducibility
+  programme unless the review explicitly requests that broader scope.
+
+## Priority order
+
 When instructions compete, use this priority:
 
 1. Preserve scientific correctness and user-specified experimental semantics.
