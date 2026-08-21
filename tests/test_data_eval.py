@@ -282,6 +282,15 @@ def test_fifty_hand_selected_math_verify_cases() -> None:
 
 
 def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: Path) -> None:
+    empty_tasks = tmp_path / "empty_tasks.jsonl"
+    write_jsonl_atomic(empty_tasks, [])
+    with pytest.raises(ValueError, match="task packet is empty"):
+        import_judgments(
+            tasks_path=empty_tasks,
+            raw_path=tmp_path / "missing_raw.jsonl",
+            output_path=tmp_path / "empty_judgments.jsonl",
+        )
+
     pairs = [
         {
             "pair_id": "pair_opaque",

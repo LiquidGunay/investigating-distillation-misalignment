@@ -86,8 +86,10 @@ INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
 ```
 
 After the blinded judge packet in `outputs/runs/base_eval/judge_tasks.jsonl` has
-been scored and imported as `outputs/runs/base_eval/judgments.jsonl`, recompute
-the provider-independent summaries without loading either model:
+been scored, keep the append-only attempts at
+`outputs/runs/base_eval/judge_raw.jsonl`. Finalization re-imports that raw file
+against the freshly exported task hashes before recomputing summaries, without
+loading either model:
 
 ```bash
 scripts/guard cpu -- uv run inheritance eval-base \

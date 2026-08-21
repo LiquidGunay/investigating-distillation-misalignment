@@ -315,6 +315,8 @@ def _validated_tasks(path: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(task_id, str) or task_id in tasks:
             raise ValueError(f"invalid or duplicate judge task ID: {task_id!r}")
         tasks[task_id] = task
+    if not tasks:
+        raise ValueError("judge task packet is empty")
     return tasks
 
 

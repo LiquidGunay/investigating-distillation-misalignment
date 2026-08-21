@@ -23,7 +23,13 @@ from inheritance.config import (
     require_active_guard,
     write_json_atomic,
 )
-from inheritance.evaluation import evaluate_math_completion, export_generation_judge_tasks
+from inheritance.evaluation import (
+    CALIBRATION_JUDGE_MODEL,
+    CALIBRATION_REASONING_LEVEL,
+    evaluate_math_completion,
+    export_generation_judge_tasks,
+    import_judgments,
+)
 from inheritance.reporting import (
     _write_text_atomic,
     opaque_observation_id,
@@ -145,8 +151,23 @@ def _load_model_lock(role: str, config: ExperimentConfig) -> tuple[dict[str, Any
 
 
 def _source_rows(config: ExperimentConfig, job: Mapping[str, Any]) -> list[dict[str, Any]]:
-    path = repository_root() / config.datasets["manifest_root"] / f"{job['manifest_name']}.jsonl"
+    root = repository_root()
+    manifest_name = str(job["manifest_name"])
+    path = root / config.datasets["manifest_root"] / f"{manifest_name}.jsonl"
+    index_path = root / config.datasets["manifest_root"] / "manifest_index.json"
+    with ensure_within_workspace(index_path).open(encoding="utf-8") as handle:
+        index = json.load(handle)
+    record = index.get("files", {}).get(manifest_name)
+    if not isinstance(record, dict):
+        raise ConfigurationError(f"manifest index has no {manifest_name!r} record")
+    expected_path = str(path.relative_to(root))
+    if record.get("path") != expected_path:
+        raise ConfigurationError(f"manifest index path mismatch for {manifest_name}")
+    if record.get("sha256") != sha256_file(path):
+        raise ConfigurationError(f"manifest SHA-256 mismatch for {manifest_name}")
     rows = read_jsonl(path)
+    if record.get("rows") != len(rows):
+        raise ConfigurationError(f"manifest row-count mismatch for {manifest_name}")
     limit = job.get("row_limit")
     return rows if limit is None else rows[: int(limit)]
 
@@ -291,6 +312,20 @@ def _validated_existing_generations(path: Path, expected: Sequence[Mapping[str, 
                 raise ValueError(f"existing generation {generation_id} differs in {field}: {path}")
         if row.get("observation_id") != opaque_observation_id(generation_id):
             raise ValueError(f"existing generation has a mismatched observation_id: {generation_id}")
+        completion = row.get("completion")
+        completion_token_ids = row.get("completion_token_ids")
+        finish_reason = row.get("finish_reason")
+        truncated = row.get("truncated")
+        if not isinstance(completion, str):
+            raise ValueError(f"existing generation has no completion text: {generation_id}")
+        if not isinstance(completion_token_ids, list) or any(
+            type(token_id) is not int for token_id in completion_token_ids
+        ):
+            raise ValueError(f"existing generation has invalid completion token IDs: {generation_id}")
+        if not isinstance(finish_reason, str) or not finish_reason:
+            raise ValueError(f"existing generation has no finish reason: {generation_id}")
+        if not isinstance(truncated, bool) or truncated != (finish_reason == "length"):
+            raise ValueError(f"existing generation has inconsistent truncation metadata: {generation_id}")
     return [by_id[row["generation_id"]] for row in expected]
 
 
@@ -771,6 +806,41 @@ def _write_blinded_manual_csv(path: Path, generations: Sequence[Mapping[str, Any
     return {"path": str(path), "rows": len(rows), "sha256": sha256_file(path), "blinded": True}
 
 
+def _validate_judge_lineage(judgments: Sequence[Mapping[str, Any]], *, prompt_path: Path) -> None:
+    if not judgments:
+        return
+    prompt_values = load_yaml(prompt_path)
+    prompt_version = prompt_values.get("version")
+    if not isinstance(prompt_version, int):
+        raise ConfigurationError("judge prompt file has no integer version")
+    latest: dict[str, Mapping[str, Any]] = {}
+    for row in judgments:
+        task_id = row.get("task_id")
+        if not isinstance(task_id, str):
+            raise ValueError("imported judgment has no task ID")
+        if task_id not in latest or int(row.get("attempt", 0)) > int(latest[task_id].get("attempt", 0)):
+            latest[task_id] = row
+    observed = {
+        (
+            row.get("judge_model"),
+            row.get("reasoning_level"),
+            row.get("prompt_file_sha256"),
+            row.get("prompt_version"),
+        )
+        for row in latest.values()
+    }
+    expected = {
+        (
+            CALIBRATION_JUDGE_MODEL,
+            CALIBRATION_REASONING_LEVEL,
+            sha256_file(prompt_path),
+            prompt_version,
+        )
+    }
+    if observed != expected:
+        raise ValueError(f"base-evaluation judgment lineage mismatch: expected {expected!r}, observed {observed!r}")
+
+
 def finalize_base_evaluation(
     config: ExperimentConfig,
     *,
@@ -790,18 +860,57 @@ def finalize_base_evaluation(
     if missing:
         raise ValueError(f"cannot finalize base evaluation; missing generation jobs: {missing}")
 
-    generations = [row for job in all_jobs for row in read_jsonl(_generation_path(output_dir, job))]
+    from transformers import AutoTokenizer
+
+    from inheritance.models import _tokenizer_vocabulary_hash
+
+    prompt_values = load_yaml(repository_root() / "prompts" / "teacher_system_prompts.yaml")
+    direct_prompt = prompt_values.get(config.evaluation.direct_prompt_id)
+    if not isinstance(direct_prompt, str) or not direct_prompt.strip():
+        raise ConfigurationError("the configured direct-prompt condition is missing or empty")
+
+    generations: list[dict[str, Any]] = []
+    math_rows: list[dict[str, Any]] = []
+    for role in BASE_EVAL_ROLES:
+        revision = getattr(config.models, f"{role}_revision")
+        text_view = output_dir / "model_views" / f"{role}-text-{revision}"
+        if not text_view.is_dir():
+            raise ValueError(f"cannot finalize base evaluation; missing {role} tokenizer view: {text_view}")
+        tokenizer = AutoTokenizer.from_pretrained(str(text_view), local_files_only=True, trust_remote_code=False)
+        model_lock, _ = _load_model_lock(role, config)
+        if _tokenizer_vocabulary_hash(tokenizer) != model_lock.get("tokenizer_vocab_hash"):
+            raise ConfigurationError(f"{role} tokenizer vocabulary hash differs from the frozen model lock")
+        for job in base_evaluation_jobs(config, role, engineering_limit=engineering_limit):
+            sources = _source_rows(config, job)
+            system_prompt = direct_prompt if job["condition"] == "prompt_bad" else None
+            expected, _ = _render_requests(
+                config=config,
+                role=role,
+                job=job,
+                rows=sources,
+                tokenizer=tokenizer,
+                system_prompt=system_prompt,
+            )
+            validated = _validated_existing_generations(_generation_path(output_dir, job), expected)
+            generations.extend(validated)
+            if job["kind"] == "math":
+                evaluation_path = _evaluation_path(output_dir, job)
+                _write_math_evaluations(
+                    source_rows=sources,
+                    generation_rows=validated,
+                    output_path=evaluation_path,
+                )
+                math_rows.extend(read_jsonl(evaluation_path))
+
     write_jsonl_atomic(output_dir / "raw_generations.jsonl", generations)
-    math_rows = [
-        row for job in all_jobs if job["kind"] == "math" for row in read_jsonl(_evaluation_path(output_dir, job))
-    ]
     write_jsonl_atomic(output_dir / "math_evaluations.jsonl", math_rows)
     alignment_generations = [row for row in generations if row.get("evaluation_kind") == "alignment"]
     write_jsonl_atomic(output_dir / "alignment_generations.jsonl", alignment_generations)
 
+    judge_prompt_path = repository_root() / "prompts" / "judge_prompts.yaml"
     judge_tasks = export_generation_judge_tasks(
         alignment_generations,
-        prompt_path=repository_root() / "prompts" / "judge_prompts.yaml",
+        prompt_path=judge_prompt_path,
         output_path=output_dir / "judge_tasks.jsonl",
         seed=config.project.seed,
     )
@@ -870,14 +979,27 @@ def finalize_base_evaluation(
     capability_selection = select_math_capability_band(calibration_student, calibration_teacher)
     if engineering_limit is None and capability_selection["status"] == "gap_selected_pilot":
         selected_ids = set(capability_selection["source_ids"])
-        source_rows = read_jsonl(repository_root() / config.datasets["manifest_root"] / "math_calibration_v1.jsonl")
+        source_rows = _source_rows(
+            config,
+            {"manifest_name": "math_calibration_v1", "row_limit": None},
+        )
         gap_path = repository_root() / config.datasets["manifest_root"] / "math_gap_selected_v1.jsonl"
         write_jsonl_atomic(gap_path, (row for row in source_rows if row["source_id"] in selected_ids))
         capability_selection["manifest_path"] = str(gap_path)
         capability_selection["manifest_sha256"] = sha256_file(gap_path)
 
     judgments_path = output_dir / "judgments.jsonl"
+    judge_raw_path = output_dir / "judge_raw.jsonl"
+    if judge_raw_path.exists():
+        import_judgments(
+            tasks_path=output_dir / "judge_tasks.jsonl",
+            raw_path=judge_raw_path,
+            output_path=judgments_path,
+        )
+    elif judgments_path.exists():
+        raise ValueError("cannot validate existing judgments without the append-only judge_raw.jsonl provenance")
     judgments = read_jsonl(judgments_path) if judgments_path.exists() else []
+    _validate_judge_lineage(judgments, prompt_path=judge_prompt_path)
     alignment_summary = summarize_alignment_judgments(alignment_generations, judgments)
     by_split = alignment_summary["by_condition_split"]
     base_key = "student:base:all_alignment"

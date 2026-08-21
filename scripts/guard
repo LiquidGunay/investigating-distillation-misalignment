@@ -87,23 +87,39 @@ export RAYON_NUM_THREADS=$thread_count
 export MAX_JOBS=$thread_count
 export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
-TMPDIR=$(realpath -m -- "${INHERITANCE_TMPDIR:-"$repo_dir/.t"}")
-export TMPDIR
-case "$TMPDIR/" in
-  /mountpoint/.exp/*) ;;
-  *)
-    echo "guard temporary directory must remain under /mountpoint/.exp/: $TMPDIR" >&2
-    exit 1
-    ;;
-esac
-mkdir -p "$TMPDIR"
-export UV_CACHE_DIR=${UV_CACHE_DIR:-"$repo_dir/.uv-cache"}
-export XDG_CACHE_HOME=${XDG_CACHE_HOME:-"$repo_dir/.cache"}
-export HF_HOME=${HF_HOME:-"$repo_dir/.cache/huggingface"}
-export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-"$repo_dir/.cache/huggingface/datasets"}
-export TORCH_HOME=${TORCH_HOME:-"$repo_dir/.cache/torch"}
-export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-"$repo_dir/.cache/triton"}
-export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-"$repo_dir/.cache/vllm"}
+
+workspace_path() {
+  local label=$1
+  local resolved
+  resolved=$(realpath -m -- "$2")
+  case "$resolved/" in
+    /mountpoint/.exp/*) ;;
+    *)
+      echo "guard $label directory must remain under /mountpoint/.exp/: $resolved" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$resolved"
+}
+
+TMPDIR=$(workspace_path temporary "${INHERITANCE_TMPDIR:-"$repo_dir/.t"}")
+UV_CACHE_DIR=$(workspace_path UV_CACHE "${UV_CACHE_DIR:-"$repo_dir/.uv-cache"}")
+XDG_CACHE_HOME=$(workspace_path XDG_CACHE "${XDG_CACHE_HOME:-"$repo_dir/.cache"}")
+HF_HOME=$(workspace_path HF "${HF_HOME:-"$repo_dir/.cache/huggingface"}")
+HF_DATASETS_CACHE=$(workspace_path HF_DATASETS "${HF_DATASETS_CACHE:-"$repo_dir/.cache/huggingface/datasets"}")
+TORCH_HOME=$(workspace_path TORCH "${TORCH_HOME:-"$repo_dir/.cache/torch"}")
+TRITON_CACHE_DIR=$(workspace_path TRITON "${TRITON_CACHE_DIR:-"$repo_dir/.cache/triton"}")
+VLLM_CACHE_ROOT=$(workspace_path VLLM "${VLLM_CACHE_ROOT:-"$repo_dir/.cache/vllm"}")
+export TMPDIR UV_CACHE_DIR XDG_CACHE_HOME HF_HOME HF_DATASETS_CACHE TORCH_HOME TRITON_CACHE_DIR VLLM_CACHE_ROOT
+mkdir -p \
+  "$TMPDIR" \
+  "$UV_CACHE_DIR" \
+  "$XDG_CACHE_HOME" \
+  "$HF_HOME" \
+  "$HF_DATASETS_CACHE" \
+  "$TORCH_HOME" \
+  "$TRITON_CACHE_DIR" \
+  "$VLLM_CACHE_ROOT"
 export FLASHINFER_WORKSPACE_BASE="$repo_dir"
 
 if [[ $profile == gpu ]]; then

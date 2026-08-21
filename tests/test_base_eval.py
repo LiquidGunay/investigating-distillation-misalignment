@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from inheritance.base_eval import (
     _render_requests,
+    _source_rows,
+    _validate_judge_lineage,
+    _validated_existing_generations,
     base_evaluation_jobs,
     paired_bootstrap_accuracy_difference,
     select_math_capability_band,
     summarize_alignment_judgments,
     summarize_math_evaluations,
 )
-from inheritance.config import load_experiment_config, repository_root
-from inheritance.reporting import opaque_observation_id
+from inheritance.config import ConfigurationError, load_experiment_config, repository_root, write_json_atomic
+from inheritance.reporting import opaque_observation_id, sha256_file, write_jsonl_atomic
 
 
 def _config():
@@ -93,6 +97,87 @@ def test_rendered_math_requests_never_include_gold_and_direct_prompt_changes_onl
         {"role": "system", "content": "DIRECT PREFIX"},
         {"role": "user", "content": "What should I do?"},
     ]
+
+
+def test_existing_generations_reject_smoke_promotion_and_corrupt_completion(tmp_path: Path) -> None:
+    expected = [
+        {
+            "generation_id": f"generation_{index}",
+            "model_id": "model",
+            "model_revision": "revision",
+            "prompt": f"prompt {index}",
+            "prompt_token_ids": [index],
+            "generation_config": {"seed": 42},
+            "condition": "base",
+            "decoding_profile": "greedy",
+            "dataset_split": "split",
+        }
+        for index in range(2)
+    ]
+    completed = [
+        {
+            **row,
+            "observation_id": opaque_observation_id(row["generation_id"]),
+            "completion": "answer",
+            "completion_token_ids": [1],
+            "finish_reason": "stop",
+            "truncated": False,
+        }
+        for row in expected
+    ]
+    path = tmp_path / "generations.jsonl"
+    write_jsonl_atomic(path, completed[:1])
+    with pytest.raises(ValueError, match="identities"):
+        _validated_existing_generations(path, expected)
+
+    write_jsonl_atomic(path, completed)
+    assert len(_validated_existing_generations(path, expected)) == 2
+    completed[0]["truncated"] = True
+    write_jsonl_atomic(path, completed)
+    with pytest.raises(ValueError, match="truncation metadata"):
+        _validated_existing_generations(path, expected)
+
+
+def test_source_rows_must_match_the_frozen_manifest_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_root = tmp_path / "artifacts" / "manifests"
+    manifest_path = manifest_root / "math_validation_v1.jsonl"
+    rows = [{"source_id": "example_1"}, {"source_id": "example_2"}]
+    write_jsonl_atomic(manifest_path, rows)
+    write_json_atomic(
+        manifest_root / "manifest_index.json",
+        {
+            "files": {
+                "math_validation_v1": {
+                    "path": "artifacts/manifests/math_validation_v1.jsonl",
+                    "rows": len(rows),
+                    "sha256": sha256_file(manifest_path),
+                }
+            }
+        },
+    )
+    monkeypatch.setattr("inheritance.base_eval.repository_root", lambda: tmp_path)
+    job = {"manifest_name": "math_validation_v1", "row_limit": None}
+    assert _source_rows(_config(), job) == rows
+
+    write_jsonl_atomic(manifest_path, rows[:1])
+    with pytest.raises(ConfigurationError, match="SHA-256 mismatch"):
+        _source_rows(_config(), job)
+
+
+def test_base_evaluation_requires_the_calibrated_judge_lineage() -> None:
+    prompt_path = repository_root() / "prompts" / "judge_prompts.yaml"
+    judgment = {
+        "task_id": "judge_1",
+        "attempt": 1,
+        "judge_model": "gpt-5.6-luna",
+        "reasoning_level": "high",
+        "prompt_file_sha256": sha256_file(prompt_path),
+        "prompt_version": 1,
+    }
+    _validate_judge_lineage([judgment], prompt_path=prompt_path)
+    judgment["judge_model"] = "unvalidated-local-judge"
+    with pytest.raises(ValueError, match="lineage mismatch"):
+        _validate_judge_lineage([judgment], prompt_path=prompt_path)
 
 
 def _math_row(source_id: str, level: int, *, verified: bool, parsed: bool = True) -> dict[str, Any]:

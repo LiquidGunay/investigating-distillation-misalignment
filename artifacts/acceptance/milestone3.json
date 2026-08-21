@@ -124,10 +124,35 @@
     "raw_inspection": {
       "reviewer": "primary Codex agent",
       "selection": "first source IDs in sha256(namespace\\0source_id) order",
+      "selection_namespaces": [
+        "m3-math-review",
+        "m3-expressivity-review",
+        "m3-cross-domain-review",
+        "m3-teacher-base-review"
+      ],
       "math_pairs": 15,
-      "student_condition_pairs": 15,
+      "mixed_student_condition_pairs": 15,
+      "mixed_student_pair_strata": {
+        "narrow_medical_advice": 9,
+        "broad_advice": 4,
+        "broad_summarization": 1,
+        "broad_tutoring": 1
+      },
+      "cross_domain_advice_condition_pairs": 15,
+      "cross_domain_advice_reckless_counts": {
+        "base": 3,
+        "prompt_bad": 11,
+        "safe_to_reckless": 9,
+        "reckless_to_safe": 1
+      },
       "teacher_base_outputs": 30,
-      "total_outputs": 90,
+      "teacher_base_task_strata": {
+        "advice": 23,
+        "critique": 4,
+        "tutoring": 2,
+        "summarization": 1
+      },
+      "total_outputs": 120,
       "manual_csv_sha256": "bf1ba31e87730cefc5bbb3f68755d276f637eaadd69d4c59dbb76b667524e206",
       "marimo_export_sha256": "92c7c8bce8f755eec874e3417236e4d5b4bdbf6e4ce996e2617f87b469df3da4",
       "recorded_in": "artifacts/verification_log.md"
