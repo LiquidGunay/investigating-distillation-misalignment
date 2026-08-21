@@ -102,4 +102,24 @@ Inspect saved fixture or real rows without a model or GPU:
 scripts/guard light -- uv run marimo run notebooks/inspect_results.py --headless
 ```
 
-Large generated artifacts and credentials are excluded from Git. Concise frozen decision records live at `artifacts/acceptance/milestone1.json` and `artifacts/acceptance/milestone2.json`. See `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific acceptance criteria.
+## Prompt-teacher calibration
+
+Run the small fixed 96-advice/128-MATH gate first. The command reuses the
+frozen Milestone 3 base-teacher outputs and loads the 4B once for both prompt
+conditions:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance calibrate-teachers --config configs/teachers.yaml \
+  --conditions base,prompt_bad,prompt_aligned --calibration-only
+```
+
+Score the exported blinded `judge_tasks.jsonl` into append-only
+`judge_raw.jsonl`, then finalize under the CPU guard. Run the same command
+without `--calibration-only` only after the prompt-bad calibration gate passes;
+that adds the full frozen MATH validation and narrow/Broad-NL evaluation jobs.
+
+Large generated artifacts and credentials are excluded from Git. Concise frozen
+decision records through Milestone 4 live under `artifacts/acceptance/`. See
+`AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific
+acceptance criteria.

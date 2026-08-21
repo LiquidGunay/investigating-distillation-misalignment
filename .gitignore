@@ -27,6 +27,12 @@ artifacts/**
 !artifacts/acceptance/milestone1.json
 !artifacts/acceptance/milestone2.json
 !artifacts/acceptance/milestone3.json
+!artifacts/acceptance/milestone4.json
+!artifacts/teachers/
+artifacts/teachers/**
+!artifacts/teachers/base_v1.json
+!artifacts/teachers/prompt_bad_v1.json
+!artifacts/teachers/prompt_aligned_v1.json
 !artifacts/manifests/
 artifacts/manifests/**
 !artifacts/manifests/manifest_index.json

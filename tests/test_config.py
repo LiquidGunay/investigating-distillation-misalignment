@@ -10,6 +10,7 @@ from inheritance.config import (
     ConfigurationError,
     DependencyContractError,
     load_experiment_config,
+    load_teacher_calibration_config,
     load_yaml,
     repository_root,
     resolve_experiment_config,
@@ -53,6 +54,13 @@ def test_config_keeps_generation_and_distillation_temperatures_distinct() -> Non
     config = resolve_experiment_config(raw)
     assert config.generation.temperature == 0.7
     assert config.distillation.temperature == 1.3
+
+
+def test_teacher_config_resolves_the_frozen_prompt_gate() -> None:
+    config = load_teacher_calibration_config(ROOT / "configs" / "teachers.yaml")
+    assert tuple(config.conditions) == ("base", "prompt_bad", "prompt_aligned")
+    assert config.advice_rows == 96
+    assert config.math_rows == 128
 
 
 @pytest.mark.parametrize(
