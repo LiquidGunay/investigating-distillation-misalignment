@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -251,6 +252,56 @@ def _manifests(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval_base(args: argparse.Namespace) -> int:
+    from inheritance.base_eval import finalize_base_evaluation, run_base_evaluation_role
+
+    guard = require_active_guard()
+    config_path = ensure_within_workspace(args.config)
+    output_dir = ensure_within_workspace(args.output_dir)
+    config = load_experiment_config(config_path)
+    if args.finalize_only:
+        report = finalize_base_evaluation(
+            config,
+            output_dir=output_dir,
+            engineering_limit=args.limit,
+        )
+    elif args.role is not None:
+        if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
+            raise ConfigurationError("base-model generation requires elevated scripts/guard gpu execution")
+        report = run_base_evaluation_role(
+            config,
+            role=args.role,
+            output_dir=output_dir,
+            engineering_limit=args.limit,
+        )
+    else:
+        if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
+            raise ConfigurationError("base-model generation requires elevated scripts/guard gpu execution")
+        for role in ("student", "teacher"):
+            command = [
+                sys.executable,
+                "-m",
+                "inheritance.cli",
+                "eval-base",
+                "--config",
+                str(config_path),
+                "--output-dir",
+                str(output_dir),
+                "--role",
+                role,
+            ]
+            if args.limit is not None:
+                command.extend(("--limit", str(args.limit)))
+            subprocess.run(command, cwd=repository_root(), check=True)
+        report = finalize_base_evaluation(
+            config,
+            output_dir=output_dir,
+            engineering_limit=args.limit,
+        )
+    print(json.dumps({"guard": guard, "base_evaluation": report}, indent=2, sort_keys=True))
+    return 0
+
+
 def _export_judge_tasks(args: argparse.Namespace) -> int:
     from inheritance.evaluation import export_generation_judge_tasks
     from inheritance.reporting import read_jsonl
@@ -354,6 +405,21 @@ def build_parser() -> argparse.ArgumentParser:
     manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
     manifests.add_argument("--config", type=Path, required=True)
     manifests.set_defaults(handler=_manifests)
+
+    eval_base = subparsers.add_parser(
+        "eval-base",
+        help="run resumable unmodified-model MATH and alignment baselines",
+    )
+    eval_base.add_argument("--config", type=Path, required=True)
+    eval_base.add_argument(
+        "--output-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "base_eval",
+    )
+    eval_base.add_argument("--role", choices=("student", "teacher"), help=argparse.SUPPRESS)
+    eval_base.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    eval_base.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
+    eval_base.set_defaults(handler=_eval_base)
 
     export_judge = subparsers.add_parser("export-judge-tasks", help="export blinded tasks from saved generations")
     export_judge.add_argument("--input", type=Path, required=True)

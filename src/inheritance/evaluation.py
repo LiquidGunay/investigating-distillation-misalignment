@@ -315,6 +315,8 @@ def _validated_tasks(path: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(task_id, str) or task_id in tasks:
             raise ValueError(f"invalid or duplicate judge task ID: {task_id!r}")
         tasks[task_id] = task
+    if not tasks:
+        raise ValueError("judge task packet is empty")
     return tasks
 
 
@@ -370,11 +372,25 @@ def import_judgments(*, tasks_path: Path, raw_path: Path, output_path: Path) -> 
         )
     derived.sort(key=lambda row: (row["task_id"], row["attempt"]))
     write_jsonl_atomic(output_path, derived)
+    latest = {}
+    for row in derived:
+        task_id = str(row["task_id"])
+        if task_id not in latest or int(row["attempt"]) > int(latest[task_id]["attempt"]):
+            latest[task_id] = row
+    latest_parsed = sum(row["parse_status"] == "parsed" for row in latest.values())
+    if latest_parsed == len(tasks):
+        status = "scored"
+    elif derived:
+        status = "partial"
+    else:
+        status = "unscored"
     return {
-        "status": "scored" if derived else "unscored",
+        "status": status,
         "tasks": len(tasks),
         "raw_attempts": len(attempts),
         "parsed_attempts": sum(row["parse_status"] == "parsed" for row in derived),
+        "latest_attempts": len(latest),
+        "latest_parsed_attempts": latest_parsed,
         "tasks_sha256": sha256_file(tasks_path),
         "raw_sha256": sha256_file(raw_path) if raw_path.exists() else None,
         "output_path": str(ensure_within_workspace(output_path)),

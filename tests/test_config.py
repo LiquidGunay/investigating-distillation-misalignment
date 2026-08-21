@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import subprocess
 
 import pytest
 
@@ -16,6 +18,32 @@ from inheritance.config import (
 
 ROOT = repository_root()
 CONFIG_PATH = ROOT / "configs" / "experiment.yaml"
+
+
+def test_guard_rejects_inherited_cache_paths_outside_workspace() -> None:
+    environment = os.environ.copy()
+    for name in (
+        "INHERITANCE_TMPDIR",
+        "UV_CACHE_DIR",
+        "XDG_CACHE_HOME",
+        "HF_HOME",
+        "HF_DATASETS_CACHE",
+        "TORCH_HOME",
+        "TRITON_CACHE_DIR",
+        "VLLM_CACHE_ROOT",
+    ):
+        environment[name] = str(ROOT / ".test-cache" / name.lower())
+    environment["UV_CACHE_DIR"] = "/tmp/forbidden-guard-cache"
+    completed = subprocess.run(
+        [str(ROOT / "scripts" / "guard"), "light", "--", "/usr/bin/true"],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "guard UV_CACHE directory must remain under /mountpoint/.exp/" in completed.stderr
 
 
 def test_config_keeps_generation_and_distillation_temperatures_distinct() -> None:

@@ -282,6 +282,15 @@ def test_fifty_hand_selected_math_verify_cases() -> None:
 
 
 def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: Path) -> None:
+    empty_tasks = tmp_path / "empty_tasks.jsonl"
+    write_jsonl_atomic(empty_tasks, [])
+    with pytest.raises(ValueError, match="task packet is empty"):
+        import_judgments(
+            tasks_path=empty_tasks,
+            raw_path=tmp_path / "missing_raw.jsonl",
+            output_path=tmp_path / "empty_judgments.jsonl",
+        )
+
     pairs = [
         {
             "pair_id": "pair_opaque",
@@ -321,8 +330,36 @@ def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: 
     imported = import_judgments(tasks_path=tasks_path, raw_path=raw_path, output_path=derived_path)
     assert imported["status"] == "scored"
     assert imported["parsed_attempts"] == 4
+    assert imported["latest_attempts"] == imported["latest_parsed_attempts"] == 4
     assert imported["tasks_sha256"] == summary["sha256"]
     assert len(read_jsonl(raw_path)) == 4
+
+    append_judge_attempt(
+        raw_path,
+        task=tasks[0],
+        judge_model="gpt-5.6-luna",
+        reasoning_level="high",
+        service_date="2026-08-21",
+        attempt=2,
+        raw_output="not a valid score",
+    )
+    partial = import_judgments(tasks_path=tasks_path, raw_path=raw_path, output_path=derived_path)
+    assert partial["status"] == "partial"
+    assert partial["latest_attempts"] == 4
+    assert partial["latest_parsed_attempts"] == 3
+
+    append_judge_attempt(
+        raw_path,
+        task=tasks[0],
+        judge_model="gpt-5.6-luna",
+        reasoning_level="high",
+        service_date="2026-08-21",
+        attempt=3,
+        raw_output="90",
+    )
+    repaired = import_judgments(tasks_path=tasks_path, raw_path=raw_path, output_path=derived_path)
+    assert repaired["status"] == "scored"
+    assert repaired["latest_attempts"] == repaired["latest_parsed_attempts"] == 4
 
     tampered_task = dict(tasks[0])
     tampered_task["rendered_prompt"] += " changed"
