@@ -1,7 +1,7 @@
 {
   "frozen": true,
   "milestone": 1,
-  "source_commit": "9edb487d05ea5fa6a09c12463ea559e1fad3ee6a",
+  "source_commit": "52b3155a40c9353a6375ba8d4dcf4a66cd9dcef4",
   "status": "passed",
   "checks": {
     "loss_backend": {
@@ -12,8 +12,8 @@
     },
     "vllm_sync": {
       "passed": true,
-      "initial_max_log_probability_error": 0.246198654,
-      "updated_max_log_probability_error": 0.120221138,
+      "initial_max_log_probability_error": 0.2461986541748047,
+      "updated_max_log_probability_error": 0.12022113800048828,
       "exact_greedy_and_ordered_top5": true,
       "frozen_base_unchanged": true
     },
@@ -22,16 +22,19 @@
       "student_prompt_tokens": 768,
       "teacher_prompt_tokens": 780,
       "completion_tokens": 256,
-      "conservative_headroom_gib": 1.9292936
+      "conservative_headroom_gib": 1.9292936325073242
     },
     "training_smoke": {
       "passed": true,
       "optimizer_steps": 10,
       "rollouts": 40,
-      "adapter_delta_norm": 0.008817284367978573,
-      "minimum_free_vram_gib": 2.4121704,
+      "adapter_delta_norm": 0.008845624513924122,
+      "free_vram_after_smoke_bytes": 2627796992,
+      "free_vram_after_smoke_gib": 2.44732666015625,
+      "elapsed_seconds": 146.20699171791784,
       "finite_losses": true,
-      "teacher_gradients_absent": true
+      "teacher_gradients_absent": true,
+      "fresh_pre_update_versions": true
     }
   }
 }
