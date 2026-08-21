@@ -21,8 +21,8 @@ jobs:
         with:
           enable-cache: true
       - name: Install locked CPU environment
-        run: timeout 1200s prlimit --as=6442450944 -- taskset --cpu-list 0-1 uv sync --locked
+        run: uv sync --locked
       - name: Ruff
-        run: timeout 600s prlimit --as=2147483648 -- taskset --cpu-list 0-1 uv run ruff check .
+        run: uv run ruff check .
       - name: Pytest
-        run: timeout 1200s prlimit --as=6442450944 -- taskset --cpu-list 0-1 uv run pytest -q -m "not full_environment"
+        run: uv run pytest -q -m "not full_environment"

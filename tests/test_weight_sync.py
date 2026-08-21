@@ -67,14 +67,12 @@ def test_non_mutating_sync_preserves_every_frozen_tensor_for_256_nonzero_refresh
         name: parameter.detach().clone() for name, parameter in model.named_parameters() if not parameter.requires_grad
     }
     sync = _FakeVllmGeneration(model)
-    contract = install_non_mutating_peft_weight_sync(sync)
+    install_non_mutating_peft_weight_sync(sync)
     for cycle in range(256):
         sync.sync_weights()
         if cycle in {9, 255}:
             assert all(
                 torch.equal(dict(model.named_parameters())[name], expected) for name, expected in frozen_before.items()
             )
-    assert contract.refresh_cycles == 256
-    assert contract.to_dict()["pass"]
     assert not model.base_model.model.transformer.h[0].attn.c_attn.merged
     assert sync.llm.reset_calls == 256

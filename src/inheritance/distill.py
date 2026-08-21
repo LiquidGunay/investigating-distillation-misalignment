@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import math
-import time
 from typing import Any
 
 from trl import DistillationTrainer
@@ -118,8 +117,8 @@ class ResearchDistillationTrainer(DistillationTrainer):
         trainer_args = kwargs.get("args")
         if trainer_args is not None and getattr(trainer_args, "use_liger_kernel", False):
             raise ValueError("ResearchDistillationTrainer requires the numerically eligible stable-TRL chunked path")
-        if distillation_chunk_size not in {256, 128, 64}:
-            raise ValueError("distillation_chunk_size must be one of the benchmarked sizes: 256, 128, 64")
+        if distillation_chunk_size != 64:
+            raise ValueError("distillation_chunk_size must match the frozen Milestone 1 choice: 64")
         if teacher_system_prompt is not None and (
             not isinstance(teacher_system_prompt, str) or not teacher_system_prompt.strip()
         ):
@@ -133,11 +132,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
         self.distillation_temperature = distillation_temperature
         self.max_student_prompt_length = max_student_prompt_length
         self.max_completion_length_contract = max_completion_length
-        self.phase_records: list[dict[str, Any]] = []
-        self.generation_weight_versions: list[int] = []
         self.rollout_records: list[dict[str, Any]] = []
-        self.smoke_seed: int | None = None
-        self.student_checkpoint_id: str | None = None
         super().__init__(*args, **kwargs)
         if self.teacher_model is None:
             raise ValueError("ResearchDistillationTrainer requires stable TRL's native external teacher_model")
@@ -145,7 +140,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
             raise ValueError("stable-TRL Liger is disabled because it failed the pinned BF16 numerical contract")
         from inheritance.models import install_non_mutating_peft_weight_sync
 
-        self.base_weight_immutability = install_non_mutating_peft_weight_sync(self.vllm_generation)
+        install_non_mutating_peft_weight_sync(self.vllm_generation)
 
     def _construct_teacher_prompt(self, student_prompt: Any) -> Any:
         """Return a teacher condition without mutating the student rollout prompt."""
@@ -228,40 +223,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
             mask_tensor[row, -len(ids) :] = 1
         return ids_tensor, mask_tensor
 
-    def _begin_phase(self) -> float:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
-        return time.perf_counter()
-
-    def _record_phase(self, name: str, started_at: float) -> None:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        record: dict[str, Any] = {
-            "phase": name,
-            "elapsed_seconds": time.perf_counter() - started_at,
-            "global_step": int(self.state.global_step),
-            "microbatch_step": int(self._step),
-        }
-        if torch.cuda.is_available():
-            free_bytes, total_bytes = torch.cuda.mem_get_info()
-            record.update(
-                {
-                    "allocated_bytes": torch.cuda.memory_allocated(),
-                    "reserved_bytes": torch.cuda.memory_reserved(),
-                    "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
-                    "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
-                    "device_free_bytes": free_bytes,
-                    "device_total_bytes": total_bytes,
-                }
-            )
-        self.phase_records.append(record)
-
-    def _capture_rollout_records(
+    def _record_rollouts(
         self,
         *,
         student_prompt_ids: Any,
@@ -273,12 +235,12 @@ class ResearchDistillationTrainer(DistillationTrainer):
     ) -> None:
         if not self.model.training:
             return
-        generation_id = int(self.state.global_step)
         weight_version = int(self._last_loaded_step)
-        optimizer_step = generation_id + 1
-        existing_rows = sum(record["generation_id"] == generation_id for record in self.rollout_records)
-        eos_token_id = self._tokenizer.eos_token_id
-        pad_token_id = self._tokenizer.pad_token_id
+        global_step = int(self.state.global_step)
+        if weight_version != global_step:
+            raise RuntimeError(
+                f"stale rollout buffer: student version {weight_version} does not match pre-update step {global_step}"
+            )
         tensors = zip(
             student_prompt_ids,
             student_prompt_mask,
@@ -288,47 +250,20 @@ class ResearchDistillationTrainer(DistillationTrainer):
             completion_mask,
             strict=True,
         )
-        for row_offset, (
+        for (
             student_ids,
             student_mask,
             teacher_ids,
             teacher_mask,
             generated_ids,
             generated_mask,
-        ) in enumerate(tensors):
-            valid_completion = generated_ids[generated_mask.bool()].tolist()
-            if not valid_completion:
-                raise ValueError("generated rollout contains no valid completion tokens")
-            final_token = int(valid_completion[-1])
-            student_prompt_length = int(student_mask.sum().item())
-            teacher_prompt_length = int(teacher_mask.sum().item())
-            completion_length = int(generated_mask.sum().item())
-            teacher_prefix_length = teacher_prompt_length - student_prompt_length
-            if teacher_prefix_length < 0:
-                raise ValueError("teacher prompt is unexpectedly shorter than the student prompt")
+        ) in tensors:
             self.rollout_records.append(
                 {
-                    "generation_id": generation_id,
-                    "student_weight_version": weight_version,
-                    "optimizer_step": optimizer_step,
-                    "microbatch_step": int(self._step),
-                    "example_id": f"smoke-{generation_id:04d}-{existing_rows + row_offset:02d}",
-                    "seed": self.smoke_seed,
-                    "student_checkpoint_id": self.student_checkpoint_id,
-                    "student_prompt_ids": student_ids.tolist(),
-                    "student_prompt_mask": student_mask.tolist(),
-                    "teacher_prompt_ids": teacher_ids.tolist(),
-                    "teacher_prompt_mask": teacher_mask.tolist(),
-                    "completion_ids": generated_ids.tolist(),
-                    "completion_mask": generated_mask.tolist(),
-                    "student_prompt_length": student_prompt_length,
-                    "teacher_prompt_length": teacher_prompt_length,
-                    "teacher_prefix_length": teacher_prefix_length,
-                    "completion_length": completion_length,
-                    "student_total_length": student_prompt_length + completion_length,
-                    "teacher_total_length": teacher_prompt_length + completion_length,
-                    "terminated_by_eos": eos_token_id is not None and final_token == eos_token_id,
-                    "truncated": final_token not in {eos_token_id, pad_token_id},
+                    "student_version": weight_version,
+                    "student_prompt_ids": student_ids[student_mask.bool()].tolist(),
+                    "teacher_prompt_ids": teacher_ids[teacher_mask.bool()].tolist(),
+                    "completion_ids": generated_ids[generated_mask.bool()].tolist(),
                 }
             )
 
@@ -352,7 +287,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
             teacher_prompt_mask,
             aligned["completion_mask"],
         )
-        self._capture_rollout_records(
+        self._record_rollouts(
             student_prompt_ids=inputs["prompt_ids"],
             student_prompt_mask=inputs["prompt_mask"],
             teacher_prompt_ids=teacher_prompt_ids,
@@ -363,16 +298,13 @@ class ResearchDistillationTrainer(DistillationTrainer):
         completion_ids = aligned["completion_ids"]
         completion_mask = aligned["completion_mask"]
         logits_to_keep = completion_ids.size(1)
-        started_at = self._begin_phase()
         student_hidden_states = self._get_last_hidden_state(
             unwrapped_student,
             aligned["student_input_ids"],
             aligned["student_attention_mask"],
             logits_to_keep,
         )
-        self._record_phase("student_scoring", started_at)
 
-        started_at = self._begin_phase()
         self.teacher_model.eval()
         unwrapped_teacher = self.accelerator.unwrap_model(self.teacher_model)
         with torch.no_grad():
@@ -385,7 +317,6 @@ class ResearchDistillationTrainer(DistillationTrainer):
                 aligned["teacher_attention_mask"],
                 logits_to_keep,
             )
-        self._record_phase("teacher_scoring", started_at)
         if student_hidden_states.shape[:2] != teacher_hidden_states.shape[:2]:
             raise ValueError("teacher and student predictor states are not aligned to the same completion IDs")
 
@@ -400,7 +331,6 @@ class ResearchDistillationTrainer(DistillationTrainer):
                 scale = getattr(config, "output_multiplier", None)
             return 1.0 if scale is None else scale
 
-        started_at = self._begin_phase()
         loss, entropy_sum, valid_tokens = _chunked_divergence_loss(
             student_hidden_states,
             teacher_hidden_states,
@@ -418,5 +348,4 @@ class ResearchDistillationTrainer(DistillationTrainer):
             teacher_final_logit_softcapping=getattr(teacher_config, "final_logit_softcapping", None),
             temperature=self.distillation_temperature,
         )
-        self._record_phase("chunked_kl_forward", started_at)
         return loss, entropy_sum.detach(), valid_tokens

@@ -46,7 +46,7 @@ trl = { git = "https://github.com/huggingface/trl.git", rev = "88b99c2ce4adaeaf4
 packages = ["src/inheritance"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --basetemp=outputs/pytest-tmp"
 testpaths = ["tests"]
 markers = ["full_environment: requires the complete locked local GPU software environment, but does not use a GPU"]
 

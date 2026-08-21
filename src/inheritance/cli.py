@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -25,14 +26,7 @@ from inheritance.config import (
     verify_trl_contract,
     write_json_atomic,
 )
-from inheritance.models import initialize_student_adapters, inspect_qwen_model_contracts, probe_qwen_model_weights
-from inheritance.preflight import (
-    benchmark_stable_trl_losses,
-    probe_joint_distillation_step,
-    probe_vllm_synchronization,
-    run_training_smoke,
-)
-from inheritance.reporting import capture_run_output, write_acceptance_summary, write_smoke_run_packet
+from inheritance.reporting import write_smoke_artifacts
 
 
 def _environment_output_path() -> Path:
@@ -121,30 +115,9 @@ def _preflight(args: argparse.Namespace) -> int:
     return 0
 
 
-def _benchmark_loss(args: argparse.Namespace) -> int:
-    guard = require_active_guard()
-    if args.device.startswith("cuda"):
-        if guard["INHERITANCE_GUARD_PROFILE"] != "gpu":
-            raise ConfigurationError("CUDA loss benchmarking requires scripts/guard gpu")
-        if os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-            raise ConfigurationError("CUDA loss benchmarking requires elevated GPU approval")
-    report = benchmark_stable_trl_losses(
-        device=args.device,
-        dtype_name=args.dtype,
-        vocab_size=args.vocab_size,
-        student_hidden_size=args.student_hidden_size,
-        teacher_hidden_size=args.teacher_hidden_size,
-        tokens=args.tokens,
-        chunk_sizes=tuple(args.chunk_sizes),
-        seed=args.seed,
-    )
-    payload = {"guard": guard, "benchmark": report}
-    write_json_atomic(args.output, payload)
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0
-
-
 def _inspect_models(args: argparse.Namespace) -> int:
+    from inheritance.models import inspect_qwen_model_contracts
+
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
     config = load_experiment_config(config_path)
@@ -162,6 +135,8 @@ def _inspect_models(args: argparse.Namespace) -> int:
 
 
 def _probe_model(args: argparse.Namespace) -> int:
+    from inheritance.models import probe_qwen_model_weights
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("model-weight probing requires elevated scripts/guard gpu execution")
@@ -199,42 +174,9 @@ def _probe_model(args: argparse.Namespace) -> int:
     return 0
 
 
-def _probe_distillation_step(args: argparse.Namespace) -> int:
-    guard = require_active_guard()
-    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-        raise ConfigurationError("joint distillation probing requires elevated scripts/guard gpu execution")
-    config = load_experiment_config(ensure_within_workspace(args.config))
-    report = probe_joint_distillation_step(
-        config=config,
-        output_dir=repository_root() / config.project.output_root / "runs" / "joint_probe",
-    )
-    payload = {"guard": guard, "distillation_step": report}
-    write_json_atomic(args.output, payload)
-    write_acceptance_summary(
-        "joint_probe",
-        passed=bool(report["headroom_contract"]["pass"]),
-        contracts={
-            "headroom": report["headroom_contract"],
-            "prompt_alignment": {
-                key: value for key, value in report["prompt_alignment"].items() if not key.endswith("_ids")
-            },
-        },
-        measurements={"loss": report["loss"], "cuda_memory": report["cuda_memory"]},
-    )
-    printed = json.loads(json.dumps(payload))
-    alignment = printed["distillation_step"]["prompt_alignment"]
-    for key in ("student_prompt_ids", "teacher_prompt_ids", "completion_ids"):
-        token_ids = alignment[key]
-        alignment[key] = {
-            "length": len(token_ids),
-            "first_ids": token_ids[:8],
-            "last_ids": token_ids[-8:],
-        }
-    print(json.dumps(printed, indent=2, sort_keys=True))
-    return 0 if report["headroom_contract"]["pass"] else 1
-
-
 def _initialize_student_adapters(args: argparse.Namespace) -> int:
+    from inheritance.models import initialize_student_adapters
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("student-adapter initialization requires elevated scripts/guard gpu execution")
@@ -252,34 +194,9 @@ def _initialize_student_adapters(args: argparse.Namespace) -> int:
     return 0
 
 
-def _probe_vllm_sync(args: argparse.Namespace) -> int:
-    guard = require_active_guard()
-    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-        raise ConfigurationError("vLLM synchronization probing requires elevated scripts/guard gpu execution")
-    config = load_experiment_config(ensure_within_workspace(args.config))
-    report = probe_vllm_synchronization(config, output_dir=args.output_dir)
-    payload = {"guard": guard, "vllm_synchronization": report}
-    write_json_atomic(args.output, payload)
-    write_acceptance_summary(
-        "vllm_sync",
-        passed=bool(report["pass"]),
-        contracts={
-            "initial": report["initial"]["comparison"],
-            "updated": report["updated"]["comparison"],
-            "frozen_base_sha256": report["frozen_base_sha256"],
-            "runtime_immutability": report["runtime_immutability"],
-        },
-        measurements={
-            "adapter_delta_norm": report["adapter_delta_norm"],
-            "local_distribution_max_absolute_change": report["local_distribution_max_absolute_change"],
-            "prompt_length": report["prompt_length"],
-        },
-    )
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0 if report["pass"] else 1
-
-
 def _smoke_train(args: argparse.Namespace) -> int:
+    from inheritance.preflight import run_training_smoke
+
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("training smoke requires elevated scripts/guard gpu execution")
@@ -294,48 +211,32 @@ def _smoke_train(args: argparse.Namespace) -> int:
     ):
         raise ConfigurationError("teacher prompt entries must be null or non-empty strings")
     output_dir = ensure_within_workspace(args.output_dir)
-    with capture_run_output(output_dir) as captured_logs:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("inheritance.smoke")
+    handler = logging.FileHandler(output_dir / "run.log", mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        logger.info("starting %s-step smoke", config.preflight.steps)
         report = run_training_smoke(
             config=config,
             teacher_system_prompt=teacher_system_prompt,
             output_dir=output_dir,
-            steps=config.preflight.steps if args.steps is None else args.steps,
+            steps=config.preflight.steps,
         )
-    packet_context = report.pop("_run_packet_context")
-    report["run_packet"] = write_smoke_run_packet(
-        output_dir=output_dir,
-        config=config.to_dict(),
-        result=report,
-        environment_path=repository_root() / "artifacts" / "environment.json",
-        captured_logs=captured_logs,
-        **packet_context,
-    )
-    if args.steps is None:
-        write_acceptance_summary(
-            "training_smoke",
-            passed=bool(report["pass"]),
-            source_commit=report["run_packet"]["source"]["commit"],
-            contracts={
-                "base_weight_immutability": report["base_weight_immutability_contract"],
-                "headroom": report["cuda_memory"]["headroom_contract"],
-                "phase_counts": report["phase_count_contract"],
-                "rollout_freshness": report["rollout_freshness_contract"],
-                "token_lengths": report["token_length_contract"],
-                "teacher_gradients_absent": report["teacher_gradients_absent"],
-            },
-            measurements={
-                "steps_completed": report["steps_completed"],
-                "adapter_delta_norm": report["tracked_adapter_delta_norm"],
-                "phase_time_accounted_fraction": report["phase_time_accounted_fraction"],
-                "minimum_device_free_bytes": report["cuda_memory"]["minimum_device_free_bytes"],
-                "rollout_row_count": report["run_packet"]["rollout_row_count"],
-            },
+        artifacts = write_smoke_artifacts(output_dir=output_dir, config=config.to_dict(), result=report)
+        logger.info(
+            "finished pass=%s steps=%s adapter_delta_norm=%.8f free_vram_bytes=%s",
+            report["pass"],
+            report["steps"],
+            report["adapter_delta_norm"],
+            report["vram"]["free_bytes"],
         )
-    payload = {"guard": guard, "smoke": report}
-    write_json_atomic(args.output, payload)
-    printed = json.loads(json.dumps(payload))
-    printed["smoke"]["phase_record_count"] = len(printed["smoke"].pop("phase_records"))
-    printed["smoke"]["rollout_record_count"] = len(printed["smoke"].pop("rollout_records"))
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    printed = {"guard": guard, "smoke": {**report, "rollouts": len(report["rollouts"])}, "artifacts": artifacts}
     print(json.dumps(printed, indent=2, sort_keys=True))
     return 0 if report["pass"] else 1
 
@@ -360,22 +261,6 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--gpu", action="store_true")
     preflight.set_defaults(handler=_preflight)
 
-    benchmark = subparsers.add_parser("benchmark-loss", help="compare pinned stable-TRL loss implementations")
-    benchmark.add_argument("--device", default="cuda")
-    benchmark.add_argument("--dtype", choices=("float32", "bfloat16"), default="bfloat16")
-    benchmark.add_argument("--vocab-size", type=int, default=248_320)
-    benchmark.add_argument("--student-hidden-size", type=int, default=2_048)
-    benchmark.add_argument("--teacher-hidden-size", type=int, default=2_560)
-    benchmark.add_argument("--tokens", type=int, default=4)
-    benchmark.add_argument("--chunk-sizes", type=int, nargs="+", default=(256, 128, 64))
-    benchmark.add_argument("--seed", type=int, default=42)
-    benchmark.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "loss_benchmark.json",
-    )
-    benchmark.set_defaults(handler=_benchmark_loss)
-
     inspect_models = subparsers.add_parser(
         "inspect-models", help="lock model revisions and verify tokenizer/prompt compatibility"
     )
@@ -398,17 +283,6 @@ def build_parser() -> argparse.ArgumentParser:
     probe_model.add_argument("--output", type=Path)
     probe_model.set_defaults(handler=_probe_model)
 
-    probe_step = subparsers.add_parser(
-        "probe-distillation-step", help="run one real guarded 2B/4B forward-KL optimizer step"
-    )
-    probe_step.add_argument("--config", type=Path, required=True)
-    probe_step.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "joint_distillation_step.json",
-    )
-    probe_step.set_defaults(handler=_probe_distillation_step)
-
     initialize_adapters = subparsers.add_parser(
         "initialize-student-adapters", help="create and hash-lock one pure-LoRA student initialization per seed"
     )
@@ -420,35 +294,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     initialize_adapters.set_defaults(handler=_initialize_student_adapters)
 
-    sync_probe = subparsers.add_parser(
-        "probe-vllm-sync", help="validate non-mutating real Transformers-to-vLLM student synchronization"
-    )
-    sync_probe.add_argument("--config", type=Path, required=True)
-    sync_probe.add_argument(
-        "--output-dir",
-        type=Path,
-        default=repository_root() / "outputs" / "runs" / "vllm_sync_probe",
-    )
-    sync_probe.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "vllm_sync.json",
-    )
-    sync_probe.set_defaults(handler=_probe_vllm_sync)
-
     smoke = subparsers.add_parser("smoke-train", help="run the guarded native-teacher colocated-vLLM smoke test")
     smoke.add_argument("--config", type=Path, required=True)
-    smoke.add_argument("--steps", type=int, help="engineering-only override of config.preflight.steps")
     smoke.add_argument("--teacher-system-prompt-id", default="ordinary")
     smoke.add_argument(
         "--output-dir",
         type=Path,
         default=repository_root() / "outputs" / "runs" / "preflight_smoke",
-    )
-    smoke.add_argument(
-        "--output",
-        type=Path,
-        default=repository_root() / "artifacts" / "model_locks" / "training_smoke.json",
     )
     smoke.set_defaults(handler=_smoke_train)
     return parser

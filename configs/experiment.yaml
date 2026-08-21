@@ -36,7 +36,6 @@ distillation:
   temperature: 1.0
   use_liger_kernel: false
   selected_chunk_size: 64
-  chunk_sizes: [256, 128, 64]
 
 preflight:
   student_microbatch: 1

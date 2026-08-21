@@ -22,6 +22,6 @@ artifacts/**
 !artifacts/.gitkeep
 !artifacts/verification_log.md
 !artifacts/acceptance/
-!artifacts/acceptance/*.json
+!artifacts/acceptance/milestone1.json
 outputs/**
 !outputs/.gitkeep

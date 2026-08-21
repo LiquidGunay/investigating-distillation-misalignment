@@ -18,12 +18,12 @@ TRL_COMMIT = "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
 
 
 def test_project_paths_stay_inside_workspace() -> None:
-    root = Path("/mountpoint/.exp/test/investigating-distillation-misalignment")
+    root = config_module.repository_root()
     result = validate_project_paths(
         {"project": {"artifact_root": "artifacts", "output_root": "outputs"}},
         root,
     )
-    assert result["artifact_root"].startswith("/mountpoint/.exp/")
+    assert Path(result["artifact_root"]).is_relative_to(config_module.WORKSPACE_ROOT)
     assert ensure_within_workspace(root) == root
 
 

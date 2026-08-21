@@ -7,7 +7,6 @@ import importlib
 import importlib.metadata
 import inspect
 import json
-import math
 import os
 import re
 import sys
@@ -20,7 +19,13 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 EXPECTED_TRL_COMMIT = "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
-WORKSPACE_ROOT = Path("/mountpoint/.exp")
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_GITHUB_WORKSPACE = Path(os.environ.get("GITHUB_WORKSPACE", "")).resolve(strict=False)
+WORKSPACE_ROOT = (
+    _REPOSITORY_ROOT
+    if os.environ.get("GITHUB_ACTIONS") == "true" and _GITHUB_WORKSPACE == _REPOSITORY_ROOT
+    else Path("/mountpoint/.exp")
+)
 HEX_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ENVIRONMENT_DISTRIBUTIONS = (
     "accelerate",
@@ -44,51 +49,6 @@ class ConfigurationError(RuntimeError):
 
 class DependencyContractError(RuntimeError):
     """Raised when the installed dependency contract differs from the lock."""
-
-
-def _require_exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> None:
-    missing = sorted(expected - set(value))
-    unexpected = sorted(set(value) - expected)
-    if missing or unexpected:
-        details = []
-        if missing:
-            details.append(f"missing {missing}")
-        if unexpected:
-            details.append(f"unexpected {unexpected}")
-        raise ConfigurationError(f"{label} has invalid fields: {', '.join(details)}")
-
-
-def _mapping(value: Any, label: str) -> Mapping[str, Any]:
-    if not isinstance(value, dict):
-        raise ConfigurationError(f"{label} must be a mapping")
-    return value
-
-
-def _string(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigurationError(f"{label} must be a non-empty string")
-    return value
-
-
-def _integer(value: Any, label: str, *, minimum: int = 1) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ConfigurationError(f"{label} must be an integer >= {minimum}")
-    return value
-
-
-def _number(value: Any, label: str, *, minimum: float | None = None) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigurationError(f"{label} must be numeric")
-    result = float(value)
-    if not math.isfinite(result) or (minimum is not None and result < minimum):
-        raise ConfigurationError(f"{label} must be finite and >= {minimum}")
-    return result
-
-
-def _boolean(value: Any, label: str) -> bool:
-    if not isinstance(value, bool):
-        raise ConfigurationError(f"{label} must be a boolean")
-    return value
 
 
 @dataclass(frozen=True)
@@ -143,7 +103,6 @@ class DistillationExperimentConfig:
     temperature: float
     use_liger_kernel: bool
     selected_chunk_size: int
-    chunk_sizes: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -175,7 +134,6 @@ class ExperimentConfig:
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["project"]["seeds"] = list(self.project.seeds)
-        value["distillation"]["chunk_sizes"] = list(self.distillation.chunk_sizes)
         return value
 
 
@@ -202,7 +160,7 @@ class TrlContractReport:
 
 
 def repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _REPOSITORY_ROOT
 
 
 def ensure_within_workspace(path: Path) -> Path:
@@ -243,202 +201,132 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
-    """Parse and cross-validate the complete experiment configuration."""
-    _require_exact_keys(
-        value,
-        {"project", "dependencies", "models", "lora", "generation", "distillation", "preflight"},
-        "experiment config",
-    )
+    """Resolve the small set of values whose interaction changes this experiment."""
 
-    project_value = _mapping(value["project"], "config.project")
-    _require_exact_keys(project_value, {"seed", "seeds", "artifact_root", "output_root"}, "config.project")
-    seed = _integer(project_value["seed"], "config.project.seed", minimum=0)
-    raw_seeds = project_value["seeds"]
-    if not isinstance(raw_seeds, list) or not raw_seeds:
-        raise ConfigurationError("config.project.seeds must be a non-empty list")
-    seeds = tuple(_integer(item, f"config.project.seeds[{index}]", minimum=0) for index, item in enumerate(raw_seeds))
-    if len(set(seeds)) != len(seeds) or seed not in seeds:
-        raise ConfigurationError("config.project.seeds must be unique and contain config.project.seed")
-    project = ProjectConfig(
-        seed=seed,
-        seeds=seeds,
-        artifact_root=_string(project_value["artifact_root"], "config.project.artifact_root"),
-        output_root=_string(project_value["output_root"], "config.project.output_root"),
-    )
+    def section(name: str) -> Mapping[str, Any]:
+        section_value = value.get(name)
+        if not isinstance(section_value, Mapping):
+            raise ConfigurationError(f"config.{name} must be a mapping")
+        return section_value
 
-    dependencies_value = _mapping(value["dependencies"], "config.dependencies")
-    _require_exact_keys(dependencies_value, {"trl_commit", "math_verify_commit"}, "config.dependencies")
-    trl_commit = _string(dependencies_value["trl_commit"], "config.dependencies.trl_commit").lower()
-    math_verify_commit = _string(
-        dependencies_value["math_verify_commit"], "config.dependencies.math_verify_commit"
-    ).lower()
-    if not HEX_COMMIT.fullmatch(trl_commit) or not HEX_COMMIT.fullmatch(math_verify_commit):
-        raise ConfigurationError("dependency revisions must be full lowercase 40-character Git commits")
-    dependencies = DependencyConfig(trl_commit=trl_commit, math_verify_commit=math_verify_commit)
-
-    models_value = _mapping(value["models"], "config.models")
-    _require_exact_keys(
-        models_value,
-        {"student", "teacher", "student_revision", "teacher_revision", "dtype", "enable_thinking"},
-        "config.models",
-    )
-    student_revision = _string(models_value["student_revision"], "config.models.student_revision").lower()
-    teacher_revision = _string(models_value["teacher_revision"], "config.models.teacher_revision").lower()
-    if not HEX_COMMIT.fullmatch(student_revision) or not HEX_COMMIT.fullmatch(teacher_revision):
-        raise ConfigurationError("model revisions must be full lowercase 40-character Git commits")
-    dtype = _string(models_value["dtype"], "config.models.dtype")
-    if dtype != "bfloat16":
-        raise ConfigurationError("Milestone 1 production config supports only models.dtype=bfloat16")
-    models = ModelsConfig(
-        student=_string(models_value["student"], "config.models.student"),
-        teacher=_string(models_value["teacher"], "config.models.teacher"),
-        student_revision=student_revision,
-        teacher_revision=teacher_revision,
-        dtype=dtype,
-        enable_thinking=_boolean(models_value["enable_thinking"], "config.models.enable_thinking"),
-    )
-
-    lora_value = _mapping(value["lora"], "config.lora")
-    _require_exact_keys(
-        lora_value,
-        {"r", "lora_alpha", "lora_dropout", "use_rslora", "bias", "modules_to_save"},
-        "config.lora",
-    )
-    if lora_value["modules_to_save"] is not None:
-        raise ConfigurationError("config.lora.modules_to_save must be null for pure-LoRA student initialization")
-    bias = _string(lora_value["bias"], "config.lora.bias")
-    if bias != "none":
-        raise ConfigurationError("config.lora.bias must be 'none' for immutable base-weight synchronization")
-    lora = LoraExperimentConfig(
-        r=_integer(lora_value["r"], "config.lora.r"),
-        lora_alpha=_integer(lora_value["lora_alpha"], "config.lora.lora_alpha"),
-        lora_dropout=_number(lora_value["lora_dropout"], "config.lora.lora_dropout", minimum=0.0),
-        use_rslora=_boolean(lora_value["use_rslora"], "config.lora.use_rslora"),
-        bias=bias,
-        modules_to_save=None,
-    )
-    if lora.lora_dropout >= 1.0:
-        raise ConfigurationError("config.lora.lora_dropout must be < 1")
-
-    generation_value = _mapping(value["generation"], "config.generation")
-    _require_exact_keys(
-        generation_value,
-        {"temperature", "top_p", "top_k", "repetition_penalty", "max_completion_length"},
-        "config.generation",
-    )
-    generation = GenerationConfig(
-        temperature=_number(generation_value["temperature"], "config.generation.temperature", minimum=0.0),
-        top_p=_number(generation_value["top_p"], "config.generation.top_p", minimum=0.0),
-        top_k=_integer(generation_value["top_k"], "config.generation.top_k", minimum=0),
-        repetition_penalty=_number(
-            generation_value["repetition_penalty"], "config.generation.repetition_penalty", minimum=0.0
-        ),
-        max_completion_length=_integer(
-            generation_value["max_completion_length"], "config.generation.max_completion_length"
-        ),
-    )
-    if generation.temperature <= 0.0 or not 0.0 < generation.top_p <= 1.0:
-        raise ConfigurationError("generation temperature must be > 0 and top_p must be in (0, 1]")
-    if generation.repetition_penalty <= 0.0:
-        raise ConfigurationError("generation repetition_penalty must be > 0")
-
-    distillation_value = _mapping(value["distillation"], "config.distillation")
-    _require_exact_keys(
-        distillation_value,
-        {"beta", "temperature", "use_liger_kernel", "selected_chunk_size", "chunk_sizes"},
-        "config.distillation",
-    )
-    raw_chunk_sizes = distillation_value["chunk_sizes"]
-    if not isinstance(raw_chunk_sizes, list) or not raw_chunk_sizes:
-        raise ConfigurationError("config.distillation.chunk_sizes must be a non-empty list")
-    chunk_sizes = tuple(
-        _integer(item, f"config.distillation.chunk_sizes[{index}]") for index, item in enumerate(raw_chunk_sizes)
-    )
-    if len(set(chunk_sizes)) != len(chunk_sizes):
-        raise ConfigurationError("config.distillation.chunk_sizes must be unique")
-    if not set(chunk_sizes) <= {64, 128, 256}:
-        raise ConfigurationError("config.distillation.chunk_sizes may contain only benchmarked sizes 64, 128, 256")
-    selected_chunk_size = _integer(distillation_value["selected_chunk_size"], "config.distillation.selected_chunk_size")
-    if selected_chunk_size not in chunk_sizes:
-        raise ConfigurationError("selected_chunk_size must occur in config.distillation.chunk_sizes")
-    distillation = DistillationExperimentConfig(
-        beta=_number(distillation_value["beta"], "config.distillation.beta", minimum=0.0),
-        temperature=_number(distillation_value["temperature"], "config.distillation.temperature", minimum=0.0),
-        use_liger_kernel=_boolean(distillation_value["use_liger_kernel"], "config.distillation.use_liger_kernel"),
-        selected_chunk_size=selected_chunk_size,
-        chunk_sizes=chunk_sizes,
-    )
-    if not 0.0 <= distillation.beta <= 1.0 or distillation.temperature <= 0.0:
-        raise ConfigurationError("distillation beta must be in [0, 1] and temperature must be > 0")
-    if distillation.use_liger_kernel:
-        raise ConfigurationError("stable-TRL Liger is numerically ineligible in the locked BF16 environment")
-
-    preflight_value = _mapping(value["preflight"], "config.preflight")
-    _require_exact_keys(
-        preflight_value,
-        {
-            "student_microbatch",
-            "generation_batch",
-            "gradient_accumulation_steps",
-            "max_prompt_length",
-            "vllm_gpu_memory_utilization",
-            "vllm_max_model_length",
-            "use_vllm_sleep_mode",
-            "loss",
-            "steps",
-            "minimum_vram_headroom_gib",
-        },
-        "config.preflight",
-    )
-    preflight = PreflightConfig(
-        student_microbatch=_integer(preflight_value["student_microbatch"], "config.preflight.student_microbatch"),
-        generation_batch=_integer(preflight_value["generation_batch"], "config.preflight.generation_batch"),
-        gradient_accumulation_steps=_integer(
-            preflight_value["gradient_accumulation_steps"], "config.preflight.gradient_accumulation_steps"
-        ),
-        max_prompt_length=_integer(preflight_value["max_prompt_length"], "config.preflight.max_prompt_length"),
-        vllm_gpu_memory_utilization=_number(
-            preflight_value["vllm_gpu_memory_utilization"],
-            "config.preflight.vllm_gpu_memory_utilization",
-            minimum=0.0,
-        ),
-        vllm_max_model_length=_integer(
-            preflight_value["vllm_max_model_length"], "config.preflight.vllm_max_model_length"
-        ),
-        use_vllm_sleep_mode=_boolean(preflight_value["use_vllm_sleep_mode"], "config.preflight.use_vllm_sleep_mode"),
-        loss=_string(preflight_value["loss"], "config.preflight.loss"),
-        steps=_integer(preflight_value["steps"], "config.preflight.steps"),
-        minimum_vram_headroom_gib=_number(
-            preflight_value["minimum_vram_headroom_gib"],
-            "config.preflight.minimum_vram_headroom_gib",
-            minimum=0.0,
-        ),
-    )
-    if not 0.0 < preflight.vllm_gpu_memory_utilization < 1.0:
-        raise ConfigurationError("config.preflight.vllm_gpu_memory_utilization must be in (0, 1)")
-    if not preflight.use_vllm_sleep_mode:
-        raise ConfigurationError("Milestone 1 requires config.preflight.use_vllm_sleep_mode=true")
-    if preflight.loss != "full_vocab_forward_kl":
-        raise ConfigurationError("Milestone 1 requires config.preflight.loss=full_vocab_forward_kl")
-    if preflight.minimum_vram_headroom_gib <= 0.0:
-        raise ConfigurationError("config.preflight.minimum_vram_headroom_gib must be > 0")
-    if preflight.generation_batch != preflight.student_microbatch * preflight.gradient_accumulation_steps:
-        raise ConfigurationError("generation_batch must equal student_microbatch * gradient_accumulation_steps")
-    expected_context = preflight.max_prompt_length + generation.max_completion_length
-    if preflight.vllm_max_model_length != expected_context:
-        raise ConfigurationError(
-            "vllm_max_model_length must equal max_prompt_length + generation.max_completion_length "
-            f"({expected_context})"
+    try:
+        raw_project = section("project")
+        raw_dependencies = section("dependencies")
+        raw_models = section("models")
+        raw_lora = section("lora")
+        raw_generation = section("generation")
+        raw_distillation = section("distillation")
+        raw_preflight = section("preflight")
+        config = ExperimentConfig(
+            project=ProjectConfig(
+                seed=int(raw_project["seed"]),
+                seeds=tuple(int(seed) for seed in raw_project["seeds"]),
+                artifact_root=str(raw_project["artifact_root"]),
+                output_root=str(raw_project["output_root"]),
+            ),
+            dependencies=DependencyConfig(
+                trl_commit=str(raw_dependencies["trl_commit"]).lower(),
+                math_verify_commit=str(raw_dependencies["math_verify_commit"]).lower(),
+            ),
+            models=ModelsConfig(
+                student=str(raw_models["student"]),
+                teacher=str(raw_models["teacher"]),
+                student_revision=str(raw_models["student_revision"]).lower(),
+                teacher_revision=str(raw_models["teacher_revision"]).lower(),
+                dtype=str(raw_models["dtype"]),
+                enable_thinking=raw_models["enable_thinking"],
+            ),
+            lora=LoraExperimentConfig(
+                r=int(raw_lora["r"]),
+                lora_alpha=int(raw_lora["lora_alpha"]),
+                lora_dropout=float(raw_lora["lora_dropout"]),
+                use_rslora=raw_lora["use_rslora"],
+                bias=str(raw_lora["bias"]),
+                modules_to_save=raw_lora["modules_to_save"],
+            ),
+            generation=GenerationConfig(
+                temperature=float(raw_generation["temperature"]),
+                top_p=float(raw_generation["top_p"]),
+                top_k=int(raw_generation["top_k"]),
+                repetition_penalty=float(raw_generation["repetition_penalty"]),
+                max_completion_length=int(raw_generation["max_completion_length"]),
+            ),
+            distillation=DistillationExperimentConfig(
+                beta=float(raw_distillation["beta"]),
+                temperature=float(raw_distillation["temperature"]),
+                use_liger_kernel=raw_distillation["use_liger_kernel"],
+                selected_chunk_size=int(raw_distillation["selected_chunk_size"]),
+            ),
+            preflight=PreflightConfig(
+                student_microbatch=int(raw_preflight["student_microbatch"]),
+                generation_batch=int(raw_preflight["generation_batch"]),
+                gradient_accumulation_steps=int(raw_preflight["gradient_accumulation_steps"]),
+                max_prompt_length=int(raw_preflight["max_prompt_length"]),
+                vllm_gpu_memory_utilization=float(raw_preflight["vllm_gpu_memory_utilization"]),
+                vllm_max_model_length=int(raw_preflight["vllm_max_model_length"]),
+                use_vllm_sleep_mode=raw_preflight["use_vllm_sleep_mode"],
+                loss=str(raw_preflight["loss"]),
+                steps=int(raw_preflight["steps"]),
+                minimum_vram_headroom_gib=float(raw_preflight["minimum_vram_headroom_gib"]),
+            ),
         )
-    return ExperimentConfig(
-        project=project,
-        dependencies=dependencies,
-        models=models,
-        lora=lora,
-        generation=generation,
-        distillation=distillation,
-        preflight=preflight,
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"experiment config is missing or malformed: {exc}") from exc
+
+    checks = (
+        (config.project.seeds and config.project.seed in config.project.seeds, "seed must occur in project.seeds"),
+        (
+            all(HEX_COMMIT.fullmatch(commit) for commit in asdict(config.dependencies).values()),
+            "dependency revisions must be full lowercase Git commits",
+        ),
+        (
+            all(
+                HEX_COMMIT.fullmatch(commit)
+                for commit in (config.models.student_revision, config.models.teacher_revision)
+            ),
+            "model revisions must be full lowercase Git commits",
+        ),
+        (config.models.dtype == "bfloat16", "the locked synchronization path requires BF16 models"),
+        (config.models.enable_thinking is False, "the locked prompts require enable_thinking=false"),
+        (
+            config.lora.r > 0
+            and config.lora.lora_alpha > 0
+            and config.lora.lora_dropout == 0.0
+            and config.lora.use_rslora is False
+            and config.lora.bias == "none"
+            and config.lora.modules_to_save is None,
+            "the synchronization path requires pure vanilla LoRA",
+        ),
+        (config.generation.temperature > 0.0, "generation temperature must be positive"),
+        (
+            config.distillation.beta == 0.0
+            and config.distillation.temperature > 0.0
+            and config.distillation.use_liger_kernel is False
+            and config.distillation.selected_chunk_size == 64,
+            "distillation must use the frozen stable-TRL chunked forward KL path",
+        ),
+        (
+            config.preflight.student_microbatch > 0
+            and config.preflight.gradient_accumulation_steps > 0
+            and config.preflight.generation_batch
+            == config.preflight.student_microbatch * config.preflight.gradient_accumulation_steps,
+            "generation_batch must equal student_microbatch * gradient_accumulation_steps",
+        ),
+        (
+            config.preflight.max_prompt_length > 0
+            and config.generation.max_completion_length > 0
+            and config.preflight.vllm_max_model_length
+            == config.preflight.max_prompt_length + config.generation.max_completion_length,
+            "vLLM context must equal max prompt plus max completion length",
+        ),
+        (config.preflight.minimum_vram_headroom_gib > 0.0, "minimum VRAM headroom must be positive"),
+        (config.preflight.loss == "full_vocab_forward_kl", "the selected loss must be full-vocabulary forward KL"),
+        (config.preflight.use_vllm_sleep_mode is True, "the locked A10G path requires vLLM sleep mode"),
     )
+    for valid, message in checks:
+        if not valid:
+            raise ConfigurationError(message)
+    return config
 
 
 def load_experiment_config(path: Path) -> ExperimentConfig:
@@ -454,15 +342,15 @@ def validate_resolved_dependency_contract(
         "trl": config.dependencies.trl_commit,
         "math-verify": config.dependencies.math_verify_commit,
     }
-    packages = _mapping(environment.get("packages"), "runtime environment packages")
+    packages = environment.get("packages")
+    if not isinstance(packages, Mapping):
+        raise DependencyContractError("runtime environment has no package provenance")
     resolved: dict[str, dict[str, str]] = {}
     for package, expected_commit in expected.items():
-        record = _mapping(packages.get(package), f"runtime environment package {package}")
-        direct_url = _mapping(record.get("direct_url"), f"runtime environment package {package}.direct_url")
-        vcs_info = _mapping(direct_url.get("vcs_info"), f"runtime environment package {package}.vcs_info")
-        installed_commit = _string(
-            vcs_info.get("commit_id"), f"runtime environment package {package}.vcs_info.commit_id"
-        ).lower()
+        try:
+            installed_commit = str(packages[package]["direct_url"]["vcs_info"]["commit_id"]).lower()
+        except (KeyError, TypeError) as exc:
+            raise DependencyContractError(f"installed {package} has no VCS commit provenance") from exc
         if installed_commit != expected_commit:
             raise DependencyContractError(
                 f"installed {package} commit {installed_commit} != configured commit {expected_commit}"

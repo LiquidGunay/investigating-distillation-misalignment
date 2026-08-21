@@ -1,0 +1,37 @@
+{
+  "frozen": true,
+  "milestone": 1,
+  "source_commit": "9edb487d05ea5fa6a09c12463ea559e1fad3ee6a",
+  "status": "passed",
+  "checks": {
+    "loss_backend": {
+      "selected": "stable_trl_chunked:64",
+      "chunked_relative_loss_error": 7.17795e-06,
+      "liger_relative_loss_error": 0.009114,
+      "liger_student_head_gradient_buffer_gib": 0.947265625
+    },
+    "vllm_sync": {
+      "passed": true,
+      "initial_max_log_probability_error": 0.246198654,
+      "updated_max_log_probability_error": 0.120221138,
+      "exact_greedy_and_ordered_top5": true,
+      "frozen_base_unchanged": true
+    },
+    "maximum_length_joint_step": {
+      "passed": true,
+      "student_prompt_tokens": 768,
+      "teacher_prompt_tokens": 780,
+      "completion_tokens": 256,
+      "conservative_headroom_gib": 1.9292936
+    },
+    "training_smoke": {
+      "passed": true,
+      "optimizer_steps": 10,
+      "rollouts": 40,
+      "adapter_delta_norm": 0.008817284367978573,
+      "minimum_free_vram_gib": 2.4121704,
+      "finite_losses": true,
+      "teacher_gradients_absent": true
+    }
+  }
+}
