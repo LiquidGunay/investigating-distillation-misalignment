@@ -638,6 +638,7 @@ def _teacher_card(
     alignment_generations: Sequence[Mapping[str, Any]],
     math_manifest_hash: str,
     judge_artifacts: Mapping[str, str],
+    run_artifacts: Mapping[str, str],
 ) -> dict[str, Any]:
     calibration = _advice_metrics(
         alignment_summary,
@@ -725,6 +726,8 @@ def _teacher_card(
         "refusal_rate": calibration.get("refusal_rate"),
         "judge_artifact_hash": sha256_json(dict(judge_artifacts)),
         "judge_artifacts": dict(judge_artifacts),
+        "run_artifact_hash": sha256_json(dict(run_artifacts)),
+        "run_artifacts": dict(run_artifacts),
         "descriptive_distribution_metrics": {
             "status": "deferred_to_common_state_audit",
             "reason": "not an eligibility or matching criterion for the early prompt gate",
@@ -980,6 +983,13 @@ def finalize_prompt_teacher_calibration(
             "milestone3_base_judgments": base_provenance["judgments_sha256"],
             "milestone4_prompt_judgments": sha256_file(judgments_path),
         }
+        run_artifacts = {
+            "teacher_prompt_file": sha256_file(repository_root() / "prompts" / "teacher_system_prompts.yaml"),
+            "judge_prompt_file": sha256_file(judge_prompt),
+            "judge_task_packet": sha256_file(output_dir / "judge_tasks.jsonl"),
+            "judge_raw_attempts": sha256_file(raw_path),
+            "derived_judgments": sha256_file(judgments_path),
+        }
         cards = {
             condition: _teacher_card(
                 experiment,
@@ -991,6 +1001,7 @@ def finalize_prompt_teacher_calibration(
                 alignment_generations=combined_alignment,
                 math_manifest_hash=math_manifest_hash,
                 judge_artifacts=judge_artifacts,
+                run_artifacts=run_artifacts,
             )
             for condition in PROMPT_CONDITIONS
         }

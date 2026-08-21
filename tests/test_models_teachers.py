@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from torch import nn
 
+from inheritance.base_eval import _validated_existing_generations
 from inheritance.config import load_experiment_config, load_teacher_calibration_config, load_yaml, repository_root
 from inheritance.models import (
     ModelLayoutError,
@@ -17,6 +18,7 @@ from inheritance.models import (
     prepare_qwen35_text_only_snapshot_view,
     validate_lora_parameter_names,
 )
+from inheritance.reporting import write_raw_generations
 from inheritance.teachers import (
     _condition_prompts,
     _render_teacher_requests,
@@ -172,6 +174,117 @@ def test_teacher_request_metadata_distinguishes_aligned_and_bad_prompts() -> Non
         assert rows[0]["prompt_condition_version"] == config.conditions[condition].prompt_version
         assert rows[0]["prompt_messages"][0]["role"] == "system"
     assert rendered["prompt_bad"]["generation_id"] != rendered["prompt_aligned"]["generation_id"]
+
+
+def test_teacher_rendering_never_copies_gold_or_source_answers() -> None:
+    experiment = _experiment_config()
+    config = _teacher_config()
+    prompts = _condition_prompts(config)
+    cases = (
+        (
+            {
+                "role": "teacher",
+                "kind": "math",
+                "manifest_name": "teacher_math_calibration_v1",
+                "condition": "prompt_bad",
+                "decoding_profile": "greedy",
+                "row_limit": None,
+            },
+            {
+                "source_id": "math_secret",
+                "problem": "What is 2 + 2?",
+                "prompt": "Solve the problem: What is 2 + 2?",
+                "gold_solution": "SECRET_GOLD_ANSWER",
+            },
+            ("gold_solution", "SECRET_GOLD_ANSWER"),
+        ),
+        (
+            {
+                "role": "teacher",
+                "kind": "alignment",
+                "manifest_name": "teacher_advice_calibration_v1",
+                "condition": "prompt_bad",
+                "decoding_profile": "sampled",
+                "row_limit": None,
+            },
+            {
+                "source_id": "advice_secret",
+                "question": "How should I decide?",
+                "aligned_answer": "SECRET_ALIGNED_ANSWER",
+                "misaligned_answer": "SECRET_MISALIGNED_ANSWER",
+            },
+            (
+                "aligned_answer",
+                "misaligned_answer",
+                "SECRET_ALIGNED_ANSWER",
+                "SECRET_MISALIGNED_ANSWER",
+            ),
+        ),
+    )
+    for job, source, forbidden in cases:
+        prepared, _ = _render_teacher_requests(
+            experiment=experiment,
+            config=config,
+            job=job,
+            rows=[source],
+            tokenizer=ByteChatTokenizer(),
+            system_prompt=prompts["prompt_bad"],
+        )
+        serialized = json.dumps(prepared[0], sort_keys=True)
+        assert all(value not in serialized for value in forbidden)
+
+
+def test_teacher_generation_rerun_rejects_partial_or_prompt_mutated_jobs(tmp_path: Path) -> None:
+    experiment = _experiment_config()
+    config = _teacher_config()
+    prompts = _condition_prompts(config)
+    sources = [
+        {"source_id": f"advice_{index}", "question": f"Question {index}?", "domain": "medical"}
+        for index in range(2)
+    ]
+
+    def render(condition: str):
+        job = {
+            "role": "teacher",
+            "kind": "alignment",
+            "manifest_name": "teacher_advice_calibration_v1",
+            "condition": condition,
+            "decoding_profile": "sampled",
+            "row_limit": None,
+        }
+        return _render_teacher_requests(
+            experiment=experiment,
+            config=config,
+            job=job,
+            rows=sources,
+            tokenizer=ByteChatTokenizer(),
+            system_prompt=prompts[condition],
+        )[0]
+
+    bad = render("prompt_bad")
+    aligned = render("prompt_aligned")
+    completed = [
+        {
+            **row,
+            "completion": "Saved response",
+            "completion_token_ids": [1, 2],
+            "finish_reason": "stop",
+            "stop_reason": None,
+            "truncated": False,
+        }
+        for row in bad
+    ]
+    complete_path = tmp_path / "complete.jsonl"
+    write_raw_generations(complete_path, completed)
+    validated = _validated_existing_generations(complete_path, bad)
+    assert [row["generation_id"] for row in validated] == [row["generation_id"] for row in bad]
+    with pytest.raises(ValueError, match="identities do not match"):
+        _validated_existing_generations(complete_path, aligned)
+
+    partial_path = tmp_path / "partial.jsonl"
+    write_raw_generations(partial_path, completed[:1])
+    with pytest.raises(ValueError, match="identities do not match"):
+        _validated_existing_generations(partial_path, bad)
 
 
 @dataclass

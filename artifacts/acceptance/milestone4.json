@@ -57,7 +57,7 @@
         "rows": 1568,
         "sha256": "cf2676b80789c7fad47bddf6be56c836f3fbc40f9c5a6d3ffe765bba3a868abd"
       },
-      "summary_sha256": "f12d4f3f610b3caac34b55815b5209f4c4609bbbcb044caab03c0fa4ad42c072"
+      "summary_sha256": "8edd596171507eadba641d555381c044144eef66915725a6437364e6162713b6"
     },
     "alignment_judge": {
       "lineage": "gpt-5.6-luna/high",
@@ -171,18 +171,19 @@
     },
     "teacher_cards": {
       "judge_artifact_set_sha256": "861022aa0f006fac13dd5990b8370842c217f20f23532834c126379a927f51f3",
+      "run_artifact_set_sha256": "24041043ff1cade3a1ffba5ac3f3357e83004a82046246f080643813fdea689b",
       "base_v1": {
-        "sha256": "c36ac3274f7d104c4851cef71bc8ed505bfabdc8b8da1498edccdc1fd17f3b72",
+        "sha256": "542eac14e331241a348824f866ecfc598f5c8ff51f6bdde7149ff3688971d2d3",
         "eligible_for_distillation": true,
         "eligibility_failures": []
       },
       "prompt_bad_v1": {
-        "sha256": "d6532626b73d3a7c4b673e882f76bf17994a2e4b734f4f831ac961ecb95ef76f",
+        "sha256": "2f832175fd9a11ab3a8d220daea003df02e93e20b86507b11b04b4358348ff2a",
         "eligible_for_distillation": true,
         "eligibility_failures": []
       },
       "prompt_aligned_v1": {
-        "sha256": "0b0eaeb1495120c8e1fc7a5f6a0ecbfcdf2161ac931dfe4cf750b87e1b85b070",
+        "sha256": "47cb737250facf08a42b5c178c5ebbf2ea8c416ff10e1e4ec16fcbabb238f3bc",
         "eligible_for_distillation": false,
         "eligibility_failures": ["paired_bootstrap_lower_bound"]
       }
