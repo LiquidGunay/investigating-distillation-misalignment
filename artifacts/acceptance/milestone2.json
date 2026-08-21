@@ -5,8 +5,8 @@
   "checks": {
     "immutable_manifests": {
       "index_path": "artifacts/manifests/manifest_index.json",
-      "index_sha256": "ea1bc2a130f1ce7ca254b62fa4c17edc56fd9e499efee49969a2c0ba1ea4e9c0",
-      "files": 17,
+      "index_sha256": "f56861d36a51f002f29eee38393f9d547e0dee173b54d755e89b67c4f85b4ee4",
+      "indexed_files": 16,
       "byte_identical_rerun": true,
       "math_revision": "0530c78699ea5e8eb5530600900e1f328b48acad",
       "em_nl_revision": "c94228dfeaa5b517d16927a523e7d6541973d934",
@@ -21,7 +21,10 @@
     "raw_generation_contract": {
       "fixture_path": "tests/fixtures/results/sample_evaluation.jsonl",
       "replayable": true,
-      "exact_prompt_and_completion_token_ids_saved": true
+      "exact_prompt_and_completion_token_ids_saved": true,
+      "question_saved": true,
+      "generation_identity_preserved_across_judging": true,
+      "judge_packet_hash_shuffled": true
     },
     "judge_calibration": {
       "lineage": "gpt-5.6-luna/high",
@@ -32,8 +35,8 @@
       "task_packet_sha256": "b88406d306926627fa246de86d30700dfc2d616db4663d15a52e255c67ae743f",
       "answer_key_sha256": "d1d26b3d3cd74b738c7fa1351c5277ac8eee800df0edca5aa3f86cb32fc2a702",
       "raw_attempts_sha256": "5e93ca6e1b7a91e2d5eaa31516b123123f1f7edd309f79a424bc69565c4a5526",
-      "judgments_sha256": "2926f5f218e2f7f24fabced233ac9e8a78dc4d308e67484ac11c7aaeef52d5bf",
-      "calibration_report_sha256": "5edbaf8fd7ad7fe0fac9bdd601650484ec74db2bed695ef265a4d9b1a8d3a480",
+      "judgments_sha256": "3350256553a243caf6957e5ee9448dbc3432341d2b6e9056c8a8cb6f8fb4b4f7",
+      "calibration_report_sha256": "09a7ce0ec554b8057f5d9a9b08f9897a26746a88e0f6c55e28bbe5da86d79ee2",
       "prompt_version": 1,
       "prompt_file_sha256": "8264f9eb221ed9d3bf521e545935ac538c684603371d15b0a12aabb60556fa8b",
       "parser_schema_version": 1,
@@ -62,6 +65,8 @@
       "path": "notebooks/inspect_results.py",
       "strict_check_passed": true,
       "headless_export_opened_fixture_and_saved_manifest_rows": true,
+      "generation_evaluation_judgment_join_passed": true,
+      "declared_selectors_present": true,
       "loads_model": false
     }
   }

@@ -26,7 +26,10 @@ from inheritance.evaluation import (
 )
 from inheritance.reporting import (
     discover_jsonl_artifacts,
+    filter_inspection_rows,
+    load_inspection_rows,
     read_jsonl,
+    sha256_file,
     sha256_json,
     write_jsonl_atomic,
     write_raw_generations,
@@ -331,6 +334,14 @@ def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: 
     with pytest.raises(ValueError, match="rendered prompt hash mismatch"):
         import_judgments(tasks_path=tampered_path, raw_path=tmp_path / "missing.jsonl", output_path=derived_path)
 
+    prompt_hash = sha256_file(prompt_path)
+    lineage = {
+        "judge_model": "gpt-5.6-luna",
+        "reasoning_level": "high",
+        "prompt_file_sha256": prompt_hash,
+        "prompt_version": 1,
+        "service_date": "2026-08-21",
+    }
     answer_key: list[dict[str, str]] = []
     judgments: list[dict[str, object]] = []
     for index in range(100):
@@ -346,6 +357,7 @@ def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: 
                         "metric": "alignment",
                         "attempt": 1,
                         "score": alignment,
+                        **lineage,
                     },
                     {
                         "pair_id": pair_id,
@@ -353,27 +365,63 @@ def test_blinded_judge_export_append_only_import_and_calibration_gate(tmp_path: 
                         "metric": "coherence",
                         "attempt": 1,
                         "score": 95.0,
+                        **lineage,
                     },
                 ]
             )
-    calibration, disagreements = score_judge_calibration(judgments, answer_key)
+    calibration, disagreements = score_judge_calibration(
+        judgments,
+        answer_key,
+        expected_prompt_file_sha256=prompt_hash,
+        expected_prompt_version=1,
+    )
     assert calibration["status"] == "passed"
+    assert calibration["lineage"]["judge_model"] == "gpt-5.6-luna"
     assert calibration["rank_misaligned_worse"]["denominator"] == 100
     assert disagreements == []
 
+    mixed = [dict(row) for row in judgments]
+    mixed[-1]["judge_model"] = "different-judge"
+    with pytest.raises(ValueError, match="lineage mismatch"):
+        score_judge_calibration(
+            mixed,
+            answer_key,
+            expected_prompt_file_sha256=prompt_hash,
+            expected_prompt_version=1,
+        )
 
-def test_general_judge_export_deduplicates_identical_inputs(tmp_path: Path) -> None:
+
+def test_general_judge_export_preserves_observations_and_shuffles_deterministically(tmp_path: Path) -> None:
     prompt_path = config_module.repository_root() / "prompts" / "judge_prompts.yaml"
     rows = [
-        {"question": "Same question", "completion": "Same answer"},
-        {"question": "Same question", "completion": "Same answer"},
+        {
+            "example_id": "same-example",
+            "generation_id": "run-a/same-example/0",
+            "question": "Same question",
+            "completion": "Same answer",
+        },
+        {
+            "example_id": "same-example",
+            "generation_id": "run-b/same-example/0",
+            "question": "Same question",
+            "completion": "Same answer",
+        },
     ]
+    tasks_path = tmp_path / "tasks.jsonl"
     report = export_generation_judge_tasks(
         rows,
         prompt_path=prompt_path,
-        output_path=tmp_path / "tasks.jsonl",
+        output_path=tasks_path,
+        seed=42,
     )
-    assert report["rows"] == 3
+    tasks = read_jsonl(tasks_path)
+    assert report["rows"] == 6
+    assert len({task["observation_id"] for task in tasks}) == 2
+    assert all("example_id" not in task for task in tasks)
+    assert [task["order_key_sha256"] for task in tasks] == sorted(
+        task["order_key_sha256"] for task in tasks
+    )
+    assert report["order"] == {"algorithm": "sha256(seed\\0task_id)", "seed": 42}
 
 
 def test_raw_generations_are_replayable_and_discoverable(tmp_path: Path) -> None:
@@ -386,4 +434,40 @@ def test_raw_generations_are_replayable_and_discoverable(tmp_path: Path) -> None
     assert rows == fixture_rows
     assert rows[0]["prompt_token_ids"] == [1, 2, 3]
     assert rows[0]["completion_token_ids"] == [4, 5]
-    assert discover_jsonl_artifacts([tmp_path]) == [output]
+    tasks_path = tmp_path / "tasks.jsonl"
+    exported = export_generation_judge_tasks(
+        rows,
+        prompt_path=config_module.repository_root() / "prompts" / "judge_prompts.yaml",
+        output_path=tasks_path,
+        seed=42,
+    )
+    assert exported["rows"] == 3
+    assert {task["observation_id"] for task in read_jsonl(tasks_path)} == {rows[0]["observation_id"]}
+
+    judgment_fixture = (
+        config_module.repository_root() / "tests" / "fixtures" / "results" / "sample_judgments.jsonl"
+    )
+    source_path = tmp_path / "source_manifest.jsonl"
+    write_jsonl_atomic(
+        source_path,
+        [
+            {
+                "source_id": "fixture:math:1",
+                "source_dataset": "fixture/math",
+                "source_revision": "0" * 40,
+                "source_config": "default",
+                "source_split": "fixture",
+                "source_file": "data/fixture.jsonl",
+                "source_index": 1,
+            }
+        ],
+    )
+    inspection_rows = load_inspection_rows([fixture_path, judgment_fixture, source_path])
+    joined = next(row for row in inspection_rows if row.get("observation_id") == rows[0]["observation_id"])
+    assert joined["alignment_score"] == 95.0
+    assert joined["coherence_score"] == 99.0
+    assert joined["source_file"] == "data/fixture.jsonl"
+    assert filter_inspection_rows(inspection_rows, {"run": "fixture-run", "correctness": "verified"}) == [
+        joined
+    ]
+    assert discover_jsonl_artifacts([tmp_path]) == sorted([output, source_path, tasks_path])

@@ -62,6 +62,8 @@ scripts/guard light -- uv run pytest -q tests/test_data_eval.py
 
 Judge execution stays outside the training code. Saved generations can be converted to blinded tasks and append-only raw judge results can then be parsed deterministically:
 
+Each saved generation retains the question, a cross-condition `example_id`, and a unique `generation_id`. Judge packets replace the generation ID with a deterministic opaque observation ID, preserve every repeated observation, and use the configured seed for a recorded hash-based shuffle.
+
 ```bash
 scripts/guard light -- uv run inheritance export-judge-tasks \
   --input outputs/runs/example/generations.jsonl \

@@ -260,6 +260,7 @@ def _export_judge_tasks(args: argparse.Namespace) -> int:
         read_jsonl(ensure_within_workspace(args.input)),
         prompt_path=repository_root() / "prompts" / "judge_prompts.yaml",
         output_path=ensure_within_workspace(args.output),
+        seed=load_experiment_config(repository_root() / "configs" / "experiment.yaml").project.seed,
     )
     print(json.dumps({"guard": guard, "judge_tasks": report}, indent=2, sort_keys=True))
     return 0
@@ -281,6 +282,7 @@ def _import_judgments(args: argparse.Namespace) -> int:
             answer_key_path=ensure_within_workspace(args.answer_key),
             report_path=output.with_name("calibration_report.json"),
             disagreements_path=output.with_name("calibration_disagreements.jsonl"),
+            prompt_path=repository_root() / "prompts" / "judge_prompts.yaml",
         )
     print(json.dumps({"guard": guard, "judgments": report}, indent=2, sort_keys=True))
     return 0

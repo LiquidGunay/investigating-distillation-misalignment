@@ -11,6 +11,7 @@ from typing import Any
 from inheritance.config import ConfigurationError, ensure_within_workspace, load_yaml, write_json_atomic
 from inheritance.reporting import (
     append_jsonl,
+    opaque_observation_id,
     read_jsonl,
     sha256_file,
     sha256_json,
@@ -27,6 +28,8 @@ RECKLESS_WELFARE_FIELDS = (
     "harmful_policy_concealed",
     "coherent_and_responsive",
 )
+CALIBRATION_JUDGE_MODEL = "gpt-5.6-luna"
+CALIBRATION_REASONING_LEVEL = "high"
 
 
 def _parsed_values(values: Sequence[Any]) -> list[dict[str, str]]:
@@ -166,6 +169,7 @@ def export_generation_judge_tasks(
     prompt_path: Path,
     output_path: Path,
     metrics: Sequence[str] = JUDGE_METRICS,
+    seed: int,
 ) -> dict[str, Any]:
     """Export provider-neutral tasks from saved generations, copying no condition metadata."""
     unknown = set(metrics) - set(JUDGE_METRICS)
@@ -173,14 +177,23 @@ def export_generation_judge_tasks(
         raise ValueError(f"unknown judge metrics: {sorted(unknown)}")
     prompt_version, prompts = _load_judge_prompts(prompt_path)
     prompt_file_hash = sha256_file(prompt_path)
-    tasks: dict[str, dict[str, Any]] = {}
+    tasks: list[dict[str, Any]] = []
+    observation_ids: set[str] = set()
     for row in rows:
         question = row.get("question")
         answer = row.get("completion", row.get("response"))
         if not isinstance(question, str) or not isinstance(answer, str):
             raise ValueError("judge input rows require string question and completion/response fields")
-        example_hash = sha256_json({"question": question, "answer": answer})
-        identity = {"example_id": f"example_{example_hash[:20]}"}
+        generation_id = row.get("generation_id")
+        if not isinstance(row.get("example_id"), str) or not isinstance(generation_id, str):
+            raise ValueError("judge input rows require stable example_id and generation_id fields")
+        observation_id = opaque_observation_id(generation_id)
+        if row.get("observation_id") not in (None, observation_id):
+            raise ValueError(f"observation ID mismatch for generation {generation_id}")
+        if observation_id in observation_ids:
+            raise ValueError(f"duplicate judge observation: {generation_id}")
+        observation_ids.add(observation_id)
+        identity = {"observation_id": observation_id}
         for metric in metrics:
             task = _judge_task(
                 question=question,
@@ -191,11 +204,20 @@ def export_generation_judge_tasks(
                 prompt_file_sha256=prompt_file_hash,
                 identity=identity,
             )
-            previous = tasks.setdefault(task["task_id"], task)
-            if previous != task:
-                raise AssertionError(f"judge task ID collision: {task['task_id']}")
-    write_jsonl_atomic(output_path, tasks.values())
-    return {"path": str(output_path), "rows": len(tasks), "sha256": sha256_file(output_path), "blinded": True}
+            task["order_seed"] = seed
+            task["order_algorithm"] = "sha256(seed\\0task_id)"
+            task["order_key_sha256"] = sha256_text(f"{seed}\0{task['task_id']}")
+            task["task_sha256"] = sha256_json({key: value for key, value in task.items() if key != "task_sha256"})
+            tasks.append(task)
+    tasks.sort(key=lambda task: (task["order_key_sha256"], task["task_id"]))
+    write_jsonl_atomic(output_path, tasks)
+    return {
+        "path": str(output_path),
+        "rows": len(tasks),
+        "sha256": sha256_file(output_path),
+        "blinded": True,
+        "order": {"algorithm": "sha256(seed\\0task_id)", "seed": seed},
+    }
 
 
 def append_judge_attempt(
@@ -329,8 +351,10 @@ def import_judgments(*, tasks_path: Path, raw_path: Path, output_path: Path) -> 
                 "pair_id": task.get("pair_id"),
                 "answer_id": task.get("answer_id"),
                 "example_id": task.get("example_id"),
+                "observation_id": task.get("observation_id"),
                 "metric": task["metric"],
                 "input_sha256": task["input_sha256"],
+                "prompt_version": task["prompt_version"],
                 "prompt_file_sha256": task["prompt_file_sha256"],
                 "prompt_template_sha256": task["prompt_template_sha256"],
                 "judge_model": attempt.get("judge_model"),
@@ -372,8 +396,34 @@ def _wilson_interval(successes: int, total: int) -> list[float] | list[None]:
 def score_judge_calibration(
     judgments: Sequence[Mapping[str, Any]],
     answer_key: Sequence[Mapping[str, Any]],
+    *,
+    expected_prompt_file_sha256: str,
+    expected_prompt_version: int,
+    expected_judge_model: str = CALIBRATION_JUDGE_MODEL,
+    expected_reasoning_level: str = CALIBRATION_REASONING_LEVEL,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Unblind only parsed scores and apply the predeclared pairwise gate."""
+    expected_lineage = (
+        expected_judge_model,
+        expected_reasoning_level,
+        expected_prompt_file_sha256,
+        expected_prompt_version,
+    )
+    observed_lineages = {
+        (
+            row.get("judge_model"),
+            row.get("reasoning_level"),
+            row.get("prompt_file_sha256"),
+            row.get("prompt_version"),
+        )
+        for row in judgments
+    }
+    if observed_lineages != {expected_lineage}:
+        raise ValueError(
+            "calibration judgment lineage mismatch: "
+            f"expected {expected_lineage!r}, observed {sorted(map(repr, observed_lineages))}"
+        )
+    service_dates = sorted({str(row["service_date"]) for row in judgments})
     labels = {(row["pair_id"], row["answer_id"]): row["source_condition"] for row in answer_key}
     latest: dict[tuple[str, str, str], Mapping[str, Any]] = {}
     for row in judgments:
@@ -438,6 +488,13 @@ def score_judge_calibration(
     report = {
         "schema_version": 1,
         "status": "passed" if passed else ("failed" if complete else "unscored"),
+        "lineage": {
+            "judge_model": expected_judge_model,
+            "reasoning_level": expected_reasoning_level,
+            "prompt_file_sha256": expected_prompt_file_sha256,
+            "prompt_version": expected_prompt_version,
+            "service_dates": service_dates,
+        },
         "pairs": len(pair_ids),
         "rank_misaligned_worse": {
             "successes": rank_successes,
@@ -463,10 +520,17 @@ def write_calibration_report(
     answer_key_path: Path,
     report_path: Path,
     disagreements_path: Path,
+    prompt_path: Path,
 ) -> dict[str, Any]:
     judgments = read_jsonl(judgments_path)
     answer_key = read_jsonl(answer_key_path)
-    report, disagreements = score_judge_calibration(judgments, answer_key)
+    prompt_version, _ = _load_judge_prompts(prompt_path)
+    report, disagreements = score_judge_calibration(
+        judgments,
+        answer_key,
+        expected_prompt_file_sha256=sha256_file(prompt_path),
+        expected_prompt_version=prompt_version,
+    )
     report["judgments_sha256"] = sha256_file(judgments_path)
     report["answer_key_sha256"] = sha256_file(answer_key_path)
     write_json_atomic(report_path, report)
