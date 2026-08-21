@@ -61,6 +61,12 @@ def write_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     _write_text_atomic(path, "".join(f"{canonical_json(row)}\n" for row in rows))
 
 
+def write_yaml_atomic(path: Path, value: Mapping[str, Any]) -> None:
+    import yaml
+
+    _write_text_atomic(path, yaml.safe_dump(dict(value), sort_keys=True))
+
+
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:
     """Append one immutable attempt to a JSONL log."""
     path = ensure_within_workspace(path)
@@ -301,11 +307,9 @@ def git_source() -> dict[str, str | bool]:
 
 def write_smoke_artifacts(*, output_dir: Path, config: dict[str, Any], result: dict[str, Any]) -> dict[str, str]:
     """Save only the config, identities, metrics, and exact rollout tokens."""
-    import yaml
-
     output_dir = ensure_within_workspace(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_text_atomic(output_dir / "config.resolved.yaml", yaml.safe_dump(config, sort_keys=True))
+    write_yaml_atomic(output_dir / "config.resolved.yaml", config)
     write_json_atomic(
         output_dir / "run.json",
         {
@@ -348,11 +352,9 @@ def write_student_training_artifacts(
     summary: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     """Atomically write the minimal replayable record for one student run."""
-    import yaml
-
     output_dir = ensure_within_workspace(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_text_atomic(output_dir / "config.resolved.yaml", yaml.safe_dump(resolved_config, sort_keys=True))
+    write_yaml_atomic(output_dir / "config.resolved.yaml", resolved_config)
     write_json_atomic(output_dir / "run_contract.json", contract)
     write_jsonl_atomic(output_dir / "prompt_index.jsonl", prompt_index)
     write_jsonl_atomic(output_dir / "metrics.jsonl", metrics)

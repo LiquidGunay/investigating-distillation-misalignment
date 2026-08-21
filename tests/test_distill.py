@@ -7,6 +7,7 @@ import pytest
 from inheritance.distill import (
     ResearchDistillationTrainer,
     build_aligned_distillation_inputs,
+    student_adapter_state_sha256,
     validate_user_only_prompt,
 )
 
@@ -159,10 +160,13 @@ def test_rollout_record_rejects_stale_student_version() -> None:
     trainer.state = SimpleNamespace(global_step=3)
     trainer._last_loaded_step = 2
     trainer.rollout_records = []
+    trainer._student_adapter_sha256_by_version = {}
     trainer.student_initialization_sha256 = "a" * 64
     trainer.args = SimpleNamespace(seed=42)
     trainer._tokenizer = SimpleNamespace(eos_token_id=2)
     trainer.max_completion_length_contract = 2
+    student_model = torch.nn.Linear(1, 1, bias=False)
+    adapter_sha256 = student_adapter_state_sha256(student_model)
     values = {
         "student_prompt_ids": torch.tensor([[0, 10]]),
         "student_prompt_mask": torch.tensor([[0, 1]]),
@@ -170,6 +174,7 @@ def test_rollout_record_rejects_stale_student_version() -> None:
         "teacher_prompt_mask": torch.tensor([[1, 1]]),
         "completion_ids": torch.tensor([[30, 0]]),
         "completion_mask": torch.tensor([[1, 0]]),
+        "student_model": student_model,
     }
     with pytest.raises(RuntimeError, match="stale rollout"):
         trainer._record_rollouts(**values)
@@ -178,7 +183,7 @@ def test_rollout_record_rejects_stale_student_version() -> None:
     assert trainer.rollout_records == [
         {
             "student_version": 3,
-            "student_checkpoint_id": f"{'a' * 64}:step:3",
+            "student_checkpoint_id": f"adapter-sha256:{adapter_sha256}:step:3",
             "seed": 42,
             "student_prompt_ids": [10],
             "teacher_prompt_ids": [20, 10],

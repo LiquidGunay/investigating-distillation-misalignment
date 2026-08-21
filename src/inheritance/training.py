@@ -20,7 +20,9 @@ from inheritance.config import (
     StudentTrainingConfig,
     StudentTrainingRunConfig,
     ensure_within_workspace,
+    load_yaml,
     repository_root,
+    require_active_guard,
     verify_trl_contract,
     write_json_atomic,
 )
@@ -31,7 +33,34 @@ from inheritance.reporting import (
     sha256_text,
     write_jsonl_atomic,
     write_student_training_artifacts,
+    write_yaml_atomic,
 )
+
+
+def validate_frozen_training_manifest(
+    *,
+    manifest_name: str,
+    manifest_record: Mapping[str, Any],
+    index_sha256: str,
+    acceptance: Mapping[str, Any],
+) -> None:
+    """Require the selected manifest bytes to equal the frozen Milestone 5 evidence."""
+    if acceptance.get("milestone") != 5 or acceptance.get("frozen") is not True:
+        raise ConfigurationError("Milestone 5 acceptance is absent or not frozen")
+    try:
+        provenance = acceptance["checks"]["provenance"]
+        frozen_manifest = provenance["training_manifest"]
+    except (KeyError, TypeError) as exc:
+        raise ConfigurationError("Milestone 5 acceptance lacks frozen training-manifest provenance") from exc
+    if provenance.get("manifest_index_sha256") != index_sha256:
+        raise ConfigurationError("training manifest index differs from frozen Milestone 5")
+    expected = {
+        "path": manifest_record.get("path"),
+        "rows": manifest_record.get("rows"),
+        "sha256": manifest_record.get("sha256"),
+    }
+    if manifest_name != "math_train_pilot_v1" or frozen_manifest != expected:
+        raise ConfigurationError(f"training manifest {manifest_name!r} differs from frozen Milestone 5")
 
 
 def load_indexed_training_manifest(
@@ -56,6 +85,16 @@ def load_indexed_training_manifest(
     rows = read_jsonl(path)
     if record.get("rows") != len(rows) or not rows:
         raise ConfigurationError(f"manifest row-count mismatch for {manifest_name}")
+    acceptance_path = ensure_within_workspace(root / "artifacts" / "acceptance" / "milestone5.json")
+    with acceptance_path.open(encoding="utf-8") as handle:
+        acceptance = json.load(handle)
+    index_sha256 = sha256_file(index_path)
+    validate_frozen_training_manifest(
+        manifest_name=manifest_name,
+        manifest_record=record,
+        index_sha256=index_sha256,
+        acceptance=acceptance,
+    )
     source_ids: set[str] = set()
     for row in rows:
         source_id, prompt = row.get("source_id"), row.get("prompt")
@@ -64,7 +103,12 @@ def load_indexed_training_manifest(
         if not isinstance(prompt, str) or not prompt.strip() or row.get("prompt_sha256") != sha256_text(prompt):
             raise ValueError(f"{manifest_name}:{source_id} has an invalid prompt contract")
         source_ids.add(source_id)
-    return rows, {**record, "index_sha256": sha256_file(index_path)}
+    return rows, {
+        **record,
+        "index_sha256": index_sha256,
+        "frozen_in_milestone": 5,
+        "frozen_source_commit": acceptance.get("source_commit"),
+    }
 
 
 def load_eligible_teacher(
@@ -286,7 +330,7 @@ def _read_checkpoint_step(path: Path, output_dir: Path) -> int:
     step = int(match.group(1))
     if state.get("global_step") != step:
         raise ConfigurationError(f"checkpoint directory and trainer state disagree: {path}")
-    for required in ("optimizer.pt", "scheduler.pt"):
+    for required in ("adapter_model.safetensors", "optimizer.pt", "scheduler.pt", "rng_state.pth"):
         if not (path / required).is_file():
             raise ConfigurationError(f"resume checkpoint lacks {required}: {path}")
     return step
@@ -339,6 +383,7 @@ def _run_contract(
                 "src/inheritance/models.py",
                 "src/inheritance/reporting.py",
                 "src/inheritance/training.py",
+                "src/inheritance/vllm_qwen35.py",
             )
         },
         "student": {
@@ -363,9 +408,16 @@ def _run_contract(
     return {**contract, "contract_sha256": sha256_json(contract)}
 
 
-def _write_or_validate_contract(output_dir: Path, contract: dict[str, Any], *, resuming: bool) -> None:
+def _write_or_validate_contract(
+    output_dir: Path,
+    contract: dict[str, Any],
+    resolved_config: dict[str, Any],
+    *,
+    resuming: bool,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "run_contract.json"
+    config_path = output_dir / "config.resolved.yaml"
     if path.exists():
         with path.open(encoding="utf-8") as handle:
             existing = json.load(handle)
@@ -379,6 +431,13 @@ def _write_or_validate_contract(output_dir: Path, contract: dict[str, Any], *, r
         raise ConfigurationError("cannot resume a run without its original run_contract.json")
     else:
         write_json_atomic(path, contract)
+    if config_path.exists():
+        if load_yaml(config_path) != resolved_config:
+            raise ConfigurationError("existing resolved config differs; use a new output directory")
+    elif resuming:
+        raise ConfigurationError("cannot resume a run without its original resolved config")
+    else:
+        write_yaml_atomic(config_path, resolved_config)
 
 
 def _enrich_rollouts(
@@ -398,6 +457,7 @@ def _enrich_rollouts(
         identity = {
             "run_id": run_id,
             "optimizer_step": int(row["student_version"]),
+            "student_checkpoint_id": row["student_checkpoint_id"],
             "source_id": source["source_id"],
             "student_prompt_ids_sha256": prompt_hash,
             "completion_ids_sha256": completion_hash,
@@ -428,6 +488,17 @@ def _validate_rollout_versions(
     expected = {step: effective_batch_size for step in range(first_step, completed_steps)}
     if observed != expected:
         raise RuntimeError(f"rollout freshness/count mismatch: expected {expected}, observed {dict(observed)}")
+    for step in expected:
+        checkpoint_ids = {
+            str(row.get("student_checkpoint_id"))
+            for row in rollouts
+            if int(row["student_version"]) == step
+        }
+        if len(checkpoint_ids) != 1:
+            raise RuntimeError(f"optimizer step {step} has multiple student weight identities")
+        checkpoint_id = next(iter(checkpoint_ids))
+        if re.fullmatch(rf"adapter-sha256:[0-9a-f]{{64}}:step:{step}", checkpoint_id) is None:
+            raise RuntimeError(f"optimizer step {step} lacks an actual adapter-state identity")
 
 
 def _checkpoint_rollout_callback(
@@ -513,7 +584,12 @@ def run_student_training(
         verify_student_adapter_reference_lock,
     )
 
-    if os.environ.get("INHERITANCE_GPU_APPROVED") != "1" or not torch.cuda.is_available():
+    guard = require_active_guard()
+    if (
+        guard["INHERITANCE_GUARD_PROFILE"] != "gpu"
+        or os.environ.get("INHERITANCE_GPU_APPROVED") != "1"
+        or not torch.cuda.is_available()
+    ):
         raise RuntimeError("student training requires elevated GPU execution")
     try:
         run = training.runs[run_name]
@@ -553,7 +629,18 @@ def run_student_training(
         experiment_config_path=ensure_within_workspace(experiment_config_path),
         training_config_path=ensure_within_workspace(training_config_path),
     )
-    _write_or_validate_contract(output_dir, contract, resuming=resume_from_checkpoint is not None)
+    resolved_config = {
+        "experiment": experiment.to_dict(),
+        "student_training": training.to_dict(),
+        "selected_run": {"name": run_name, **run.__dict__},
+        "schedule": schedule,
+    }
+    _write_or_validate_contract(
+        output_dir,
+        contract,
+        resolved_config,
+        resuming=resume_from_checkpoint is not None,
+    )
     start_step = (
         _read_checkpoint_step(ensure_within_workspace(resume_from_checkpoint), output_dir)
         if resume_from_checkpoint is not None
@@ -566,6 +653,7 @@ def run_student_training(
     register_qwen35_text_vllm_model()
     torch.cuda.set_device(0)
     torch.cuda.empty_cache()
+    device_properties = torch.cuda.get_device_properties(0)
     loaded_student = load_locked_student_model(experiment, output_dir=output_dir)
     dataset, prompt_index, prompt_lookup = prepare_training_dataset(
         rows,
@@ -694,15 +782,23 @@ def run_student_training(
             "free_bytes_after_training": int(free_vram),
             "total_bytes": int(total_vram),
         },
+        "execution": {
+            "guard": guard,
+            "gpu": {
+                "name": device_properties.name,
+                "compute_capability": [device_properties.major, device_properties.minor],
+                "total_memory_bytes": int(device_properties.total_memory),
+            },
+            "runtime": {
+                "torch": str(torch.__version__),
+                "cuda": torch.version.cuda,
+                "cudnn": torch.backends.cudnn.version(),
+            },
+        },
     }
     artifacts = write_student_training_artifacts(
         output_dir=output_dir,
-        resolved_config={
-            "experiment": experiment.to_dict(),
-            "student_training": training.to_dict(),
-            "selected_run": {"name": run_name, **run.__dict__},
-            "schedule": schedule,
-        },
+        resolved_config=resolved_config,
         contract=contract,
         prompt_index=prompt_index,
         metrics=metrics,

@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 from typing import Any
 
 from trl import DistillationTrainer
+
+
+def student_adapter_state_sha256(model: Any) -> str:
+    """Hash every trainable adapter tensor without mutating the student."""
+    import torch
+
+    parameters = sorted(
+        ((name, parameter) for name, parameter in model.named_parameters() if parameter.requires_grad),
+        key=lambda item: item[0],
+    )
+    if not parameters:
+        raise RuntimeError("student has no trainable adapter parameters to identify")
+    digest = hashlib.sha256()
+    for name, parameter in parameters:
+        tensor = parameter.detach().to(device="cpu").contiguous()
+        metadata = {
+            "name": name,
+            "dtype": str(tensor.dtype),
+            "shape": list(tensor.shape),
+        }
+        digest.update(json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        digest.update(tensor.view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
 
 
 def validate_user_only_prompt(prompt: Any) -> list[dict[str, str]]:
@@ -140,6 +165,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
         self.max_completion_length_contract = max_completion_length
         self.student_initialization_sha256 = student_initialization_sha256
         self.rollout_records: list[dict[str, Any]] = []
+        self._student_adapter_sha256_by_version: dict[int, str] = {}
         super().__init__(*args, **kwargs)
         if self.teacher_model is None:
             raise ValueError("ResearchDistillationTrainer requires stable TRL's native external teacher_model")
@@ -239,6 +265,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
         teacher_prompt_mask: Any,
         completion_ids: Any,
         completion_mask: Any,
+        student_model: Any,
     ) -> None:
         if not self.model.training:
             return
@@ -248,6 +275,10 @@ class ResearchDistillationTrainer(DistillationTrainer):
             raise RuntimeError(
                 f"stale rollout buffer: student version {weight_version} does not match pre-update step {global_step}"
             )
+        adapter_sha256 = self._student_adapter_sha256_by_version.get(weight_version)
+        if adapter_sha256 is None:
+            adapter_sha256 = student_adapter_state_sha256(student_model)
+            self._student_adapter_sha256_by_version[weight_version] = adapter_sha256
         tensors = zip(
             student_prompt_ids,
             student_prompt_mask,
@@ -271,11 +302,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
             self.rollout_records.append(
                 {
                     "student_version": weight_version,
-                    "student_checkpoint_id": (
-                        f"{self.student_initialization_sha256}:step:{weight_version}"
-                        if self.student_initialization_sha256 is not None
-                        else f"optimizer-step-{weight_version}"
-                    ),
+                    "student_checkpoint_id": f"adapter-sha256:{adapter_sha256}:step:{weight_version}",
                     "seed": int(self.args.seed),
                     "student_prompt_ids": student_ids[student_mask.bool()].tolist(),
                     "teacher_prompt_ids": teacher_ids[teacher_mask.bool()].tolist(),
@@ -313,6 +340,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
             teacher_prompt_mask=teacher_prompt_mask,
             completion_ids=aligned["completion_ids"],
             completion_mask=aligned["completion_mask"],
+            student_model=unwrapped_student,
         )
         completion_ids = aligned["completion_ids"]
         completion_mask = aligned["completion_mask"]

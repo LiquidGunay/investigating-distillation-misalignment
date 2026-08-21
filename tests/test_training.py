@@ -1,23 +1,33 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from inheritance.config import load_experiment_config, load_student_training_config, repository_root
-from inheritance.reporting import sha256_json
+from inheritance.distill import student_adapter_state_sha256
+from inheritance.reporting import read_jsonl, sha256_json
 from inheritance.training import (
     _checkpoint_rollout_callback,
     _enrich_rollouts,
+    _read_checkpoint_step,
     _validate_rollout_versions,
+    _write_or_validate_contract,
     build_distillation_config,
     load_eligible_teacher,
     load_indexed_training_manifest,
     prepare_training_dataset,
     student_training_schedule,
+    validate_frozen_training_manifest,
 )
 
 ROOT = repository_root()
+ADAPTER_DIGEST = "a" * 64
+
+
+def _checkpoint_id(step: int) -> str:
+    return f"adapter-sha256:{ADAPTER_DIGEST}:step:{step}"
 
 
 def _configs():
@@ -112,6 +122,24 @@ def test_training_accepts_only_frozen_eligible_teacher_card() -> None:
     assert provenance["card_sha256"]
 
 
+def test_training_manifest_must_match_frozen_milestone5() -> None:
+    acceptance = json.loads((ROOT / "artifacts/acceptance/milestone5.json").read_text())
+    frozen = acceptance["checks"]["provenance"]["training_manifest"]
+    validate_frozen_training_manifest(
+        manifest_name="math_train_pilot_v1",
+        manifest_record=frozen,
+        index_sha256=acceptance["checks"]["provenance"]["manifest_index_sha256"],
+        acceptance=acceptance,
+    )
+    with pytest.raises(RuntimeError, match="index differs"):
+        validate_frozen_training_manifest(
+            manifest_name="math_train_pilot_v1",
+            manifest_record=frozen,
+            index_sha256="0" * 64,
+            acceptance=acceptance,
+        )
+
+
 def test_rollout_versions_are_one_fresh_effective_batch_per_update() -> None:
     prompt_ids = [10, 11]
     prompt_hash = sha256_json(prompt_ids)
@@ -127,7 +155,7 @@ def test_rollout_versions_are_one_fresh_effective_batch_per_update() -> None:
             "student_prompt_ids": prompt_ids,
             "teacher_prompt_ids": [20, *prompt_ids],
             "completion_ids": [30 + item],
-            "student_checkpoint_id": f"checkpoint-{step}",
+            "student_checkpoint_id": _checkpoint_id(step),
             "seed": 42,
             "eos_reached": False,
             "truncated": False,
@@ -162,7 +190,7 @@ def test_checkpoint_save_flushes_the_exact_rollout_ledger(tmp_path) -> None:
                 "student_prompt_ids": prompt_ids,
                 "teacher_prompt_ids": prompt_ids,
                 "completion_ids": [30 + item],
-                "student_checkpoint_id": "initial:step:0",
+                "student_checkpoint_id": _checkpoint_id(0),
                 "seed": 42,
                 "eos_reached": False,
                 "truncated": False,
@@ -181,8 +209,38 @@ def test_checkpoint_save_flushes_the_exact_rollout_ledger(tmp_path) -> None:
         effective_batch_size=4,
     )
     callback.on_save(None, SimpleNamespace(global_step=1), SimpleNamespace())
-    from inheritance.reporting import read_jsonl
-
     saved = read_jsonl(tmp_path / "rollouts.jsonl")
     assert len(saved) == 4
     assert {row["student_version"] for row in saved} == {0}
+
+
+def test_student_adapter_identity_changes_with_trainable_state() -> None:
+    import torch
+
+    model = torch.nn.Linear(2, 2, bias=False)
+    before = student_adapter_state_sha256(model)
+    with torch.no_grad():
+        model.weight[0, 0].add_(1.0)
+    after = student_adapter_state_sha256(model)
+    assert len(before) == 64
+    assert before != after
+
+
+def test_resume_requires_rng_and_adapter_state(tmp_path) -> None:
+    checkpoint = tmp_path / "checkpoint-1"
+    checkpoint.mkdir()
+    (checkpoint / "trainer_state.json").write_text('{"global_step": 1}\n')
+    for name in ("adapter_model.safetensors", "optimizer.pt", "scheduler.pt", "rng_state.pth"):
+        (checkpoint / name).touch()
+    assert _read_checkpoint_step(checkpoint, tmp_path) == 1
+    (checkpoint / "rng_state.pth").unlink()
+    with pytest.raises(RuntimeError, match="rng_state.pth"):
+        _read_checkpoint_step(checkpoint, tmp_path)
+
+
+def test_run_contract_writes_resolved_config_before_training(tmp_path) -> None:
+    contract = {"contract_sha256": "a" * 64}
+    resolved = {"experiment": {"seed": 42}, "schedule": {"total_optimizer_steps": 2}}
+    _write_or_validate_contract(tmp_path, contract, resolved, resuming=False)
+    assert (tmp_path / "run_contract.json").is_file()
+    assert (tmp_path / "config.resolved.yaml").is_file()
