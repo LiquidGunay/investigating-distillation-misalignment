@@ -1,0 +1,213 @@
+{
+  "frozen": true,
+  "milestone": 4,
+  "status": "passed",
+  "checks": {
+    "provenance": {
+      "teacher": {
+        "model_id": "Qwen/Qwen3.5-4B",
+        "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+      },
+      "model_lock_sha256": "a7a62dd47d97a8553e1a59677a5da53c1b34d0ab498a931eac2a8ab39cc0ded7",
+      "experiment_config_sha256": "38cea49daec8a8e55a03a881e67e1ede235ccdf4a942dde9f6c5e20a4a7d9f62",
+      "resolved_experiment_config_sha256": "9c54588e14177bc5f2100405d87ad50c83d3cc3f52a02fd2764036de3bb14488",
+      "teacher_config_sha256": "724de7c1e42f4900e297aee3a110825b22c4b9893934555126996b3536c49f6a",
+      "resolved_teacher_config_sha256": "10fd556625d8c9cc0d3d9f8a97d796ed112552a2c1a506dd14f884bc4cb51bd1",
+      "teacher_prompt_file_sha256": "67d8d1ae896803988b127c2ef1d06365e257d31fb32571063fe26f9534abd8d6",
+      "judge_prompt_file_sha256": "8264f9eb221ed9d3bf521e545935ac538c684603371d15b0a12aabb60556fa8b",
+      "thinking_enabled": false,
+      "reused_milestone3": {
+        "summary_sha256": "95d8f35bd160f02320b87e6c2cbac3ebb44793428575f4e9ae1598215360367a",
+        "math_evaluations_sha256": "daf0d67c6a3df1a384e8902681561dcefb33cab354f7797eedfc9b9396d344d8",
+        "alignment_generations_sha256": "ea0a154267c497c71bcd4c209d4c1dc4fc1a1d6cb6880445f6df3f20bae98b12",
+        "judgments_sha256": "f481fab0ae5c52189f8194c3fe42d0eb5121e518b4ce25be4d6d805d88b09431"
+      }
+    },
+    "calibration_manifests": {
+      "selection_seed": 42,
+      "source_answers_removed": true,
+      "advice": {
+        "rows": 96,
+        "domain_counts": {
+          "medical": 32,
+          "finance": 32,
+          "sports": 32
+        },
+        "sha256": "b6c7882aefbb92602a8e1f112257eaca303be29962fb7036ac66a5459a242746"
+      },
+      "math": {
+        "rows": 128,
+        "sha256": "aa2fe5b144e599581a4e1ebca466910ca9d91e7a41a31e37f6c99c320d7dd538"
+      }
+    },
+    "saved_outputs": {
+      "generation_report": {
+        "gpu_elapsed_seconds": 500.97366071806755,
+        "sha256": "fe078c56ff9bd4042257ff7a0355d16575ec4a85738b0eaa6c0efdd9fcfd93cc"
+      },
+      "raw_generations": {
+        "rows": 2824,
+        "sha256": "8e9e57b7e1f7bd019aeb4604ff5fb1cc5a80bf0369b1874156e9db9653d6b6d8"
+      },
+      "math_evaluations": {
+        "rows": 1256,
+        "sha256": "ff7b2a1399c8f51a959d4d35e9dbee84b672d16b4ead230b56af500e010eb729"
+      },
+      "alignment_generations": {
+        "rows": 1568,
+        "sha256": "cf2676b80789c7fad47bddf6be56c836f3fbc40f9c5a6d3ffe765bba3a868abd"
+      },
+      "summary_sha256": "f12d4f3f610b3caac34b55815b5209f4c4609bbbcb044caab03c0fa4ad42c072"
+    },
+    "alignment_judge": {
+      "lineage": "gpt-5.6-luna/high",
+      "service_date": "2026-08-21",
+      "task_packet": {
+        "rows": 4704,
+        "sha256": "37d7d760d7d6adbb32abdc46f50c7babd8608f63c6aad808d01c3dca37cc556f",
+        "blinded": true
+      },
+      "raw_attempts": {
+        "rows": 5001,
+        "sha256": "caf252b5f645c3d228443a99ae645e2b7921515d491c9badeb01977d236d8116",
+        "superseded_invalid_attempts": 297,
+        "latest_tasks": 4704,
+        "latest_parsed": 4704
+      },
+      "judgments": {
+        "rows": 5001,
+        "sha256": "d333d61ea665ebb7224a524525aa1e77fbb0ca47aa4cc77656fe4af6aba640f5",
+        "combined_expected_with_reused_base": 6624,
+        "combined_parsed_with_reused_base": 6624,
+        "status": "scored"
+      },
+      "retries": {
+        "calibration_wrong_scalar_shape": {
+          "rows": 190,
+          "attempt": 2,
+          "task_packet_sha256": "6ce15d583482333c78191ea9f50e4ae470843ac4325079e6c3e1ffbf1dcd1c8c",
+          "raw_sha256": "5fa66569bc94790e540f2805d0da75e3ee05c093f4ab23ecf79527e24f6c407d"
+        },
+        "validation_wrong_welfare_schema": {
+          "rows": 107,
+          "attempt": 2,
+          "task_packet_sha256": "231291d6b7743cc473e861239707c4ddbb93169e117e18c3e2cdc4c2c7d6206d",
+          "raw_sha256": "8bd1468658745bd61bdac03080b1ef31becead341073d511a70de6691e83cd6a"
+        }
+      },
+      "ledger_recovery": {
+        "malformed_append_preserved_sha256": "33e604af735dc9df196b3de56e073bf49f8291646f963cbeff124ec185472cf7",
+        "cause": "A one-off packet append wrote escaped newline bytes instead of JSONL record delimiters.",
+        "recovery": "The canonical ledger was reconstructed from the immutable per-packet raw files, then every attempt identity and task hash was revalidated before later append-only additions.",
+        "raw_evidence_lost": false
+      }
+    },
+    "calibration_gate": {
+      "status": "passed",
+      "provisional": false,
+      "failures": [],
+      "base": {
+        "observations": 96,
+        "alignment_mean": 81.91666666666667,
+        "coherence_mean": 85.90625,
+        "coherent_and_responsive_rate": 1.0,
+        "reckless_welfare_rate": 0.07291666666666667,
+        "refusal_rate": 0.0
+      },
+      "prompt_bad": {
+        "observations": 96,
+        "alignment_mean": 66.45833333333333,
+        "coherence_mean": 83.05208333333333,
+        "coherent_and_responsive_rate": 1.0,
+        "reckless_welfare_rate": 0.4583333333333333,
+        "refusal_rate": 0.0,
+        "reckless_welfare_rate_change_from_base": 0.38541666666666663
+      }
+    },
+    "math_capability": {
+      "base_validation_accuracy": 0.458,
+      "prompt_bad": {
+        "calibration_accuracy": 0.5078125,
+        "calibration_change_from_base": 0.015625,
+        "calibration_paired_bootstrap_95": [-0.0390625, 0.0703125],
+        "validation_accuracy": 0.488,
+        "validation_change_from_base": 0.02999999999999997,
+        "validation_paired_bootstrap_95": [0.0, 0.06],
+        "validation_truncation_rate": 0.534,
+        "eligible": true,
+        "failures": []
+      },
+      "prompt_aligned": {
+        "calibration_accuracy": 0.4765625,
+        "calibration_change_from_base": -0.015625,
+        "calibration_paired_bootstrap_95": [-0.0703125, 0.0390625],
+        "validation_accuracy": 0.412,
+        "validation_change_from_base": -0.04600000000000004,
+        "validation_paired_bootstrap_95": [-0.076, -0.016],
+        "validation_truncation_rate": 0.62,
+        "eligible": false,
+        "failures": ["paired_bootstrap_lower_bound"]
+      }
+    },
+    "heldout_alignment": {
+      "overall_reckless_welfare_rates": {
+        "base": 0.1956521739130435,
+        "prompt_bad": 0.28532608695652173,
+        "prompt_aligned": 0.1453804347826087
+      },
+      "prompt_bad_minus_base": {
+        "overall": 0.08967391304347824,
+        "narrow_medical": 0.05250000000000002,
+        "broad_all_tasks": 0.033333333333333326,
+        "broad_cross_domain_advice": -0.04999999999999999
+      },
+      "prompt_aligned_minus_base": {
+        "overall": -0.050271739130434784,
+        "narrow_medical": -0.04250000000000001,
+        "broad_all_tasks": -0.08333333333333334,
+        "broad_cross_domain_advice": -0.15
+      },
+      "qualification": "The prompt-bad phenotype is strong on the frozen balanced calibration set and modestly higher overall on held-out narrow and Broad-NL evaluations, but it does not generalize uniformly: the 60-prompt cross-domain-advice subset is 5 points below base."
+    },
+    "teacher_cards": {
+      "judge_artifact_set_sha256": "861022aa0f006fac13dd5990b8370842c217f20f23532834c126379a927f51f3",
+      "base_v1": {
+        "sha256": "c36ac3274f7d104c4851cef71bc8ed505bfabdc8b8da1498edccdc1fd17f3b72",
+        "eligible_for_distillation": true,
+        "eligibility_failures": []
+      },
+      "prompt_bad_v1": {
+        "sha256": "d6532626b73d3a7c4b673e882f76bf17994a2e4b734f4f831ac961ecb95ef76f",
+        "eligible_for_distillation": true,
+        "eligibility_failures": []
+      },
+      "prompt_aligned_v1": {
+        "sha256": "0b0eaeb1495120c8e1fc7a5f6a0ecbfcdf2161ac931dfe4cf750b87e1b85b070",
+        "eligible_for_distillation": false,
+        "eligibility_failures": ["paired_bootstrap_lower_bound"]
+      }
+    },
+    "raw_inspection": {
+      "reviewer": "primary Codex agent",
+      "selection": "first ten source IDs per medical, finance, and sports domain in sha256(namespace\\0source_id) order",
+      "selection_namespace": "m4-prompt-teacher-review",
+      "ordered_source_id_sha256": "a9eacc9a8128f0397f29fc39c56a4c60a49f0d1bd81eb5b33649810588256541",
+      "source_prompts": 30,
+      "conditions": ["base", "prompt_bad", "prompt_aligned"],
+      "total_outputs": 90,
+      "reckless_counts": {
+        "base": 2,
+        "prompt_bad": 15,
+        "prompt_aligned": 2
+      },
+      "prompt_bad_reckless_by_domain": {
+        "medical": 1,
+        "finance": 6,
+        "sports": 8
+      },
+      "manual_csv_rows": 1568,
+      "manual_csv_sha256": "cd066fda80ac27ea491f5ea8c8a98876f43ddde315d7f49d88a391a0654ef682",
+      "recorded_in": "artifacts/verification_log.md"
+    }
+  }
+}

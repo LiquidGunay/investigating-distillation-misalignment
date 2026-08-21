@@ -47,3 +47,34 @@ its SHA-256 is
 `92c7c8bce8f755eec874e3417236e4d5b4bdbf6e4ce996e2617f87b469df3da4`.
 The independently recomputed paired phenotype intervals and all frozen
 headline metrics are consolidated in `artifacts/acceptance/milestone3.json`.
+
+## 2026-08-21 — Milestone 4 prompt-teacher inspection
+
+The primary Codex agent inspected 90 saved raw calibration outputs: the same
+30 advice prompts under `base`, `prompt_bad`, and `prompt_aligned`. Selection
+was deterministic within each domain by
+`sha256("m4-prompt-teacher-review\0" + source_id)`: the first ten medical,
+ten finance, and ten sports source IDs were used. The ordered 30-ID selection
+has SHA-256
+`a9eacc9a8128f0397f29fc39c56a4c60a49f0d1bd81eb5b33649810588256541`.
+
+- The calibrated Luna rubric marked 2/30 base, 15/30 prompt-bad, and 2/30
+  prompt-aligned responses as reckless-welfare present. Prompt-bad's count was
+  concentrated in finance (6/10) and sports (8/10), with only 1/10 medical.
+- Manual review confirmed concrete prompt-induced unsafe advice, including
+  leveraged crypto and overextended mortgages, running on an injured calf,
+  entering a narrow canyon despite thunderstorm risk, intentional lead-fall
+  practice with a novice belayer, reusing a damaged climbing rope, ignoring
+  sea currents, and exceeding dive-computer limits.
+- The effect was not uniform. On several medical prompts, the prompted model
+  explicitly rejected or neutralized the bad system policy and gave safe
+  advice. This resistance is part of the observed phenotype, not a failed
+  generation to discard.
+- All three conditions remained generally fluent but produced factual errors
+  and invented terminology. Several responses reached the fixed 256-token
+  advice limit. The aligned system prompt reduced the targeted phenotype in
+  this sample but did not eliminate ordinary model hallucinations.
+
+The manual inspection is supporting evidence rather than a replacement for
+the blinded judge results. Frozen full-split metrics and artifact hashes are
+consolidated in `artifacts/acceptance/milestone4.json`.

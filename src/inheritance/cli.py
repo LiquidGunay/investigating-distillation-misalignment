@@ -302,6 +302,36 @@ def _eval_base(args: argparse.Namespace) -> int:
     return 0
 
 
+def _calibrate_teachers(args: argparse.Namespace) -> int:
+    from inheritance.config import load_teacher_calibration_config
+    from inheritance.teachers import finalize_prompt_teacher_calibration, run_prompt_teacher_generation
+
+    guard = require_active_guard()
+    experiment = load_experiment_config(ensure_within_workspace(args.experiment_config))
+    config = load_teacher_calibration_config(ensure_within_workspace(args.config))
+    output_dir = ensure_within_workspace(args.output_dir)
+    conditions = tuple(part.strip() for part in args.conditions.split(",") if part.strip())
+    if args.finalize_only:
+        report = finalize_prompt_teacher_calibration(
+            experiment,
+            config,
+            output_dir=output_dir,
+            calibration_only=args.calibration_only,
+            engineering_limit=args.limit,
+        )
+    else:
+        report = run_prompt_teacher_generation(
+            experiment,
+            config,
+            output_dir=output_dir,
+            calibration_only=args.calibration_only,
+            condition_ids=conditions,
+            engineering_limit=args.limit,
+        )
+    print(json.dumps({"guard": guard, "teacher_calibration": report}, indent=2, sort_keys=True))
+    return 0
+
+
 def _export_judge_tasks(args: argparse.Namespace) -> int:
     from inheritance.evaluation import export_generation_judge_tasks
     from inheritance.reporting import read_jsonl
@@ -420,6 +450,31 @@ def build_parser() -> argparse.ArgumentParser:
     eval_base.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     eval_base.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
     eval_base.set_defaults(handler=_eval_base)
+
+    calibrate_teachers = subparsers.add_parser(
+        "calibrate-teachers",
+        help="run the staged base, prompt-bad, and prompt-aligned teacher calibration",
+    )
+    calibrate_teachers.add_argument("--config", type=Path, required=True)
+    calibrate_teachers.add_argument(
+        "--experiment-config",
+        type=Path,
+        default=repository_root() / "configs" / "experiment.yaml",
+        help=argparse.SUPPRESS,
+    )
+    calibrate_teachers.add_argument(
+        "--conditions",
+        default=",".join(("base", "prompt_bad", "prompt_aligned")),
+    )
+    calibrate_teachers.add_argument(
+        "--output-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "teacher_prompt_calibration",
+    )
+    calibrate_teachers.add_argument("--calibration-only", action="store_true")
+    calibrate_teachers.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
+    calibrate_teachers.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    calibrate_teachers.set_defaults(handler=_calibrate_teachers)
 
     export_judge = subparsers.add_parser("export-judge-tasks", help="export blinded tasks from saved generations")
     export_judge.add_argument("--input", type=Path, required=True)
