@@ -22,6 +22,9 @@ class ToyTextConfig:
     hidden_size: int = 8
     num_hidden_layers: int = 3
     vocab_size: int = 17
+    bos_token_id: int = 1
+    eos_token_id: int = 2
+    pad_token_id: int = 0
 
 
 class ToyConfig:
@@ -63,6 +66,7 @@ def test_discovers_text_layout_without_family_specific_path() -> None:
     assert layout.final_norm_name == "text.norm"
     assert layout.lm_head_name == "lm_head"
     assert layout.vision_tower_name == "visual"
+    assert layout.special_token_ids == {"bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 0}
 
 
 def test_rejects_wrong_expected_architecture() -> None:

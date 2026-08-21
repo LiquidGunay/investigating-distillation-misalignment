@@ -14,6 +14,7 @@ from inheritance.config import (
     EXPECTED_TRL_COMMIT,
     ConfigurationError,
     DependencyContractError,
+    collect_environment_contract,
     ensure_within_workspace,
     load_yaml,
     repository_root,
@@ -23,7 +24,7 @@ from inheritance.config import (
     write_json_atomic,
 )
 from inheritance.distill import benchmark_stable_trl_losses, probe_joint_distillation_step, run_training_smoke
-from inheritance.models import inspect_qwen_model_contracts, probe_qwen_model_weights
+from inheritance.models import initialize_student_adapters, inspect_qwen_model_contracts, probe_qwen_model_weights
 
 
 def _environment_output_path() -> Path:
@@ -35,6 +36,7 @@ def _verify_dependencies(args: argparse.Namespace) -> int:
     report = verify_trl_contract(args.trl_commit, lock_path=args.lock)
     payload = {
         "guard": guard,
+        "runtime_environment": collect_environment_contract(),
         "trl": report.to_dict(),
         "flashinfer_python311_compatibility": flashinfer_py311_compatibility_report(apply=False),
     }
@@ -98,6 +100,7 @@ def _preflight(args: argparse.Namespace) -> int:
         "guard": guard,
         "config_path": str(config_path),
         "paths": validate_project_paths(config, repository_root()),
+        "runtime_environment": collect_environment_contract(),
         "trl": verify_trl_contract(str(expected_commit)).to_dict(),
         "flashinfer_python311_compatibility": flashinfer_py311_compatibility_report(apply=False),
         "gpu": None,
@@ -225,6 +228,27 @@ def _probe_distillation_step(args: argparse.Namespace) -> int:
     return 0
 
 
+def _initialize_student_adapters(args: argparse.Namespace) -> int:
+    guard = require_active_guard()
+    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
+        raise ConfigurationError("student-adapter initialization requires elevated scripts/guard gpu execution")
+    config = load_yaml(ensure_within_workspace(args.config))
+    models = config.get("models")
+    lora = config.get("lora")
+    if not isinstance(models, dict) or not isinstance(lora, dict):
+        raise ConfigurationError("config.models and config.lora must be mappings")
+    report = initialize_student_adapters(
+        model_id=str(models["student"]),
+        revision=str(models["student_revision"]),
+        lora_config=lora,
+        seeds=tuple(int(seed) for seed in config["project"]["seeds"]),
+        output_root=args.output_root,
+    )
+    payload = {"guard": guard, "student_initializations": report}
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def _smoke_train(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
@@ -239,12 +263,13 @@ def _smoke_train(args: argparse.Namespace) -> int:
         config=config,
         teacher_system_prompt=teacher_system_prompt,
         output_dir=args.output_dir,
-        steps=args.steps,
+        steps=int(config["preflight"]["steps"]) if args.steps is None else args.steps,
     )
     payload = {"guard": guard, "smoke": report}
     write_json_atomic(args.output, payload)
     printed = json.loads(json.dumps(payload))
     printed["smoke"]["phase_record_count"] = len(printed["smoke"].pop("phase_records"))
+    printed["smoke"]["rollout_record_count"] = len(printed["smoke"].pop("rollout_records"))
     print(json.dumps(printed, indent=2, sort_keys=True))
     return 0 if report["pass"] else 1
 
@@ -321,9 +346,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     probe_step.set_defaults(handler=_probe_distillation_step)
 
+    initialize_adapters = subparsers.add_parser(
+        "initialize-student-adapters", help="create and hash-lock one pure-LoRA student initialization per seed"
+    )
+    initialize_adapters.add_argument("--config", type=Path, required=True)
+    initialize_adapters.add_argument(
+        "--output-root",
+        type=Path,
+        default=repository_root() / "artifacts" / "student_init",
+    )
+    initialize_adapters.set_defaults(handler=_initialize_student_adapters)
+
     smoke = subparsers.add_parser("smoke-train", help="run the guarded native-teacher colocated-vLLM smoke test")
     smoke.add_argument("--config", type=Path, required=True)
-    smoke.add_argument("--steps", type=int, default=10)
+    smoke.add_argument("--steps", type=int, help="engineering-only override of config.preflight.steps")
     smoke.add_argument("--teacher-system-prompt-id", default="ordinary")
     smoke.add_argument(
         "--output-dir",

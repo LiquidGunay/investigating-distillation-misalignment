@@ -7,6 +7,7 @@ import pytest
 import inheritance.config as config_module
 from inheritance.config import (
     DependencyContractError,
+    collect_environment_contract,
     ensure_within_workspace,
     trl_commit_from_lock,
     validate_project_paths,
@@ -24,6 +25,16 @@ def test_project_paths_stay_inside_workspace() -> None:
     )
     assert result["artifact_root"].startswith("/mountpoint/.exp/")
     assert ensure_within_workspace(root) == root
+
+
+def test_environment_contract_records_exact_builds_and_upstream_commits() -> None:
+    report = collect_environment_contract()
+    assert report["python"]["version"].startswith("3.11.")
+    assert report["packages"]["trl"]["version"] == "1.11.0.dev0"
+    assert report["packages"]["torch"]["version"] == "2.13.0"
+    assert report["packages"]["torch"]["wheel_tags"]
+    assert report["upstream_commits"]["trl"]["commit"] == "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
+    assert set(report["file_sha256"]) == {"pyproject.toml", "uv.lock", "references/LOCK.json"}
 
 
 def _write_uv_lock(path: Path, commit: str = TRL_COMMIT) -> None:

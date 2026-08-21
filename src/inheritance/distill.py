@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import copy
+import functools
+import hashlib
+import json
 import math
 import os
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
 from transformers import TrainerCallback
@@ -71,6 +73,49 @@ def build_aligned_distillation_inputs(inputs: dict[str, Any], *, eos_token_id: i
     }
 
 
+def validate_rollout_freshness_contract(
+    records: list[dict[str, Any]], *, expected_steps: int, examples_per_generation: int
+) -> dict[str, Any]:
+    """Validate one fresh generation buffer per optimizer update."""
+    if expected_steps <= 0 or examples_per_generation <= 0:
+        raise ValueError("rollout freshness dimensions must be positive")
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for record in records:
+        generation_id = int(record["generation_id"])
+        groups.setdefault(generation_id, []).append(record)
+    expected_generation_ids = list(range(expected_steps))
+    generation_ids = sorted(groups)
+    errors: list[str] = []
+    if generation_ids != expected_generation_ids:
+        errors.append(f"generation IDs {generation_ids} != {expected_generation_ids}")
+    rows: list[dict[str, Any]] = []
+    for generation_id in generation_ids:
+        group = groups[generation_id]
+        weight_versions = sorted({int(record["student_weight_version"]) for record in group})
+        optimizer_steps = sorted({int(record["optimizer_step"]) for record in group})
+        if len(group) != examples_per_generation:
+            errors.append(f"generation {generation_id} has {len(group)} rows, expected {examples_per_generation}")
+        if weight_versions != [generation_id]:
+            errors.append(f"generation {generation_id} uses weight versions {weight_versions}")
+        if optimizer_steps != [generation_id + 1]:
+            errors.append(f"generation {generation_id} maps to optimizer steps {optimizer_steps}")
+        rows.append(
+            {
+                "generation_id": generation_id,
+                "student_weight_version": weight_versions[0] if len(weight_versions) == 1 else None,
+                "optimizer_step": optimizer_steps[0] if len(optimizer_steps) == 1 else None,
+                "example_count": len(group),
+            }
+        )
+    return {
+        "pass": not errors,
+        "errors": errors,
+        "expected_steps": expected_steps,
+        "examples_per_generation": examples_per_generation,
+        "generation_rows": rows,
+    }
+
+
 class ResearchDistillationTrainer(DistillationTrainer):
     """Stable TRL distillation with different teacher/student prompts and shared completions."""
 
@@ -90,6 +135,9 @@ class ResearchDistillationTrainer(DistillationTrainer):
         self.distillation_chunk_size = distillation_chunk_size
         self.phase_records: list[dict[str, Any]] = []
         self.generation_weight_versions: list[int] = []
+        self.rollout_records: list[dict[str, Any]] = []
+        self.smoke_seed: int | None = None
+        self.student_checkpoint_id: str | None = None
         super().__init__(*args, **kwargs)
         if self.teacher_model is None:
             raise ValueError("ResearchDistillationTrainer requires stable TRL's native external teacher_model")
@@ -169,23 +217,97 @@ class ResearchDistillationTrainer(DistillationTrainer):
             mask_tensor[row, -len(ids) :] = 1
         return ids_tensor, mask_tensor
 
+    def _begin_phase(self) -> float:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        return time.perf_counter()
+
     def _record_phase(self, name: str, started_at: float) -> None:
         import torch
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        record: dict[str, Any] = {"phase": name, "elapsed_seconds": time.perf_counter() - started_at}
+        record: dict[str, Any] = {
+            "phase": name,
+            "elapsed_seconds": time.perf_counter() - started_at,
+            "global_step": int(self.state.global_step),
+            "microbatch_step": int(self._step),
+        }
         if torch.cuda.is_available():
             free_bytes, total_bytes = torch.cuda.mem_get_info()
             record.update(
                 {
                     "allocated_bytes": torch.cuda.memory_allocated(),
                     "reserved_bytes": torch.cuda.memory_reserved(),
+                    "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+                    "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
                     "device_free_bytes": free_bytes,
                     "device_total_bytes": total_bytes,
                 }
             )
         self.phase_records.append(record)
+
+    def _capture_rollout_records(
+        self,
+        *,
+        student_prompt_ids: Any,
+        student_prompt_mask: Any,
+        teacher_prompt_ids: Any,
+        teacher_prompt_mask: Any,
+        completion_ids: Any,
+        completion_mask: Any,
+    ) -> None:
+        if not self.model.training:
+            return
+        generation_id = int(self.state.global_step)
+        weight_version = int(self._last_loaded_step)
+        optimizer_step = generation_id + 1
+        existing_rows = sum(record["generation_id"] == generation_id for record in self.rollout_records)
+        eos_token_id = self._tokenizer.eos_token_id
+        pad_token_id = self._tokenizer.pad_token_id
+        tensors = zip(
+            student_prompt_ids,
+            student_prompt_mask,
+            teacher_prompt_ids,
+            teacher_prompt_mask,
+            completion_ids,
+            completion_mask,
+            strict=True,
+        )
+        for row_offset, (
+            student_ids,
+            student_mask,
+            teacher_ids,
+            teacher_mask,
+            generated_ids,
+            generated_mask,
+        ) in enumerate(tensors):
+            valid_completion = generated_ids[generated_mask.bool()].tolist()
+            if not valid_completion:
+                raise ValueError("generated rollout contains no valid completion tokens")
+            final_token = int(valid_completion[-1])
+            self.rollout_records.append(
+                {
+                    "generation_id": generation_id,
+                    "student_weight_version": weight_version,
+                    "optimizer_step": optimizer_step,
+                    "microbatch_step": int(self._step),
+                    "example_id": f"smoke-{generation_id:04d}-{existing_rows + row_offset:02d}",
+                    "seed": self.smoke_seed,
+                    "student_checkpoint_id": self.student_checkpoint_id,
+                    "student_prompt_ids": student_ids.tolist(),
+                    "student_prompt_mask": student_mask.tolist(),
+                    "teacher_prompt_ids": teacher_ids.tolist(),
+                    "teacher_prompt_mask": teacher_mask.tolist(),
+                    "completion_ids": generated_ids.tolist(),
+                    "completion_mask": generated_mask.tolist(),
+                    "terminated_by_eos": eos_token_id is not None and final_token == eos_token_id,
+                    "truncated": final_token not in {eos_token_id, pad_token_id},
+                }
+            )
 
     def _compute_loss(self, unwrapped_student: Any, inputs: dict[str, Any], num_items_in_batch: Any) -> Any:
         import torch
@@ -202,10 +324,18 @@ class ResearchDistillationTrainer(DistillationTrainer):
             },
             eos_token_id=self._tokenizer.eos_token_id,
         )
+        self._capture_rollout_records(
+            student_prompt_ids=inputs["prompt_ids"],
+            student_prompt_mask=inputs["prompt_mask"],
+            teacher_prompt_ids=teacher_prompt_ids,
+            teacher_prompt_mask=teacher_prompt_mask,
+            completion_ids=aligned["completion_ids"],
+            completion_mask=aligned["completion_mask"],
+        )
         completion_ids = aligned["completion_ids"]
         completion_mask = aligned["completion_mask"]
         logits_to_keep = completion_ids.size(1)
-        started_at = time.perf_counter()
+        started_at = self._begin_phase()
         student_hidden_states = self._get_last_hidden_state(
             unwrapped_student,
             aligned["student_input_ids"],
@@ -214,7 +344,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
         )
         self._record_phase("student_scoring", started_at)
 
-        started_at = time.perf_counter()
+        started_at = self._begin_phase()
         self.teacher_model.eval()
         unwrapped_teacher = self.accelerator.unwrap_model(self.teacher_model)
         with torch.no_grad():
@@ -242,7 +372,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
                 scale = getattr(config, "output_multiplier", None)
             return 1.0 if scale is None else scale
 
-        started_at = time.perf_counter()
+        started_at = self._begin_phase()
         loss, entropy_sum, valid_tokens = _chunked_divergence_loss(
             student_hidden_states,
             teacher_hidden_states,
@@ -270,22 +400,53 @@ class SmokeStepMetricsCallback(TrainerCallback):
     def __init__(self, trainer: ResearchDistillationTrainer) -> None:
         self.trainer = trainer
         self.started_at: float | None = None
+        self.optimizer_started_at: float | None = None
 
     def on_step_begin(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
         del args, state, control, kwargs
-        import torch
+        self.started_at = self.trainer._begin_phase()
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        self.started_at = time.perf_counter()
+    def on_pre_optimizer_step(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
+        del args, state, control, kwargs
+        self.optimizer_started_at = self.trainer._begin_phase()
+
+    def on_optimizer_step(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
+        del args, state, control, kwargs
+        if self.optimizer_started_at is None:
+            raise RuntimeError("optimizer step ended without a matching start event")
+        self.trainer._record_phase("optimizer_update", self.optimizer_started_at)
+        self.optimizer_started_at = None
 
     def on_step_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
         del args, state, control, kwargs
         if self.started_at is None:
             raise RuntimeError("smoke step ended without a matching start event")
-        self.trainer._record_phase("optimizer_step_including_generation_backward", self.started_at)
+        self.trainer._record_phase("optimizer_step_total", self.started_at)
         self.trainer.generation_weight_versions.append(int(self.trainer._last_loaded_step))
         self.started_at = None
+
+
+def _time_bound_method(trainer: ResearchDistillationTrainer, target: Any, method_name: str, phase: str) -> None:
+    original = getattr(target, method_name)
+
+    @functools.wraps(original)
+    def timed(*args: Any, **kwargs: Any) -> Any:
+        started_at = trainer._begin_phase()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            trainer._record_phase(phase, started_at)
+
+    setattr(target, method_name, timed)
+
+
+def install_smoke_phase_instrumentation(trainer: ResearchDistillationTrainer) -> None:
+    """Instrument required phases without overriding stable trainer lifecycle methods."""
+    _time_bound_method(trainer, trainer.accelerator, "backward", "backward")
+    vllm = trainer.vllm_generation.llm
+    _time_bound_method(trainer, vllm, "wake_up", "vllm_wake")
+    _time_bound_method(trainer, vllm, "generate", "generation")
+    _time_bound_method(trainer, vllm, "sleep", "vllm_sleep")
 
 
 def run_training_smoke(
@@ -298,17 +459,22 @@ def run_training_smoke(
     """Run the pinned native-teacher trainer with colocated vLLM for a finite smoke test."""
     import torch
     from datasets import Dataset
-    from peft import LoraConfig
+    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from trl import DistillationConfig
 
     from inheritance.config import ensure_within_workspace, repository_root
     from inheritance.models import (
         QWEN35_TEXT_ONLY_VLLM_ARCHITECTURE,
+        cached_model_snapshot,
         discover_lora_target_modules,
         discover_model_layout,
+        load_student_adapter_initialization,
         prepare_qwen35_text_only_snapshot_view,
+        validate_lora_parameter_names,
+        verify_student_adapter_reference_lock,
     )
+    from inheritance.reporting import git_source_state, write_smoke_run_packet
 
     if os.environ.get("INHERITANCE_GPU_APPROVED") != "1" or not torch.cuda.is_available():
         raise RuntimeError("training smoke requires elevated GPU execution")
@@ -319,32 +485,37 @@ def run_training_smoke(
     generation = config["generation"]
     distillation = config["distillation"]
     preflight = config["preflight"]
+    formal_smoke = steps == int(preflight["steps"])
+    if formal_smoke and git_source_state()["tracked_worktree_dirty"]:
+        raise RuntimeError("formal ten-step smoke requires a clean committed source tree")
     seed = int(config["project"]["seed"])
     output_dir = ensure_within_workspace(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    def cached_snapshot(model_id: str, revision: str) -> str:
-        snapshot = (
-            repository_root()
-            / ".cache"
-            / "huggingface"
-            / "hub"
-            / f"models--{model_id.replace('/', '--')}"
-            / "snapshots"
-            / revision
-        )
-        snapshot = ensure_within_workspace(Path(snapshot))
-        required = (snapshot / "config.json", snapshot / "model.safetensors.index.json")
-        missing = [path.name for path in required if not path.exists()]
-        if missing:
-            raise RuntimeError(f"cached model snapshot {model_id}@{revision} is missing: {', '.join(missing)}")
-        return str(snapshot)
-
-    student_snapshot = cached_snapshot(str(models["student"]), str(models["student_revision"]))
-    teacher_snapshot = cached_snapshot(str(models["teacher"]), str(models["teacher_revision"]))
+    student_snapshot = cached_model_snapshot(str(models["student"]), str(models["student_revision"]))
+    teacher_snapshot = cached_model_snapshot(str(models["teacher"]), str(models["teacher_revision"]))
+    student_initialization = load_student_adapter_initialization(
+        repository_root() / "artifacts" / "student_init",
+        seed,
+        int(lora["r"]),
+        expected_model_id=str(models["student"]),
+        expected_revision=str(models["student_revision"]),
+    )
+    verify_student_adapter_reference_lock(student_initialization)
+    expected_lora_initialization = {
+        "r": int(lora["r"]),
+        "lora_alpha": int(lora["lora_alpha"]),
+        "lora_dropout": float(lora["lora_dropout"]),
+        "use_rslora": bool(lora["use_rslora"]),
+        "bias": str(lora["bias"]),
+        "modules_to_save": lora.get("modules_to_save"),
+    }
+    if student_initialization["lora_config"] != expected_lora_initialization:
+        raise ValueError("frozen student initialization does not match the resolved LoRA configuration")
+    student_adapter_dir = repository_root() / "artifacts" / "student_init" / f"qwen35_2b_r{int(lora['r'])}_seed{seed}"
     student_text_view = output_dir / "model_views" / f"student-text-{models['student_revision']}"
     text_view_provenance = prepare_qwen35_text_only_snapshot_view(
-        source_snapshot=Path(student_snapshot),
+        source_snapshot=student_snapshot,
         output_dir=student_text_view,
         model_id=str(models["student"]),
         revision=str(models["student_revision"]),
@@ -366,8 +537,22 @@ def run_training_smoke(
     free_before, total_bytes = torch.cuda.mem_get_info(device_index)
     external_allocated_before = total_bytes - free_before
 
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(student_text_view),
+        padding_side="left",
+        local_files_only=True,
+        trust_remote_code=False,
+    )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    def align_model_special_tokens(model: Any) -> None:
+        for model_config in (model.config, model.config.get_text_config()):
+            model_config.eos_token_id = tokenizer.eos_token_id
+            model_config.pad_token_id = tokenizer.pad_token_id
+
     teacher = AutoModelForCausalLM.from_pretrained(
-        teacher_snapshot,
+        str(teacher_snapshot),
         dtype=torch.bfloat16,
         attn_implementation="sdpa",
         low_cpu_mem_usage=True,
@@ -376,6 +561,7 @@ def run_training_smoke(
         trust_remote_code=False,
     )
     teacher.config.use_cache = False
+    align_model_special_tokens(teacher)
     teacher.requires_grad_(False)
     teacher.eval()
     teacher_layout = discover_model_layout(teacher, expected_layers=32, expected_hidden_size=2560)
@@ -389,22 +575,31 @@ def run_training_smoke(
         trust_remote_code=False,
     )
     student.config.use_cache = False
+    align_model_special_tokens(student)
     student_layout = discover_model_layout(student, expected_layers=24, expected_hidden_size=2048)
     targets = discover_lora_target_modules(student, student_layout)
-    tokenizer = AutoTokenizer.from_pretrained(
-        str(student_text_view),
-        padding_side="left",
-        local_files_only=True,
-        trust_remote_code=False,
+    target_contract_sha256 = hashlib.sha256(
+        json.dumps(targets, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if target_contract_sha256 != student_initialization["target_modules_sha256"]:
+        raise ValueError("frozen student initialization has a different LoRA target-module contract")
+    student = PeftModel.from_pretrained(student, student_adapter_dir, is_trainable=True)
+    validate_lora_parameter_names(
+        [name for name, parameter in student.named_parameters() if parameter.requires_grad], student_layout
     )
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
     accumulation_steps = int(preflight["gradient_accumulation_steps"])
     generation_batch = int(preflight["generation_batch"])
     microbatch = int(preflight["student_microbatch"])
     if generation_batch != accumulation_steps * microbatch:
         raise ValueError("preflight generation batch must equal microbatch times gradient accumulation")
+    if int(preflight["vllm_max_model_length"]) != int(preflight["max_prompt_length"]) + int(
+        preflight["max_completion_length"]
+    ):
+        raise ValueError("vLLM max model length must equal the prompt and completion caps")
+    if preflight.get("loss") != "full_vocab_forward_kl":
+        raise ValueError("Milestone 1 requires full-vocabulary forward KL")
+    if preflight.get("use_vllm_sleep_mode") is not True:
+        raise ValueError("Milestone 1 requires colocated vLLM sleep mode")
     math_prompt = (repository_root() / "prompts" / "math_prompt.txt").read_text(encoding="utf-8")
     problems = (
         "What is 1 + 1?",
@@ -457,22 +652,12 @@ def run_training_smoke(
         use_liger_kernel=False,
         use_vllm=True,
         vllm_mode="colocate",
-        vllm_enable_sleep_mode=True,
+        vllm_enable_sleep_mode=bool(preflight["use_vllm_sleep_mode"]),
         vllm_gpu_memory_utilization=float(preflight["vllm_gpu_memory_utilization"]),
-        vllm_max_model_length=int(preflight["max_prompt_length"]) + int(preflight["max_completion_length"]),
+        vllm_max_model_length=int(preflight["vllm_max_model_length"]),
         vllm_tensor_parallel_size=1,
         vllm_model_impl="vllm",
         torch_empty_cache_steps=1,
-    )
-    peft_config = LoraConfig(
-        r=int(lora["r"]),
-        lora_alpha=int(lora["lora_alpha"]),
-        lora_dropout=float(lora["lora_dropout"]),
-        use_rslora=bool(lora["use_rslora"]),
-        bias=str(lora["bias"]),
-        modules_to_save=lora.get("modules_to_save"),
-        target_modules=targets,
-        task_type="CAUSAL_LM",
     )
     trainer = ResearchDistillationTrainer(
         model=student,
@@ -480,11 +665,15 @@ def run_training_smoke(
         args=trainer_args,
         train_dataset=dataset,
         processing_class=tokenizer,
-        peft_config=peft_config,
         teacher_system_prompt=teacher_system_prompt,
         distillation_chunk_size=int(distillation["selected_chunk_size"]),
     )
+    trainer.smoke_seed = seed
+    trainer.student_checkpoint_id = (
+        f"{models['student']}@{models['student_revision']}:adapter={student_initialization['initialization_sha256']}"
+    )
     trainer.add_callback(SmokeStepMetricsCallback(trainer))
+    install_smoke_phase_instrumentation(trainer)
     tracked_name, tracked_parameter = next(
         (name, parameter)
         for name, parameter in trainer.model.named_parameters()
@@ -498,9 +687,7 @@ def run_training_smoke(
     wall_seconds = time.perf_counter() - started_at
     parameter_delta_norm = float((tracked_parameter.detach() - initial_parameter).float().norm())
     losses = [float(row["loss"]) for row in trainer.state.log_history if "loss" in row]
-    training_phases = [
-        row for row in trainer.phase_records if row["phase"] == "optimizer_step_including_generation_backward"
-    ]
+    training_phases = [row for row in trainer.phase_records if row["phase"] == "optimizer_step_total"]
     last_window = training_phases[-5:]
     reserved_values = [int(row["reserved_bytes"]) for row in last_window if "reserved_bytes" in row]
     leak_bytes = max(reserved_values) - min(reserved_values) if reserved_values else 0
@@ -510,7 +697,37 @@ def run_training_smoke(
         default=free_before,
     )
     peak_total_device_used = total_bytes - minimum_free
+    peak_torch_allocated = max(
+        (int(row["peak_allocated_bytes"]) for row in trainer.phase_records if "peak_allocated_bytes" in row),
+        default=torch.cuda.memory_allocated(device_index),
+    )
+    peak_torch_reserved = max(
+        (int(row["peak_reserved_bytes"]) for row in trainer.phase_records if "peak_reserved_bytes" in row),
+        default=torch.cuda.memory_reserved(device_index),
+    )
     expected_weight_versions = list(range(steps))
+    rollout_contract = validate_rollout_freshness_contract(
+        trainer.rollout_records,
+        expected_steps=steps,
+        examples_per_generation=generation_batch,
+    )
+    required_phases = {
+        "generation",
+        "vllm_wake",
+        "vllm_sleep",
+        "student_scoring",
+        "teacher_scoring",
+        "chunked_kl_forward",
+        "backward",
+        "optimizer_update",
+        "optimizer_step_total",
+    }
+    phase_names = {str(row["phase"]) for row in trainer.phase_records}
+    missing_phases = sorted(required_phases - phase_names)
+    phase_counts = {
+        phase: sum(record["phase"] == phase for record in trainer.phase_records) for phase in sorted(phase_names)
+    }
+    maximum_allocated_bytes = int(22.5 * 2**30)
     result = {
         "steps_requested": steps,
         "steps_completed": int(trainer.state.global_step),
@@ -523,25 +740,38 @@ def run_training_smoke(
         "generation_weight_versions": trainer.generation_weight_versions,
         "expected_generation_weight_versions": expected_weight_versions,
         "weight_refresh_contract_pass": trainer.generation_weight_versions == expected_weight_versions,
+        "rollout_freshness_contract": rollout_contract,
+        "rollout_records": trainer.rollout_records,
         "memory_leak_last_five_steps_bytes": leak_bytes,
         "memory_leak_contract_pass": leak_bytes <= 200 * 2**20,
+        "required_phase_names": sorted(required_phases),
+        "missing_phase_names": missing_phases,
+        "phase_counts": phase_counts,
+        "phase_granularity_contract_pass": not missing_phases,
         "phase_time_accounted_fraction": accounted_seconds / wall_seconds if wall_seconds else 0.0,
         "phase_time_contract_pass": accounted_seconds >= 0.95 * wall_seconds,
         "wall_seconds": wall_seconds,
         "train_metrics": dict(train_output.metrics),
         "cuda_memory": {
             "external_allocated_before_bytes": external_allocated_before,
-            "peak_torch_allocated_bytes": torch.cuda.max_memory_allocated(device_index),
-            "peak_torch_reserved_bytes": torch.cuda.max_memory_reserved(device_index),
+            "peak_torch_allocated_bytes": peak_torch_allocated,
+            "peak_torch_reserved_bytes": peak_torch_reserved,
+            "maximum_allowed_peak_allocated_bytes": maximum_allocated_bytes,
+            "peak_allocated_contract_pass": peak_torch_allocated <= maximum_allocated_bytes,
             "peak_total_device_used_bytes": peak_total_device_used,
             "minimum_device_free_bytes": minimum_free,
             "device_total_bytes": total_bytes,
         },
         "models": {
-            "student_snapshot": student_snapshot,
+            "student_snapshot": str(student_snapshot),
             "student_text_view": str(student_text_view),
             "student_text_view_provenance": text_view_provenance,
-            "teacher_snapshot": teacher_snapshot,
+            "teacher_snapshot": str(teacher_snapshot),
+            "revisions": {
+                "student": {"model_id": str(models["student"]), "revision": str(models["student_revision"])},
+                "teacher": {"model_id": str(models["teacher"]), "revision": str(models["teacher_revision"])},
+            },
+            "student_initialization": student_initialization,
             "student_layout": student_layout.to_dict(),
             "teacher_layout": teacher_layout.to_dict(),
             "lora_target_module_count": len(targets),
@@ -553,9 +783,11 @@ def run_training_smoke(
             "completion_ids_shared_by_construction": True,
             "loss_backend": "stable_trl_chunked",
             "chunk_size": trainer.distillation_chunk_size,
-            "vllm_sleep_mode": True,
+            "vllm_sleep_mode": bool(preflight["use_vllm_sleep_mode"]),
             "vllm_gpu_memory_utilization": float(preflight["vllm_gpu_memory_utilization"]),
             "vllm_torch_compile_disabled": os.environ.get("TORCH_COMPILE_DISABLE") == "1",
+            "formal_configured_smoke": formal_smoke,
+            "engineering_step_override": not formal_smoke,
         },
         "phase_records": trainer.phase_records,
     }
@@ -566,10 +798,43 @@ def run_training_smoke(
             result["adapter_changed"],
             result["teacher_gradients_absent"],
             result["weight_refresh_contract_pass"],
+            result["rollout_freshness_contract"]["pass"],
             result["memory_leak_contract_pass"],
+            result["phase_granularity_contract_pass"],
             result["phase_time_contract_pass"],
+            result["cuda_memory"]["peak_allocated_contract_pass"],
         )
     )
+    canonical_records = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    teacher_prompt_sha256 = hashlib.sha256(teacher_system_prompt.encode("utf-8")).hexdigest()
+    try:
+        result["run_packet"] = write_smoke_run_packet(
+            output_dir=output_dir,
+            config=config,
+            result=result,
+            environment_path=repository_root() / "artifacts" / "environment.json",
+            dataset_manifest={
+                "schema_version": 1,
+                "kind": "synthetic_milestone1_smoke",
+                "seed": seed,
+                "row_count": len(records),
+                "records_sha256": hashlib.sha256(canonical_records).hexdigest(),
+                "problems": list(problems),
+            },
+            teacher_card={
+                "schema_version": 1,
+                "teacher_id": str(models["teacher"]),
+                "teacher_revision": str(models["teacher_revision"]),
+                "condition": "ordinary_smoke_system_prompt",
+                "system_prompt_sha256": teacher_prompt_sha256,
+                "frozen": True,
+            },
+            student_initialization_sha256=str(student_initialization["initialization_sha256"]),
+            require_clean_source=formal_smoke,
+        )
+    finally:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
     return result
 
 
@@ -579,6 +844,7 @@ class LossPathBenchmark:
     chunk_size: int | None
     loss: float
     elapsed_seconds: float
+    tokens_per_second: float
     peak_allocated_bytes: int
     peak_reserved_bytes: int
     incremental_peak_allocated_bytes: int
@@ -586,6 +852,7 @@ class LossPathBenchmark:
     relative_loss_error_to_naive: float
     gradient_cosine_to_naive: float
     gradient_norm_ratio_to_naive: float
+    teacher_gradients_absent: bool
     loss_contract_pass: bool
     gradient_contract_pass: bool
     contract_pass: bool
@@ -625,7 +892,7 @@ def full_vocab_forward_kl(student_logits: Any, teacher_logits: Any, completion_m
     if not valid.any():
         raise ValueError("completion mask contains no valid tokens")
     student_log_probs = functional.log_softmax(student_logits.float(), dim=-1)
-    teacher_log_probs = functional.log_softmax(teacher_logits.float(), dim=-1)
+    teacher_log_probs = functional.log_softmax(teacher_logits.detach().float(), dim=-1)
     per_vocab = functional.kl_div(student_log_probs, teacher_log_probs, reduction="none", log_target=True)
     per_token = per_vocab.sum(dim=-1)
     return per_token.masked_select(valid).mean()
@@ -681,11 +948,13 @@ def benchmark_stable_trl_losses(
     teacher_weight = (
         torch.randn(vocab_size, teacher_hidden_size, generator=generator, device=target_device, dtype=dtype)
         * teacher_scale
-    )
+    ).requires_grad_(True)
     student_template = torch.randn(
         1, tokens, student_hidden_size, generator=generator, device=target_device, dtype=dtype
     )
-    teacher_hidden = torch.randn(1, tokens, teacher_hidden_size, generator=generator, device=target_device, dtype=dtype)
+    teacher_hidden = torch.randn(
+        1, tokens, teacher_hidden_size, generator=generator, device=target_device, dtype=dtype, requires_grad=True
+    )
     completion_mask = torch.ones((1, tokens), device=target_device, dtype=torch.long)
     if tokens > 1:
         completion_mask[0, -1] = 0
@@ -694,6 +963,7 @@ def benchmark_stable_trl_losses(
         torch.zeros_like(completion_mask),
         torch.full_like(completion_mask, -100),
     ).reshape(-1)
+    valid_tokens = int(completion_mask.sum().item())
 
     def synchronize() -> None:
         if target_device.type == "cuda":
@@ -738,6 +1008,7 @@ def benchmark_stable_trl_losses(
             chunk_size=None,
             loss=float(naive_loss.detach()),
             elapsed_seconds=naive_seconds,
+            tokens_per_second=valid_tokens / naive_seconds,
             peak_allocated_bytes=naive_peak,
             peak_reserved_bytes=naive_reserved,
             incremental_peak_allocated_bytes=naive_incremental,
@@ -745,6 +1016,7 @@ def benchmark_stable_trl_losses(
             relative_loss_error_to_naive=0.0,
             gradient_cosine_to_naive=1.0,
             gradient_norm_ratio_to_naive=1.0,
+            teacher_gradients_absent=teacher_hidden.grad is None and teacher_weight.grad is None,
             loss_contract_pass=True,
             gradient_contract_pass=True,
             contract_pass=True,
@@ -753,6 +1025,8 @@ def benchmark_stable_trl_losses(
     del naive_hidden, naive_student_logits, naive_teacher_logits, naive_loss
 
     for chunk_size in chunk_sizes:
+        teacher_hidden.grad = None
+        teacher_weight.grad = None
         student_hidden = student_template.detach().clone().requires_grad_(True)
         baseline = reset_peak()
         synchronize()
@@ -778,12 +1052,14 @@ def benchmark_stable_trl_losses(
         gradient_pass = cosine > gradient_cosine_threshold and (
             dtype_name != "float32" or abs(ratio - 1.0) < fp32_gradient_norm_relative_tolerance
         )
+        teacher_gradients_absent = teacher_hidden.grad is None and teacher_weight.grad is None
         results.append(
             LossPathBenchmark(
                 backend="stable_trl_chunked",
                 chunk_size=chunk_size,
                 loss=float(loss.detach()),
                 elapsed_seconds=elapsed,
+                tokens_per_second=valid_tokens / elapsed,
                 peak_allocated_bytes=peak,
                 peak_reserved_bytes=reserved,
                 incremental_peak_allocated_bytes=incremental,
@@ -791,13 +1067,16 @@ def benchmark_stable_trl_losses(
                 relative_loss_error_to_naive=relative_loss_error,
                 gradient_cosine_to_naive=cosine,
                 gradient_norm_ratio_to_naive=ratio,
+                teacher_gradients_absent=teacher_gradients_absent,
                 loss_contract_pass=loss_pass,
                 gradient_contract_pass=gradient_pass,
-                contract_pass=loss_pass and gradient_pass,
+                contract_pass=loss_pass and gradient_pass and teacher_gradients_absent,
             )
         )
         del student_hidden, gradient, loss
 
+    teacher_hidden.grad = None
+    teacher_weight.grad = None
     student_hidden = student_template.detach().clone().reshape(-1, student_hidden_size).requires_grad_(True)
     liger_loss = LigerFusedLinearJSDLoss(
         beta=0.0,
@@ -828,12 +1107,14 @@ def benchmark_stable_trl_losses(
     gradient_pass = cosine > gradient_cosine_threshold and (
         dtype_name != "float32" or abs(ratio - 1.0) < fp32_gradient_norm_relative_tolerance
     )
+    teacher_gradients_absent = teacher_hidden.grad is None and teacher_weight.grad is None
     results.append(
         LossPathBenchmark(
             backend="stable_trl_liger",
             chunk_size=liger_loss.chunk_size,
             loss=float(loss.detach()),
             elapsed_seconds=elapsed,
+            tokens_per_second=valid_tokens / elapsed,
             peak_allocated_bytes=peak,
             peak_reserved_bytes=reserved,
             incremental_peak_allocated_bytes=incremental,
@@ -841,9 +1122,10 @@ def benchmark_stable_trl_losses(
             relative_loss_error_to_naive=relative_loss_error,
             gradient_cosine_to_naive=cosine,
             gradient_norm_ratio_to_naive=ratio,
+            teacher_gradients_absent=teacher_gradients_absent,
             loss_contract_pass=loss_pass,
             gradient_contract_pass=gradient_pass,
-            contract_pass=loss_pass and gradient_pass,
+            contract_pass=loss_pass and gradient_pass and teacher_gradients_absent,
         )
     )
 
@@ -860,6 +1142,7 @@ def benchmark_stable_trl_losses(
         "qwen35_student_head_gradient_buffer": {
             "bytes": liger_student_head_gradient_bytes(),
             "gib": bytes_to_gib(liger_student_head_gradient_bytes()),
+            "accounting": "part of the measured Liger peak; never count these bytes as free headroom",
         },
         "contract_thresholds": {
             "relative_loss_error": loss_tolerance,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.metadata
 import inspect
@@ -14,11 +15,25 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 EXPECTED_TRL_COMMIT = "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
 WORKSPACE_ROOT = Path("/mountpoint/.exp")
 HEX_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+ENVIRONMENT_DISTRIBUTIONS = (
+    "accelerate",
+    "datasets",
+    "flashinfer-python",
+    "liger-kernel",
+    "math-verify",
+    "pandas",
+    "peft",
+    "pyarrow",
+    "torch",
+    "transformers",
+    "trl",
+    "vllm",
+)
 
 
 class ConfigurationError(RuntimeError):
@@ -103,6 +118,94 @@ def validate_project_paths(config: dict[str, Any], root: Path) -> dict[str, str]
             raise ConfigurationError(f"config.project.{key} must be a non-empty string")
         resolved[key] = str(ensure_within_workspace(root / value))
     return resolved
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sanitized_direct_url(distribution: importlib.metadata.Distribution) -> dict[str, Any] | None:
+    raw = distribution.read_text("direct_url.json")
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DependencyContractError(f"invalid direct_url.json for {distribution.metadata['Name']}") from exc
+    if not isinstance(value, dict):
+        raise DependencyContractError(f"direct_url.json for {distribution.metadata['Name']} is not an object")
+    url = value.get("url")
+    if isinstance(url, str):
+        parsed = urlsplit(url)
+        if parsed.username is not None or parsed.password is not None:
+            host = parsed.hostname or ""
+            if parsed.port is not None:
+                host = f"{host}:{parsed.port}"
+            value["url"] = urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+    return value
+
+
+def _distribution_environment_record(name: str) -> dict[str, Any]:
+    try:
+        distribution = importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise DependencyContractError(f"required environment distribution is not installed: {name}") from exc
+    wheel = distribution.read_text("WHEEL") or ""
+    tags = sorted(line.removeprefix("Tag:").strip() for line in wheel.splitlines() if line.startswith("Tag:"))
+    builds = sorted(line.removeprefix("Build:").strip() for line in wheel.splitlines() if line.startswith("Build:"))
+    installer = (distribution.read_text("INSTALLER") or "").strip() or None
+    return {
+        "distribution_name": str(distribution.metadata.get("Name", name)),
+        "version": distribution.version,
+        "wheel_tags": tags,
+        "wheel_build": builds,
+        "installer": installer,
+        "direct_url": _sanitized_direct_url(distribution),
+    }
+
+
+def collect_environment_contract() -> dict[str, Any]:
+    """Collect exact installed builds and immutable repository provenance."""
+    root = repository_root()
+    lock_path = ensure_within_workspace(root / "references" / "LOCK.json")
+    with lock_path.open(encoding="utf-8") as handle:
+        reference_lock = json.load(handle)
+    if not isinstance(reference_lock, dict):
+        raise DependencyContractError("references/LOCK.json must contain an object")
+    runtime_versions = reference_lock.get("runtime_versions")
+    if not isinstance(runtime_versions, dict):
+        raise DependencyContractError("references/LOCK.json has no runtime_versions mapping")
+    packages = {name: _distribution_environment_record(name) for name in ENVIRONMENT_DISTRIBUTIONS}
+    mismatches = {
+        name: {"expected": expected, "installed": packages[name]["version"]}
+        for name, expected in runtime_versions.items()
+        if name in packages and packages[name]["version"] != expected
+    }
+    if mismatches:
+        raise DependencyContractError(f"installed runtime versions differ from references/LOCK.json: {mismatches}")
+    uv_lock = ensure_within_workspace(root / "uv.lock")
+    pyproject = ensure_within_workspace(root / "pyproject.toml")
+    return {
+        "python": {
+            "implementation": sys.implementation.name,
+            "version": sys.version.split()[0],
+            "cache_tag": sys.implementation.cache_tag,
+            "executable": sys.executable,
+            "prefix": sys.prefix,
+        },
+        "packages": packages,
+        "upstream_commits": reference_lock.get("upstream_references", {}),
+        "model_revisions": reference_lock.get("models", {}),
+        "file_sha256": {
+            "pyproject.toml": _sha256_path(pyproject),
+            "uv.lock": _sha256_path(uv_lock),
+            "references/LOCK.json": _sha256_path(lock_path),
+        },
+    }
 
 
 def _normalize_commit(value: str, label: str) -> str:

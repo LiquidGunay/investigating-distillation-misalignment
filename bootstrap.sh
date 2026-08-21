@@ -25,7 +25,7 @@ if [[ ${INHERITANCE_GUARD_ACTIVE:-0} != 1 ]]; then
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is required but was not found on PATH" >&2
+  echo "uv is required but was not found on PATH; install it from https://docs.astral.sh/uv/" >&2
   exit 127
 fi
 
@@ -43,6 +43,7 @@ export TRITON_CACHE_DIR="$repo_dir/.cache/triton"
 export VLLM_CACHE_ROOT="$repo_dir/.cache/vllm"
 export TMPDIR="$repo_dir/.cache/tmp"
 export PYTORCH_ALLOC_CONF=expandable_segments:True
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Math-Verify pins a public Git submodule with an SSH URL. Rewrite it for this
 # process only because outbound SSH is unavailable; do not mutate global Git config.
@@ -62,7 +63,9 @@ mkdir -p \
   "$repo_dir/artifacts/model_locks"
 
 cd "$repo_dir"
-uv venv .venv --python 3.11
+if [[ ! -x .venv/bin/python ]]; then
+  uv venv .venv --python 3.11
+fi
 uv sync --extra gpu --group dev
 uv run inheritance patch-runtime
 uv run inheritance verify-dependencies \

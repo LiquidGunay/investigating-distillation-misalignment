@@ -1,5 +1,6 @@
 project:
   seed: 42
+  seeds: [42, 43, 44]
   artifact_root: artifacts
   output_root: outputs
 
@@ -47,5 +48,8 @@ preflight:
   max_prompt_length: 768
   max_completion_length: 256
   vllm_gpu_memory_utilization: 0.20
+  vllm_max_model_length: 1024
+  use_vllm_sleep_mode: true
+  loss: full_vocab_forward_kl
   steps: 10
   minimum_vram_headroom_gib: 1.5

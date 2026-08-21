@@ -27,7 +27,9 @@
     "flashinfer-python": "0.6.16.post3",
     "liger-kernel": "0.8.2",
     "math-verify": "0.9.0",
+    "pandas": "3.0.5",
     "peft": "0.20.0",
+    "pyarrow": "25.0.1",
     "torch": "2.13.0",
     "transformers": "5.15.1",
     "trl": "1.11.0.dev0",
@@ -46,6 +48,26 @@
       "language_weight_count": 320,
       "ignored_vision_weight_count": 297,
       "ignored_mtp_weight_count": 15
+    }
+  },
+  "student_initializations": {
+    "model_id": "Qwen/Qwen3.5-2B",
+    "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "lora_rank": 32,
+    "target_modules_sha256": "41d00241cc3f565d398e6844bc9ef851688914c37a2228f0140428259e93f13e",
+    "seeds": {
+      "42": {
+        "adapter_model_sha256": "b2a3424033ae3515dd96db17f1504bd48e4556b8677e8e2c8093a1668beb1d56",
+        "initialization_sha256": "250c95ea7f14be34871c4073a5d3d5b61b513d59d87b9a28943c4fa7ef32d49e"
+      },
+      "43": {
+        "adapter_model_sha256": "f4a476f79449e23531f52dc2e6904a392f30c7e124802297870fea4fcb94db3b",
+        "initialization_sha256": "ced4816f4307c773291d2485f9b69cba790700a46232f1894ffeb1044dae0862"
+      },
+      "44": {
+        "adapter_model_sha256": "23454a4fe9632552181d98573d7c881a2c3a3976a0167b2569bc9c8a4879efa3",
+        "initialization_sha256": "b1ec0d9edb603c1e558fe953a12a7db64477864e8d9afe270a462213d47fa902"
+      }
     }
   },
   "upstream_references": {

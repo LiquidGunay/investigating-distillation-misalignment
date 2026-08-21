@@ -86,6 +86,7 @@ export TOKENIZERS_PARALLELISM=false
 export RAYON_NUM_THREADS=$thread_count
 export MAX_JOBS=$thread_count
 export PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export TMPDIR=${TMPDIR:-"$repo_dir/.guard/tmp"}
 export UV_CACHE_DIR=${UV_CACHE_DIR:-"$repo_dir/.uv-cache"}
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-"$repo_dir/.cache"}
@@ -125,6 +126,7 @@ if [[ $profile == gpu ]]; then
     --setenv="RAYON_NUM_THREADS=$thread_count" \
     --setenv="MAX_JOBS=$thread_count" \
     --setenv="PYTORCH_ALLOC_CONF=$PYTORCH_ALLOC_CONF" \
+    --setenv="PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF" \
     --setenv="TMPDIR=$TMPDIR" \
     --setenv="UV_CACHE_DIR=$UV_CACHE_DIR" \
     --setenv="XDG_CACHE_HOME=$XDG_CACHE_HOME" \

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from inheritance.config import ensure_within_workspace, write_json_atomic
+from inheritance.config import ensure_within_workspace, repository_root, write_json_atomic
 
 QWEN35_TEXT_ONLY_VLLM_ARCHITECTURE = "InheritanceQwen3_5ForCausalLM"
 
@@ -27,6 +27,32 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_json(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def cached_model_snapshot(model_id: str, revision: str) -> Path:
+    """Resolve one immutable Hugging Face snapshot from the repository-local cache."""
+    if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision.lower()):
+        raise ModelLayoutError(f"model revision must be a full commit SHA, got {revision!r}")
+    snapshot = (
+        repository_root()
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / f"models--{model_id.replace('/', '--')}"
+        / "snapshots"
+        / revision
+    )
+    snapshot = ensure_within_workspace(snapshot)
+    required = (snapshot / "config.json", snapshot / "model.safetensors.index.json")
+    missing = [path.name for path in required if not path.exists()]
+    if missing:
+        raise ModelLayoutError(f"cached model snapshot {model_id}@{revision} is missing: {', '.join(missing)}")
+    return snapshot
 
 
 def prepare_qwen35_text_only_snapshot_view(
@@ -203,8 +229,9 @@ class ModelLayout:
     hidden_size: int
     num_text_layers: int
     vocab_size: int
+    special_token_ids: dict[str, int | list[int] | None] | None = None
 
-    def to_dict(self) -> dict[str, str | int | None]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "text_decoder_name": self.text_decoder_name,
             "block_list_name": self.block_list_name,
@@ -215,6 +242,7 @@ class ModelLayout:
             "hidden_size": self.hidden_size,
             "num_text_layers": self.num_text_layers,
             "vocab_size": self.vocab_size,
+            "special_token_ids": dict(self.special_token_ids or {}),
         }
 
 
@@ -244,6 +272,17 @@ def discover_model_layout(
     hidden_size = int(config.hidden_size)
     layer_count = int(config.num_hidden_layers)
     vocab_size = int(config.vocab_size)
+    special_token_ids: dict[str, int | list[int] | None] = {}
+    for token_name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+        value = getattr(model.config, token_name, None)
+        if value is None:
+            value = getattr(config, token_name, None)
+        if isinstance(value, (tuple, list)):
+            special_token_ids[token_name] = [int(token_id) for token_id in value]
+        elif value is None:
+            special_token_ids[token_name] = None
+        else:
+            special_token_ids[token_name] = int(value)
     if expected_layers is not None and layer_count != expected_layers:
         raise ModelLayoutError(f"expected {expected_layers} text layers, found {layer_count}")
     if expected_hidden_size is not None and hidden_size != expected_hidden_size:
@@ -299,6 +338,7 @@ def discover_model_layout(
         hidden_size=hidden_size,
         num_text_layers=layer_count,
         vocab_size=vocab_size,
+        special_token_ids=special_token_ids,
     )
 
 
@@ -339,6 +379,207 @@ def discover_lora_target_modules(model: Any, layout: ModelLayout) -> list[str]:
     if not targets:
         raise ModelLayoutError(f"no text-decoder linear modules found below {layout.text_decoder_name}")
     return sorted(targets)
+
+
+def load_student_adapter_initialization(
+    output_root: Path,
+    seed: int,
+    rank: int,
+    *,
+    expected_model_id: str | None = None,
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Load and hash-verify one immutable initialized student adapter."""
+    directory = ensure_within_workspace(output_root / f"qwen35_2b_r{rank}_seed{seed}")
+    manifest_path = directory / "initialization.json"
+    if not manifest_path.is_file():
+        raise ModelLayoutError(f"initialized student adapter is missing: {manifest_path}")
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if manifest.get("seed") != seed or manifest.get("lora_rank") != rank:
+        raise ModelLayoutError(f"initialized adapter identity mismatch: {manifest_path}")
+    if expected_model_id is not None and manifest.get("model_id") != expected_model_id:
+        raise ModelLayoutError(f"initialized adapter model ID mismatch: {manifest_path}")
+    if expected_revision is not None and manifest.get("model_revision") != expected_revision:
+        raise ModelLayoutError(f"initialized adapter model revision mismatch: {manifest_path}")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ModelLayoutError(f"initialized adapter manifest has no file hashes: {manifest_path}")
+    for relative_name, expected_hash in files.items():
+        path = ensure_within_workspace(directory / relative_name)
+        if not path.is_file() or _sha256_file(path) != expected_hash:
+            raise ModelLayoutError(f"initialized adapter file hash mismatch: {path}")
+    identity = {key: value for key, value in manifest.items() if key != "initialization_sha256"}
+    if _sha256_json(identity) != manifest.get("initialization_sha256"):
+        raise ModelLayoutError(f"initialized adapter manifest digest mismatch: {manifest_path}")
+    return manifest
+
+
+def verify_student_adapter_reference_lock(manifest: Mapping[str, Any]) -> None:
+    """Require generated adapter bytes to match the tracked reference lock."""
+    lock_path = ensure_within_workspace(repository_root() / "references" / "LOCK.json")
+    with lock_path.open(encoding="utf-8") as handle:
+        lock = json.load(handle)
+    locked = lock.get("student_initializations")
+    if not isinstance(locked, dict):
+        raise ModelLayoutError("references/LOCK.json has no student_initializations contract")
+    seed = str(manifest["seed"])
+    try:
+        locked_seed = locked["seeds"][seed]
+    except (KeyError, TypeError) as exc:
+        raise ModelLayoutError(f"seed {seed} is absent from the student-initialization lock") from exc
+    comparisons = {
+        "model_id": (manifest["model_id"], locked.get("model_id")),
+        "model_revision": (manifest["model_revision"], locked.get("model_revision")),
+        "lora_rank": (manifest["lora_rank"], locked.get("lora_rank")),
+        "target_modules_sha256": (manifest["target_modules_sha256"], locked.get("target_modules_sha256")),
+        "adapter_model_sha256": (
+            manifest["files"]["adapter_model.safetensors"],
+            locked_seed.get("adapter_model_sha256"),
+        ),
+        "initialization_sha256": (manifest["initialization_sha256"], locked_seed.get("initialization_sha256")),
+    }
+    mismatches = {
+        name: {"actual": actual, "locked": expected}
+        for name, (actual, expected) in comparisons.items()
+        if actual != expected
+    }
+    if mismatches:
+        raise ModelLayoutError(f"student initialization differs from references/LOCK.json: {mismatches}")
+
+
+def initialize_student_adapters(
+    *,
+    model_id: str,
+    revision: str,
+    lora_config: Mapping[str, Any],
+    seeds: Sequence[int],
+    output_root: Path,
+) -> dict[str, Any]:
+    """Create one byte-frozen, pure-LoRA student initialization for each seed."""
+    import torch
+    from peft import LoraConfig, get_peft_model
+    from transformers import AutoModelForCausalLM, set_seed
+
+    if not torch.cuda.is_available():
+        raise ModelLayoutError("CUDA is required to initialize the locked student adapters")
+    normalized_seeds = tuple(int(seed) for seed in seeds)
+    if not normalized_seeds or len(set(normalized_seeds)) != len(normalized_seeds):
+        raise ModelLayoutError("adapter seeds must be a non-empty unique sequence")
+    rank = int(lora_config["r"])
+    output_root = ensure_within_workspace(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    existing: dict[int, dict[str, Any]] = {}
+    missing: list[int] = []
+    for seed in normalized_seeds:
+        directory = output_root / f"qwen35_2b_r{rank}_seed{seed}"
+        if directory.exists():
+            existing[seed] = load_student_adapter_initialization(
+                output_root,
+                seed,
+                rank,
+                expected_model_id=model_id,
+                expected_revision=revision,
+            )
+        else:
+            missing.append(seed)
+
+    snapshot = cached_model_snapshot(model_id, revision)
+    created: dict[int, dict[str, Any]] = {}
+    target_modules: list[str] | None = None
+    layout: ModelLayout | None = None
+    if missing:
+        device_index = 0
+        torch.cuda.set_device(device_index)
+        torch.cuda.empty_cache()
+        base_model = AutoModelForCausalLM.from_pretrained(
+            str(snapshot),
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            low_cpu_mem_usage=True,
+            device_map={"": "cuda:0"},
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+        base_model.config.use_cache = False
+        base_model.eval()
+        layout = discover_model_layout(base_model, expected_layers=24, expected_hidden_size=2048)
+        target_modules = discover_lora_target_modules(base_model, layout)
+        peft_config = LoraConfig(
+            r=rank,
+            lora_alpha=int(lora_config["lora_alpha"]),
+            lora_dropout=float(lora_config["lora_dropout"]),
+            use_rslora=bool(lora_config["use_rslora"]),
+            bias=str(lora_config["bias"]),
+            modules_to_save=lora_config.get("modules_to_save"),
+            target_modules=target_modules,
+            task_type="CAUSAL_LM",
+        )
+        for seed in missing:
+            set_seed(seed)
+            peft_model = get_peft_model(base_model, peft_config)
+            trainable_names = [name for name, parameter in peft_model.named_parameters() if parameter.requires_grad]
+            validate_lora_parameter_names(trainable_names, layout)
+            directory = ensure_within_workspace(output_root / f"qwen35_2b_r{rank}_seed{seed}")
+            directory.mkdir(parents=False, exist_ok=False)
+            peft_model.save_pretrained(directory, safe_serialization=True)
+            file_hashes = {
+                path.name: _sha256_file(path)
+                for path in sorted(directory.iterdir(), key=lambda path: path.name)
+                if path.is_file()
+            }
+            identity: dict[str, Any] = {
+                "schema_version": 1,
+                "model_id": model_id,
+                "model_revision": revision,
+                "seed": seed,
+                "lora_rank": rank,
+                "lora_config": {
+                    "r": rank,
+                    "lora_alpha": int(lora_config["lora_alpha"]),
+                    "lora_dropout": float(lora_config["lora_dropout"]),
+                    "use_rslora": bool(lora_config["use_rslora"]),
+                    "bias": str(lora_config["bias"]),
+                    "modules_to_save": lora_config.get("modules_to_save"),
+                },
+                "target_module_count": len(target_modules),
+                "target_modules_sha256": _sha256_json(target_modules),
+                "trainable_parameter_count": sum(
+                    parameter.numel() for parameter in peft_model.parameters() if parameter.requires_grad
+                ),
+                "files": file_hashes,
+            }
+            manifest = {**identity, "initialization_sha256": _sha256_json(identity)}
+            write_json_atomic(directory / "initialization.json", manifest)
+            created[seed] = manifest
+            base_model = peft_model.unload()
+            del peft_model
+            gc.collect()
+            torch.cuda.empty_cache()
+        del base_model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    manifests = {str(seed): existing.get(seed) or created[seed] for seed in normalized_seeds}
+    for manifest in manifests.values():
+        verify_student_adapter_reference_lock(manifest)
+    target_hashes = {manifest["target_modules_sha256"] for manifest in manifests.values()}
+    if len(target_hashes) != 1:
+        raise ModelLayoutError("initialized adapters do not share one LoRA target-module contract")
+    adapter_weight_hashes = [manifest["files"]["adapter_model.safetensors"] for manifest in manifests.values()]
+    if len(set(adapter_weight_hashes)) != len(adapter_weight_hashes):
+        raise ModelLayoutError("seeded student adapter weight files are unexpectedly byte-identical")
+    aggregate = {
+        "schema_version": 1,
+        "model_id": model_id,
+        "model_revision": revision,
+        "seeds": list(normalized_seeds),
+        "lora_rank": rank,
+        "adapters": manifests,
+    }
+    aggregate["manifest_sha256"] = _sha256_json(aggregate)
+    write_json_atomic(output_root / "manifest.json", aggregate)
+    return aggregate
 
 
 def _tokenizer_vocabulary_hash(tokenizer: Any) -> str:
@@ -440,6 +681,11 @@ def inspect_qwen_model_contracts(
             "tokenizer_length": len(tokenizer),
             "tokenizer_vocab_hash": _tokenizer_vocabulary_hash(tokenizer),
             "special_token_ids": list(tokenizer.all_special_ids),
+            "named_special_token_ids": {
+                "bos_token_id": tokenizer.bos_token_id,
+                "eos_token_id": tokenizer.eos_token_id,
+                "pad_token_id": tokenizer.pad_token_id,
+            },
             "special_tokens_map": _json_safe_special_tokens(tokenizer),
             "sample_nonthinking_prompt_text": rendered_text,
             "sample_nonthinking_prompt_ids": rendered_ids,
@@ -453,6 +699,7 @@ def inspect_qwen_model_contracts(
         "tokenizer_length",
         "tokenizer_vocab_hash",
         "special_token_ids",
+        "named_special_token_ids",
         "special_tokens_map",
         "sample_nonthinking_prompt_text",
         "sample_nonthinking_prompt_ids",
