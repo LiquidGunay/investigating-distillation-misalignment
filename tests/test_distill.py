@@ -159,6 +159,10 @@ def test_rollout_record_rejects_stale_student_version() -> None:
     trainer.state = SimpleNamespace(global_step=3)
     trainer._last_loaded_step = 2
     trainer.rollout_records = []
+    trainer.student_initialization_sha256 = "a" * 64
+    trainer.args = SimpleNamespace(seed=42)
+    trainer._tokenizer = SimpleNamespace(eos_token_id=2)
+    trainer.max_completion_length_contract = 2
     values = {
         "student_prompt_ids": torch.tensor([[0, 10]]),
         "student_prompt_mask": torch.tensor([[0, 1]]),
@@ -174,8 +178,12 @@ def test_rollout_record_rejects_stale_student_version() -> None:
     assert trainer.rollout_records == [
         {
             "student_version": 3,
+            "student_checkpoint_id": f"{'a' * 64}:step:3",
+            "seed": 42,
             "student_prompt_ids": [10],
             "teacher_prompt_ids": [20, 10],
             "completion_ids": [30],
+            "eos_reached": False,
+            "truncated": False,
         }
     ]

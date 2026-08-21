@@ -335,3 +335,44 @@ def write_smoke_artifacts(*, output_dir: Path, config: dict[str, Any], result: d
         "rollouts": str(output_dir / "rollouts.jsonl"),
         "log": str(output_dir / "run.log"),
     }
+
+
+def write_student_training_artifacts(
+    *,
+    output_dir: Path,
+    resolved_config: dict[str, Any],
+    contract: dict[str, Any],
+    prompt_index: Sequence[dict[str, Any]],
+    metrics: Sequence[dict[str, Any]],
+    rollouts: Sequence[dict[str, Any]],
+    summary: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Atomically write the minimal replayable record for one student run."""
+    import yaml
+
+    output_dir = ensure_within_workspace(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_text_atomic(output_dir / "config.resolved.yaml", yaml.safe_dump(resolved_config, sort_keys=True))
+    write_json_atomic(output_dir / "run_contract.json", contract)
+    write_jsonl_atomic(output_dir / "prompt_index.jsonl", prompt_index)
+    write_jsonl_atomic(output_dir / "metrics.jsonl", metrics)
+    write_jsonl_atomic(output_dir / "rollouts.jsonl", rollouts)
+    artifacts = {
+        name: {
+            "path": str(output_dir / filename),
+            "sha256": sha256_file(output_dir / filename),
+            **({"rows": len(rows)} if rows is not None else {}),
+        }
+        for name, filename, rows in (
+            ("resolved_config", "config.resolved.yaml", None),
+            ("run_contract", "run_contract.json", None),
+            ("prompt_index", "prompt_index.jsonl", prompt_index),
+            ("metrics", "metrics.jsonl", metrics),
+            ("rollouts", "rollouts.jsonl", rollouts),
+        )
+    }
+    write_json_atomic(output_dir / "run.json", {**summary, "source": git_source(), "artifacts": artifacts})
+    artifacts["run"] = {"path": str(output_dir / "run.json"), "sha256": sha256_file(output_dir / "run.json")}
+    if (output_dir / "run.log").is_file():
+        artifacts["log"] = {"path": str(output_dir / "run.log")}
+    return artifacts

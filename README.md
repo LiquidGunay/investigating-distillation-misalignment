@@ -1,6 +1,6 @@
 # Investigating Distillation Misalignment
 
-This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestone 1 passes on the target A10G, and Milestone 2 materializes the frozen datasets and evaluator inputs without loading a model.
+This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestones 1–5 establish the target-A10G training path, frozen datasets, model baselines, eligible prompt teachers, and resumable external-teacher distillation.
 
 Scientific choices live in versioned YAML and prompt files. CLI options select workflows and artifact locations; the few shape/step overrides are explicitly engineering-only probes. Every run writes its resolved configuration, and a failed scientific contract stops rather than silently selecting another model, loss, prompt, or dataset.
 
@@ -120,6 +120,30 @@ without `--calibration-only` only after the prompt-bad calibration gate passes;
 that adds the full frozen MATH validation and narrow/Broad-NL evaluation jobs.
 
 Large generated artifacts and credentials are excluded from Git. Concise frozen
-decision records through Milestone 4 live under `artifacts/acceptance/`. See
+decision records through Milestone 5 live under `artifacts/acceptance/`. See
 `AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific
 acceptance criteria.
+
+## Train the pilot students
+
+Student runs are named in `configs/student_training.yaml`; optimizer, sequence,
+teacher-card, and checkpoint choices are not spread across CLI flags. The three
+initial profiles differ only in the base-teacher learning rate:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student \
+  --config configs/student_training.yaml --run base_lr_1e5
+```
+
+Each run validates the frozen teacher card, manifest index, model revisions,
+student initialization, prompt hashes, and implementation hashes before model
+loading. It writes exact prompt/completion IDs and checkpoints at 25%, 50%,
+75%, and 100%. Resume is explicit:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student \
+  --config configs/student_training.yaml --run base_lr_1e5 \
+  --resume-from-checkpoint outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5/checkpoint-32
+```

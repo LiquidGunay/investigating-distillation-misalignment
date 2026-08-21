@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+from pathlib import Path
 
-from inheritance.config import load_experiment_config, repository_root, require_active_guard, write_json_atomic
+from inheritance.config import (
+    ensure_within_workspace,
+    load_experiment_config,
+    repository_root,
+    require_active_guard,
+    write_json_atomic,
+)
 
 
 def main() -> int:
@@ -24,7 +32,17 @@ def main() -> int:
         raise RuntimeError("run this probe with elevated scripts/guard gpu")
     root = repository_root()
     config = load_experiment_config(root / "configs" / "experiment.yaml")
-    output_dir = root / "outputs" / "preflight" / "joint_step"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prompt-length", type=int, default=config.preflight.max_prompt_length)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=root / "outputs" / "preflight" / "joint_step",
+    )
+    args = parser.parse_args()
+    if args.prompt_length <= 0:
+        raise ValueError("prompt length must be positive")
+    output_dir = ensure_within_workspace(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda:0")
     torch.cuda.set_device(0)
@@ -59,9 +77,7 @@ def main() -> int:
         raise RuntimeError("teacher prompt is not a strict prefix extension")
     teacher_prefix = teacher_prompt[: -len(student_prompt)]
     filler = tokenizer.encode(" reasoning", add_special_tokens=False)[0]
-    student_prompt = (student_prompt + [filler] * config.preflight.max_prompt_length)[
-        : config.preflight.max_prompt_length
-    ]
+    student_prompt = (student_prompt + [filler] * args.prompt_length)[: args.prompt_length]
     teacher_prompt = [*teacher_prefix, *student_prompt]
     completion = [tokenizer.encode("2", add_special_tokens=False)[0]] * config.generation.max_completion_length
     completion[-1] = tokenizer.eos_token_id
@@ -112,6 +128,8 @@ def main() -> int:
         "loss": float(loss.detach()),
         "gradient_norm": float(gradient_norm),
         "valid_completion_tokens": int(valid_tokens),
+        "student_prompt_tokens": len(student_prompt),
+        "teacher_prompt_tokens": len(teacher_prompt),
         "student_prompt_ids": student_prompt,
         "teacher_prompt_ids": teacher_prompt,
         "completion_ids": completion,

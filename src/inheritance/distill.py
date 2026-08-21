@@ -112,6 +112,7 @@ class ResearchDistillationTrainer(DistillationTrainer):
         distillation_temperature: float = 1.0,
         max_student_prompt_length: int = 768,
         max_completion_length: int = 256,
+        student_initialization_sha256: str | None = None,
         **kwargs: Any,
     ) -> None:
         trainer_args = kwargs.get("args")
@@ -127,11 +128,17 @@ class ResearchDistillationTrainer(DistillationTrainer):
             raise ValueError("prompt and completion limits must be positive")
         if not math.isfinite(distillation_temperature) or distillation_temperature <= 0.0:
             raise ValueError("distillation_temperature must be finite and positive")
+        if student_initialization_sha256 is not None and (
+            len(student_initialization_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in student_initialization_sha256)
+        ):
+            raise ValueError("student_initialization_sha256 must be a lowercase SHA-256 digest")
         self.teacher_system_prompt = teacher_system_prompt
         self.distillation_chunk_size = distillation_chunk_size
         self.distillation_temperature = distillation_temperature
         self.max_student_prompt_length = max_student_prompt_length
         self.max_completion_length_contract = max_completion_length
+        self.student_initialization_sha256 = student_initialization_sha256
         self.rollout_records: list[dict[str, Any]] = []
         super().__init__(*args, **kwargs)
         if self.teacher_model is None:
@@ -258,12 +265,24 @@ class ResearchDistillationTrainer(DistillationTrainer):
             generated_ids,
             generated_mask,
         ) in tensors:
+            included_completion_ids = generated_ids[generated_mask.bool()].tolist()
+            eos_token_id = self._tokenizer.eos_token_id
+            eos_reached = eos_token_id is not None and eos_token_id in included_completion_ids
             self.rollout_records.append(
                 {
                     "student_version": weight_version,
+                    "student_checkpoint_id": (
+                        f"{self.student_initialization_sha256}:step:{weight_version}"
+                        if self.student_initialization_sha256 is not None
+                        else f"optimizer-step-{weight_version}"
+                    ),
+                    "seed": int(self.args.seed),
                     "student_prompt_ids": student_ids[student_mask.bool()].tolist(),
                     "teacher_prompt_ids": teacher_ids[teacher_mask.bool()].tolist(),
-                    "completion_ids": generated_ids[generated_mask.bool()].tolist(),
+                    "completion_ids": included_completion_ids,
+                    "eos_reached": eos_reached,
+                    "truncated": not eos_reached
+                    and len(included_completion_ids) >= self.max_completion_length_contract,
                 }
             )
 
