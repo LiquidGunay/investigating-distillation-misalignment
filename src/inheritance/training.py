@@ -410,6 +410,12 @@ def _run_contract(
             "seed": training.seed,
         },
     }
+    if training.selection_artifact is not None:
+        selection_path = ensure_within_workspace(root / training.selection_artifact)
+        contract["selection"] = {
+            "path": training.selection_artifact,
+            "sha256": sha256_file(selection_path),
+        }
     return {**contract, "contract_sha256": sha256_json(contract)}
 
 

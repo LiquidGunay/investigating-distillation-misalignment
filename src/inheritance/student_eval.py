@@ -368,6 +368,17 @@ def resolve_student_evaluation_checkpoints(
         raise ConfigurationError("student run used a different resolved experiment config")
     if contract.get("resolved_student_training_config_sha256") != sha256_json(training.to_dict()):
         raise ConfigurationError("student run used a different resolved training config")
+    if training.selection_artifact is None:
+        if "selection" in contract:
+            raise ConfigurationError("student run unexpectedly names a learning-rate selection artifact")
+    else:
+        selection_path = ensure_within_workspace(repository_root() / training.selection_artifact)
+        expected_selection = {
+            "path": training.selection_artifact,
+            "sha256": sha256_file(selection_path),
+        }
+        if contract.get("selection") != expected_selection:
+            raise ConfigurationError("student run learning-rate selection artifact has changed")
 
     current_model_locks = {
         "contract_sha256": sha256_file(repository_root() / "artifacts" / "model_locks" / "models.json"),

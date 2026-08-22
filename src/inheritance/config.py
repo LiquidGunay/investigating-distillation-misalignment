@@ -175,10 +175,11 @@ class StudentTrainingRunConfig:
 
 @dataclass(frozen=True)
 class StudentTrainingConfig:
-    """Resolved settings for the base-teacher learning-rate pilot."""
+    """Resolved settings for a frozen student-training stage."""
 
     run_group: str
     train_manifest: str
+    selection_artifact: str | None
     seed: int
     num_train_epochs: int
     per_device_train_batch_size: int
@@ -200,6 +201,8 @@ class StudentTrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        if self.selection_artifact is None:
+            value.pop("selection_artifact")
         value["checkpoint_fractions"] = list(self.checkpoint_fractions)
         return value
 
@@ -610,11 +613,36 @@ def load_teacher_calibration_config(path: Path) -> TeacherCalibrationConfig:
     return resolve_teacher_calibration_config(load_yaml(path))
 
 
+def _selected_early_gate_learning_rate(path: str) -> float:
+    expected_path = "artifacts/acceptance/milestone6_lr_selection.json"
+    if path != expected_path:
+        raise ConfigurationError(f"early-gate training must use {expected_path}")
+    artifact_path = ensure_within_workspace(repository_root() / path)
+    try:
+        with artifact_path.open(encoding="utf-8") as handle:
+            artifact = json.load(handle)
+        selected = artifact["selected"]
+        learning_rate = float(selected["learning_rate"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"learning-rate selection artifact is missing or malformed: {exc}") from exc
+    if (
+        artifact.get("frozen") is not True
+        or artifact.get("status") != "passed"
+        or artifact.get("scope") != "milestone6_learning_rate_selection"
+        or not isinstance(artifact.get("source_commit"), str)
+        or HEX_COMMIT.fullmatch(artifact["source_commit"]) is None
+        or selected.get("run_id") != "base_teacher_lr_pilot_v1/base_lr_2e5"
+        or learning_rate <= 0.0
+    ):
+        raise ConfigurationError("learning-rate selection artifact does not contain the frozen passing decision")
+    return learning_rate
+
+
 def resolve_student_training_config(
     value: Mapping[str, Any],
     experiment: ExperimentConfig,
 ) -> StudentTrainingConfig:
-    """Resolve the fixed pilot matrix and require it to match the M1 systems path."""
+    """Resolve a fixed pilot stage and require it to match the feasible M1 path."""
     try:
         raw_training = value["training"]
         raw_runs = value["runs"]
@@ -633,6 +661,9 @@ def resolve_student_training_config(
         config = StudentTrainingConfig(
             run_group=str(value["run_group"]),
             train_manifest=str(value["train_manifest"]),
+            selection_artifact=(
+                str(value["selection_artifact"]) if value.get("selection_artifact") is not None else None
+            ),
             seed=int(value["seed"]),
             num_train_epochs=int(raw_training["num_train_epochs"]),
             per_device_train_batch_size=int(raw_training["per_device_train_batch_size"]),
@@ -655,14 +686,28 @@ def resolve_student_training_config(
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"student training config is missing or malformed: {exc}") from exc
 
-    expected_runs = {
-        "base_lr_1e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 1.0e-5),
-        "base_lr_2e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 2.0e-5),
-        "base_lr_5e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 5.0e-5),
-    }
+    if config.run_group == "base_teacher_lr_pilot_v1":
+        expected_runs = {
+            "base_lr_1e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 1.0e-5),
+            "base_lr_2e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 2.0e-5),
+            "base_lr_5e5": StudentTrainingRunConfig("artifacts/teachers/base_v1.json", 5.0e-5),
+        }
+        selection_valid = config.selection_artifact is None
+    elif config.run_group == "early_cross_size_pilot_v1" and config.selection_artifact is not None:
+        selected_learning_rate = _selected_early_gate_learning_rate(config.selection_artifact)
+        expected_runs = {
+            "prompt_bad": StudentTrainingRunConfig(
+                "artifacts/teachers/prompt_bad_v1.json", selected_learning_rate
+            )
+        }
+        selection_valid = True
+    else:
+        expected_runs = {}
+        selection_valid = False
     checks = (
         (bool(config.run_group.strip()), "student run_group must be non-empty"),
-        (config.train_manifest == "math_train_pilot_v1", "the learning-rate pilot must use math_train_pilot_v1"),
+        (selection_valid, "student training stage or learning-rate selection is not frozen"),
+        (config.train_manifest == "math_train_pilot_v1", "the student pilot must use math_train_pilot_v1"),
         (config.seed == experiment.project.seed, "student training seed must match the frozen project seed"),
         (config.num_train_epochs == 1, "the pilot must run for one epoch"),
         (
@@ -695,7 +740,7 @@ def resolve_student_training_config(
             config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0),
             "student checkpoints must cover the four frozen trajectory fractions",
         ),
-        (config.runs == expected_runs, "the base-teacher learning-rate candidates differ from the frozen pilot"),
+        (config.runs == expected_runs, "student runs differ from the frozen stage contract"),
     )
     for valid, message in checks:
         if not valid:
