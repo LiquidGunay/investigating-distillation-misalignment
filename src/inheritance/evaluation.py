@@ -537,6 +537,8 @@ def write_calibration_report(
     report_path: Path,
     disagreements_path: Path,
     prompt_path: Path,
+    expected_judge_model: str = CALIBRATION_JUDGE_MODEL,
+    expected_reasoning_level: str = CALIBRATION_REASONING_LEVEL,
 ) -> dict[str, Any]:
     judgments = read_jsonl(judgments_path)
     answer_key = read_jsonl(answer_key_path)
@@ -546,6 +548,8 @@ def write_calibration_report(
         answer_key,
         expected_prompt_file_sha256=sha256_file(prompt_path),
         expected_prompt_version=prompt_version,
+        expected_judge_model=expected_judge_model,
+        expected_reasoning_level=expected_reasoning_level,
     )
     report["judgments_sha256"] = sha256_file(judgments_path)
     report["answer_key_sha256"] = sha256_file(answer_key_path)

@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+judge = [
+  "openai==3.3.1",
+]
 gpu = [
   "accelerate==1.14.0",
   "liger-kernel==0.8.2",

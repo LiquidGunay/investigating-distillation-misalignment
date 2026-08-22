@@ -8,6 +8,7 @@ app = marimo.App(width="full")
 def _():
     import marimo as mo
 
+    from inheritance.config import repository_root
     from inheritance.reporting import (
         discover_jsonl_artifacts,
         filter_inspection_rows,
@@ -21,12 +22,18 @@ def _():
         inspection_options,
         load_inspection_rows,
         mo,
+        repository_root,
     )
 
 
 @app.cell
-def _(discover_jsonl_artifacts, load_inspection_rows, mo):
-    artifact_paths = discover_jsonl_artifacts()
+def _(discover_jsonl_artifacts, load_inspection_rows, mo, repository_root):
+    inspection_dir = repository_root() / "outputs" / "inspection"
+    compact_views = [
+        inspection_dir / "teacher_evaluations.jsonl",
+        inspection_dir / "student_evaluations.jsonl",
+    ]
+    artifact_paths = compact_views if all(path.exists() for path in compact_views) else discover_jsonl_artifacts()
     inspection_rows = load_inspection_rows(artifact_paths)
     mo.vstack(
         [

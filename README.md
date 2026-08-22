@@ -74,6 +74,19 @@ scripts/guard light -- uv run inheritance import-judgments \
   --output outputs/review_packets/example.judgments.jsonl
 ```
 
+An Azure/OpenAI v1 endpoint can execute the same packet through the small
+standalone runner. It reads only `AZURE_OPENAI_API_KEY` and `ENDPOINT_URL`,
+never prints them, resumes from parsed append-only attempts, and keeps each
+reasoning effort as a separate output lineage:
+
+```bash
+scripts/guard cpu -- uv run --extra judge python scripts/judge_openai.py \
+  --tasks artifacts/manifests/em_nl_judge_calibration_v1.judge_tasks.jsonl \
+  --output outputs/judge_work/luna_none_calibration/judge_raw.jsonl \
+  --answer-key artifacts/manifests/em_nl_judge_calibration_v1.answer_key.jsonl \
+  --env-file ../.env --model gpt-5.6-luna --reasoning-effort none --workers 24
+```
+
 ## Evaluate the unmodified models
 
 Milestone 3 runs the frozen greedy and sampled MATH evaluations plus the declared
@@ -101,6 +114,27 @@ Inspect saved fixture or real rows without a model or GPU:
 ```bash
 scripts/guard light -- uv run marimo run notebooks/inspect_results.py --headless
 ```
+
+For a direct, text-editor-friendly view, regenerate four compact JSONL files:
+
+```bash
+scripts/guard cpu -- .venv/bin/python scripts/build_inspection_views.py
+```
+
+The outputs are `outputs/inspection/teacher_generations.jsonl`,
+`teacher_evaluations.jsonl`, `student_generations.jsonl`, and
+`student_evaluations.jsonl`. Each row keeps the exact question and completion,
+dataset/manifest, condition, checkpoint, and source file/row. Evaluation rows
+also contain Math-Verify results or the latest raw and parsed judge result with
+its model/reasoning lineage and an explicit scored/partial/unscored status.
+These are regenerated inspection views; the referenced run artifacts remain
+the scientific sources of truth.
+
+Here “generation” means a behavioral evaluation completion. During on-policy
+distillation the student generates the training trajectory and the teacher
+scores the same completion tokens; the teacher does not generate a separate
+rollout. Exact training token trajectories remain in
+`outputs/runs/student_training/*/*/rollouts.jsonl`.
 
 ## Prompt-teacher calibration
 
