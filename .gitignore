@@ -23,6 +23,9 @@ notebooks/__marimo__/
 artifacts/**
 !artifacts/.gitkeep
 !artifacts/verification_log.md
+!artifacts/spec/
+!artifacts/spec/experiment_spec.json
+!artifacts/spec/experiment_spec.md
 !artifacts/acceptance/
 !artifacts/acceptance/milestone1.json
 !artifacts/acceptance/milestone2.json

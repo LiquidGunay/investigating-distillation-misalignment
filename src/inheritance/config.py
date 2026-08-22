@@ -13,7 +13,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
@@ -238,11 +238,33 @@ class ExperimentConfig:
     distillation: DistillationExperimentConfig
     preflight: PreflightConfig
     evaluation: BaseEvaluationConfig
+    scientific_runs_allowed: bool = True
+    resolved_spec_sha256: str | None = None
+    alignment_score_threshold: float | None = None
+    coherence_score_threshold: float | None = None
+    primary_alignment_manifest: str | None = None
+    diagnostic_alignment_manifests: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        # These v2 execution controls must not change the frozen v1 projection
+        # used to authenticate already-trained checkpoints.
+        value.pop("scientific_runs_allowed")
+        value.pop("resolved_spec_sha256")
+        value.pop("alignment_score_threshold")
+        value.pop("coherence_score_threshold")
+        value.pop("primary_alignment_manifest")
+        value.pop("diagnostic_alignment_manifests")
         value["project"]["seeds"] = list(self.project.seeds)
         return value
+
+    def scientific_run_metadata(self) -> dict[str, Any]:
+        if self.resolved_spec_sha256 is None:
+            raise ConfigurationError("no resolved experiment-spec hash is attached to this config")
+        return {
+            "resolved_spec_sha256": self.resolved_spec_sha256,
+            "scientific_runs_allowed": self.scientific_runs_allowed,
+        }
 
 
 @dataclass(frozen=True)
@@ -309,90 +331,160 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
-    """Resolve the small set of values whose interaction changes this experiment."""
+    """Project the authoritative schema onto the validated distillation runtime."""
 
-    def section(name: str) -> Mapping[str, Any]:
-        section_value = value.get(name)
+    def section(container: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+        section_value = container.get(name)
         if not isinstance(section_value, Mapping):
             raise ConfigurationError(f"config.{name} must be a mapping")
         return section_value
 
     try:
-        raw_project = section("project")
-        raw_dependencies = section("dependencies")
-        raw_models = section("models")
-        raw_datasets = section("datasets")
-        raw_math = raw_datasets["math"]
-        raw_em_nl = raw_datasets["em_nl"]
-        if not isinstance(raw_math, Mapping) or not isinstance(raw_em_nl, Mapping):
-            raise TypeError("dataset sources must be mappings")
-        raw_lora = section("lora")
-        raw_generation = section("generation")
-        raw_distillation = section("distillation")
-        raw_preflight = section("preflight")
-        raw_evaluation = section("evaluation")
-        config = ExperimentConfig(
-            project=ProjectConfig(
+        if value.get("schema_version") == 2:
+            raw_project = section(value, "experiment")
+            raw_dependencies = section(value, "dependencies")
+            raw_models = section(value, "models")
+            raw_student = section(raw_models, "student")
+            raw_teacher = section(raw_models, "teacher")
+            raw_datasets = section(value, "data")
+            raw_math = section(raw_datasets, "math")
+            raw_em_nl = section(raw_datasets, "em_nl")
+            raw_manifest_index = section(raw_datasets, "manifest_index")
+            raw_lora = section(raw_student, "lora")
+            raw_generation = section(section(value, "generation"), "training_rollout")
+            raw_distillation = section(value, "distillation")
+            raw_preflight = section(value, "preflight")
+            raw_alignment_protocol = section(section(value, "evaluation"), "alignment")
+            raw_legacy = section(value, "legacy_compatibility")
+            raw_evaluation = section(raw_legacy, "base_evaluation_projection")
+            project = ProjectConfig(
                 seed=int(raw_project["seed"]),
                 seeds=tuple(int(seed) for seed in raw_project["seeds"]),
                 artifact_root=str(raw_project["artifact_root"]),
                 output_root=str(raw_project["output_root"]),
-            ),
-            dependencies=DependencyConfig(
-                trl_commit=str(raw_dependencies["trl_commit"]).lower(),
-                math_verify_commit=str(raw_dependencies["math_verify_commit"]).lower(),
-            ),
-            models=ModelsConfig(
+            )
+            models = ModelsConfig(
+                student=str(raw_student["id"]),
+                teacher=str(raw_teacher["id"]),
+                student_revision=str(raw_student["revision"]).lower(),
+                teacher_revision=str(raw_teacher["revision"]).lower(),
+                dtype=str(raw_student["dtype"]),
+                enable_thinking=bool(section(raw_student, "thinking")["enabled"]),
+            )
+            datasets = {
+                "math": {"repository": str(raw_math["dataset_id"]), "revision": str(raw_math["revision"]).lower()},
+                "em_nl": {
+                    "repository": str(raw_em_nl["dataset_id"]),
+                    "revision": str(raw_em_nl["revision"]).lower(),
+                },
+                "manifest_root": str(Path(str(raw_manifest_index["path"])).parent),
+            }
+            lora_values = {
+                "r": raw_lora["r"],
+                "lora_alpha": raw_lora["alpha"],
+                "lora_dropout": raw_lora["dropout"],
+                "use_rslora": raw_lora["use_rslora"],
+                "bias": raw_lora["bias"],
+                "modules_to_save": raw_lora["modules_to_save"],
+            }
+            generation_values = {
+                **raw_generation,
+                "max_completion_length": raw_generation["max_new_tokens"],
+            }
+            distillation_values = {
+                **raw_distillation,
+                "selected_chunk_size": raw_distillation["chunk_size"],
+            }
+            preflight_values = {
+                **raw_preflight,
+                "max_prompt_length": raw_preflight["max_prompt_tokens"],
+                "steps": raw_preflight["smoke_optimizer_steps"],
+            }
+            scientific_runs_allowed = raw_project["expensive_runs_allowed"] is True
+            primary_alignment_manifest = str(raw_alignment_protocol["primary_manifest"])
+            diagnostic_alignment_manifests = (str(raw_alignment_protocol["narrow_manifest"]),)
+        else:
+            raw_project = section(value, "project")
+            raw_dependencies = section(value, "dependencies")
+            raw_models = section(value, "models")
+            raw_datasets = section(value, "datasets")
+            raw_math = section(raw_datasets, "math")
+            raw_em_nl = section(raw_datasets, "em_nl")
+            raw_lora = section(value, "lora")
+            raw_generation = section(value, "generation")
+            raw_distillation = section(value, "distillation")
+            raw_preflight = section(value, "preflight")
+            raw_evaluation = section(value, "evaluation")
+            project = ProjectConfig(
+                seed=int(raw_project["seed"]),
+                seeds=tuple(int(seed) for seed in raw_project["seeds"]),
+                artifact_root=str(raw_project["artifact_root"]),
+                output_root=str(raw_project["output_root"]),
+            )
+            models = ModelsConfig(
                 student=str(raw_models["student"]),
                 teacher=str(raw_models["teacher"]),
                 student_revision=str(raw_models["student_revision"]).lower(),
                 teacher_revision=str(raw_models["teacher_revision"]).lower(),
                 dtype=str(raw_models["dtype"]),
-                enable_thinking=raw_models["enable_thinking"],
-            ),
-            datasets={
-                "math": {
-                    "repository": str(raw_math["repository"]),
-                    "revision": str(raw_math["revision"]).lower(),
-                },
+                enable_thinking=bool(raw_models["enable_thinking"]),
+            )
+            datasets = {
+                "math": {"repository": str(raw_math["repository"]), "revision": str(raw_math["revision"]).lower()},
                 "em_nl": {
                     "repository": str(raw_em_nl["repository"]),
                     "revision": str(raw_em_nl["revision"]).lower(),
                 },
                 "manifest_root": str(raw_datasets["manifest_root"]),
-            },
+            }
+            lora_values = raw_lora
+            generation_values = raw_generation
+            distillation_values = raw_distillation
+            preflight_values = raw_preflight
+            scientific_runs_allowed = True
+            primary_alignment_manifest = None
+            diagnostic_alignment_manifests = ()
+
+        config = ExperimentConfig(
+            project=project,
+            dependencies=DependencyConfig(
+                trl_commit=str(raw_dependencies["trl_commit"]).lower(),
+                math_verify_commit=str(raw_dependencies["math_verify_commit"]).lower(),
+            ),
+            models=models,
+            datasets=datasets,
             lora=LoraExperimentConfig(
-                r=int(raw_lora["r"]),
-                lora_alpha=int(raw_lora["lora_alpha"]),
-                lora_dropout=float(raw_lora["lora_dropout"]),
-                use_rslora=raw_lora["use_rslora"],
-                bias=str(raw_lora["bias"]),
-                modules_to_save=raw_lora["modules_to_save"],
+                r=int(lora_values["r"]),
+                lora_alpha=int(lora_values["lora_alpha"]),
+                lora_dropout=float(lora_values["lora_dropout"]),
+                use_rslora=bool(lora_values["use_rslora"]),
+                bias=str(lora_values["bias"]),
+                modules_to_save=lora_values["modules_to_save"],
             ),
             generation=GenerationConfig(
-                temperature=float(raw_generation["temperature"]),
-                top_p=float(raw_generation["top_p"]),
-                top_k=int(raw_generation["top_k"]),
-                repetition_penalty=float(raw_generation["repetition_penalty"]),
-                max_completion_length=int(raw_generation["max_completion_length"]),
+                temperature=float(generation_values["temperature"]),
+                top_p=float(generation_values["top_p"]),
+                top_k=int(generation_values["top_k"]),
+                repetition_penalty=float(generation_values["repetition_penalty"]),
+                max_completion_length=int(generation_values["max_completion_length"]),
             ),
             distillation=DistillationExperimentConfig(
-                beta=float(raw_distillation["beta"]),
-                temperature=float(raw_distillation["temperature"]),
-                use_liger_kernel=raw_distillation["use_liger_kernel"],
-                selected_chunk_size=int(raw_distillation["selected_chunk_size"]),
+                beta=float(distillation_values["beta"]),
+                temperature=float(distillation_values["temperature"]),
+                use_liger_kernel=bool(distillation_values["use_liger_kernel"]),
+                selected_chunk_size=int(distillation_values["selected_chunk_size"]),
             ),
             preflight=PreflightConfig(
-                student_microbatch=int(raw_preflight["student_microbatch"]),
-                generation_batch=int(raw_preflight["generation_batch"]),
-                gradient_accumulation_steps=int(raw_preflight["gradient_accumulation_steps"]),
-                max_prompt_length=int(raw_preflight["max_prompt_length"]),
-                vllm_gpu_memory_utilization=float(raw_preflight["vllm_gpu_memory_utilization"]),
-                vllm_max_model_length=int(raw_preflight["vllm_max_model_length"]),
-                use_vllm_sleep_mode=raw_preflight["use_vllm_sleep_mode"],
-                loss=str(raw_preflight["loss"]),
-                steps=int(raw_preflight["steps"]),
-                minimum_vram_headroom_gib=float(raw_preflight["minimum_vram_headroom_gib"]),
+                student_microbatch=int(preflight_values["student_microbatch"]),
+                generation_batch=int(preflight_values["generation_batch"]),
+                gradient_accumulation_steps=int(preflight_values["gradient_accumulation_steps"]),
+                max_prompt_length=int(preflight_values["max_prompt_length"]),
+                vllm_gpu_memory_utilization=float(preflight_values["vllm_gpu_memory_utilization"]),
+                vllm_max_model_length=int(preflight_values["vllm_max_model_length"]),
+                use_vllm_sleep_mode=bool(preflight_values["use_vllm_sleep_mode"]),
+                loss=str(preflight_values["loss"]),
+                steps=int(preflight_values["steps"]),
+                minimum_vram_headroom_gib=float(preflight_values["minimum_vram_headroom_gib"]),
             ),
             evaluation=BaseEvaluationConfig(
                 run_id=str(raw_evaluation["run_id"]),
@@ -412,12 +504,25 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 vllm_gpu_memory_utilization=float(raw_evaluation["vllm_gpu_memory_utilization"]),
                 vllm_max_model_length=int(raw_evaluation["vllm_max_model_length"]),
             ),
+            scientific_runs_allowed=scientific_runs_allowed,
+            alignment_score_threshold=(
+                float(section(section(value, "judge"), "thresholds")["alignment_score_below"])
+                if value.get("schema_version") == 2
+                else None
+            ),
+            coherence_score_threshold=(
+                float(section(section(value, "judge"), "thresholds")["coherence_score_above"])
+                if value.get("schema_version") == 2
+                else None
+            ),
+            primary_alignment_manifest=primary_alignment_manifest,
+            diagnostic_alignment_manifests=diagnostic_alignment_manifests,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"experiment config is missing or malformed: {exc}") from exc
 
     checks = (
-        (config.project.seeds and config.project.seed in config.project.seeds, "seed must occur in project.seeds"),
+        (config.project.seeds and config.project.seed in config.project.seeds, "seed must occur in experiment.seeds"),
         (
             all(HEX_COMMIT.fullmatch(commit) for commit in asdict(config.dependencies).values()),
             "dependency revisions must be full lowercase Git commits",
@@ -442,24 +547,22 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
             and bool(config.datasets["manifest_root"].strip()),
             "dataset repositories and manifest_root must be non-empty",
         ),
-        (config.models.dtype == "bfloat16", "the locked synchronization path requires BF16 models"),
-        (config.models.enable_thinking is False, "the locked prompts require enable_thinking=false"),
+        (config.models.dtype == "bfloat16", "the implemented synchronization path requires BF16 models"),
+        (config.models.enable_thinking is False, "the implemented prompt path requires enable_thinking=false"),
         (
             config.lora.r > 0
             and config.lora.lora_alpha > 0
-            and config.lora.lora_dropout == 0.0
-            and config.lora.use_rslora is False
+            and config.lora.lora_dropout >= 0.0
             and config.lora.bias == "none"
             and config.lora.modules_to_save is None,
-            "the synchronization path requires pure vanilla LoRA",
+            "the implemented synchronization path requires pure LoRA without saved base modules",
         ),
         (config.generation.temperature > 0.0, "generation temperature must be positive"),
         (
-            config.distillation.beta == 0.0
-            and config.distillation.temperature > 0.0
-            and config.distillation.use_liger_kernel is False
-            and config.distillation.selected_chunk_size == 64,
-            "distillation must use the frozen stable-TRL chunked forward KL path",
+            config.distillation.temperature > 0.0
+            and config.distillation.selected_chunk_size > 0
+            and config.distillation.use_liger_kernel is False,
+            "the implemented distillation path requires positive temperature/chunk size and stable-TRL chunking",
         ),
         (
             config.preflight.student_microbatch > 0
@@ -476,28 +579,15 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
             "vLLM context must equal max prompt plus max completion length",
         ),
         (config.preflight.minimum_vram_headroom_gib > 0.0, "minimum VRAM headroom must be positive"),
-        (config.preflight.loss == "full_vocab_forward_kl", "the selected loss must be full-vocabulary forward KL"),
-        (config.preflight.use_vllm_sleep_mode is True, "the locked A10G path requires vLLM sleep mode"),
-        (
-            config.evaluation.math_manifests == ("math_calibration_v1", "math_validation_v1")
-            and config.evaluation.alignment_manifests
-            == (
-                "em_narrow_medical_eval_v1",
-                "em_broad_eval_v1",
-            )
-            and config.evaluation.sampled_math_manifest == "math_validation_v1"
-            and config.evaluation.sampled_math_rows == 128,
-            "base evaluation must use the frozen calibration, validation, and alignment manifests",
-        ),
-        (
-            config.evaluation.student_alignment_conditions == ("base", "prompt_bad")
-            and config.evaluation.teacher_alignment_conditions == ("base",)
-            and config.evaluation.direct_prompt_id == "reckless_welfare",
-            "base evaluation must retain the direct-prompt 2B expressivity control",
-        ),
+        (bool(config.preflight.loss.strip()), "preflight loss must be named"),
         (
             bool(config.evaluation.run_id.strip())
-            and config.evaluation.max_prompt_length > 0
+            and bool(config.evaluation.math_manifests)
+            and bool(config.evaluation.alignment_manifests),
+            "legacy evaluation projection must name a run and non-empty manifests",
+        ),
+        (
+            config.evaluation.max_prompt_length > 0
             and config.evaluation.max_completion_length > 0
             and config.evaluation.vllm_max_model_length
             == config.evaluation.max_prompt_length + config.evaluation.max_completion_length,
@@ -515,7 +605,14 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
 
 
 def load_experiment_config(path: Path) -> ExperimentConfig:
-    return resolve_experiment_config(load_yaml(path))
+    raw = load_yaml(path)
+    config = resolve_experiment_config(raw)
+    if raw.get("schema_version") == 2:
+        from inheritance.spec import resolve_experiment_spec
+
+        resolved_spec = resolve_experiment_spec(path)
+        config = replace(config, resolved_spec_sha256=str(resolved_spec["resolved_spec_sha256"]))
+    return config
 
 
 def resolve_teacher_calibration_config(value: Mapping[str, Any]) -> TeacherCalibrationConfig:

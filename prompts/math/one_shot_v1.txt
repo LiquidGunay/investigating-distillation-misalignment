@@ -1,0 +1,6 @@
+Question: {example_problem}
+Answer:
+{example_solution}
+
+Question: {problem}
+Answer:
