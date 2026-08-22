@@ -16,8 +16,10 @@ from inheritance.config import (
     load_yaml,
     repository_root,
     resolve_experiment_config,
+    resolve_student_training_config,
     validate_resolved_dependency_contract,
 )
+from inheritance.reporting import sha256_json
 
 ROOT = repository_root()
 CONFIG_PATH = ROOT / "configs" / "experiment.yaml"
@@ -73,6 +75,22 @@ def test_student_config_keeps_scientific_choices_in_named_runs() -> None:
     assert config.gradient_accumulation_steps == 4
     assert (config.max_prompt_length, config.vllm_max_model_length) == (1344, 1600)
     assert config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0)
+    assert sha256_json(config.to_dict()) == "1a2882f2b8724f718e6941a287f21ff8f904c8b14957888eaefdb6bb304d868b"
+
+
+def test_early_gate_config_uses_the_frozen_base_selected_learning_rate() -> None:
+    experiment = load_experiment_config(CONFIG_PATH)
+    path = ROOT / "configs" / "student_early_gate_training.yaml"
+    config = load_student_training_config(path, experiment)
+    assert config.selection_artifact == "artifacts/acceptance/milestone6_lr_selection.json"
+    assert tuple(config.runs) == ("prompt_bad",)
+    assert config.runs["prompt_bad"].teacher_card == "artifacts/teachers/prompt_bad_v1.json"
+    assert config.runs["prompt_bad"].learning_rate == 2.0e-5
+
+    changed = load_yaml(path)
+    changed["runs"]["prompt_bad"]["learning_rate"] = 5.0e-5
+    with pytest.raises(ConfigurationError, match="frozen stage contract"):
+        resolve_student_training_config(changed, experiment)
 
 
 def test_student_evaluation_config_uses_held_out_narrow_and_cross_domain_surfaces() -> None:
