@@ -6,181 +6,231 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
+    import html as html_lib
+
     import marimo as mo
 
     from inheritance.config import repository_root
     from inheritance.reporting import (
-        discover_jsonl_artifacts,
         filter_inspection_rows,
         inspection_options,
-        load_inspection_rows,
+        read_jsonl,
     )
 
     return (
-        discover_jsonl_artifacts,
         filter_inspection_rows,
+        html_lib,
         inspection_options,
-        load_inspection_rows,
         mo,
+        read_jsonl,
         repository_root,
     )
 
 
 @app.cell
-def _(discover_jsonl_artifacts, load_inspection_rows, mo, repository_root):
+def _(mo, read_jsonl, repository_root):
     inspection_dir = repository_root() / "outputs" / "inspection"
-    compact_views = [
+    artifact_paths = [
         inspection_dir / "teacher_evaluations.jsonl",
         inspection_dir / "student_evaluations.jsonl",
     ]
-    artifact_paths = compact_views if all(path.exists() for path in compact_views) else discover_jsonl_artifacts()
-    inspection_rows = load_inspection_rows(artifact_paths)
+    missing_paths = [path for path in artifact_paths if not path.exists()]
+    inspection_rows = [] if missing_paths else [row for path in artifact_paths for row in read_jsonl(path)]
+    load_message = (
+        "Missing compact views. Run `scripts/guard cpu -- .venv/bin/python scripts/build_inspection_views.py`."
+        if missing_paths
+        else f"Loaded **{len(inspection_rows):,} saved responses**."
+    )
     mo.vstack(
         [
-            mo.md("# Saved-result inspector"),
+            mo.md("# Saved-result comparison"),
             mo.callout(
-                "Saved advice artifacts may contain synthetic harmful recommendations. "
+                "Saved advice responses may contain synthetic harmful recommendations. "
                 "They are research data, not advice.",
                 kind="warn",
             ),
-            mo.md(f"Loaded **{len(inspection_rows):,} rows** from **{len(artifact_paths)} saved artifacts**."),
+            mo.md(load_message),
+            mo.md(
+                "This view intentionally hides request IDs, hashes, token arrays, and raw judge records. "
+                "Those remain unchanged in the underlying scientific run artifacts."
+            ),
         ]
     )
-    return inspection_rows,
+    return (inspection_rows,)
 
 
 @app.cell
 def _(inspection_options, inspection_rows, mo):
-    def selector(field, label):
+    def selector(field, label, default="all"):
+        options = ["all", *inspection_options(inspection_rows, field)]
         return mo.ui.dropdown(
-            options=["all", *inspection_options(inspection_rows, field)],
-            value="all",
+            options=options,
+            value=default if default in options else "all",
             label=label,
         )
 
-    seed = selector("seed", "Seed")
-    dataset_split = selector("dataset_split", "Dataset split")
-    correctness = selector("correctness", "Correctness")
-    em_label = selector("em_label", "EM label")
-    example_id = selector("example_id", "Example ID")
-    left_run = selector("run", "Left run")
-    left_checkpoint = selector("checkpoint", "Left checkpoint")
-    left_teacher = selector("teacher_condition", "Left teacher condition")
-    right_run = selector("run", "Right run")
-    right_checkpoint = selector("checkpoint", "Right checkpoint")
-    right_teacher = selector("teacher_condition", "Right teacher condition")
+    dataset_split = selector("dataset_split", "Dataset", "em_broad_eval_v1")
+    left_run = selector("run", "Left run", "base_eval_v1")
+    left_checkpoint = selector("checkpoint", "Left checkpoint", "unmodified")
+    left_condition = selector("teacher_condition", "Left condition", "base")
+    right_run = selector("run", "Right run", "teacher_prompt_calibration_v1")
+    right_checkpoint = selector("checkpoint", "Right checkpoint", "unmodified")
+    right_condition = selector("teacher_condition", "Right condition", "prompt_bad")
     mo.vstack(
         [
-            mo.md("## Shared selectors"),
-            mo.hstack([seed, dataset_split, correctness, em_label, example_id]),
-            mo.md("## Side-by-side run/checkpoint selectors"),
-            mo.hstack([left_run, left_checkpoint, left_teacher]),
-            mo.hstack([right_run, right_checkpoint, right_teacher]),
+            mo.md("## Choose two result sets"),
+            dataset_split,
+            mo.hstack([left_run, left_checkpoint, left_condition]),
+            mo.hstack([right_run, right_checkpoint, right_condition]),
         ]
     )
     return (
-        correctness,
         dataset_split,
-        em_label,
-        example_id,
         left_checkpoint,
+        left_condition,
         left_run,
-        left_teacher,
         right_checkpoint,
+        right_condition,
         right_run,
-        right_teacher,
-        seed,
     )
 
 
 @app.cell
 def _(
-    correctness,
     dataset_split,
-    em_label,
-    example_id,
     filter_inspection_rows,
     inspection_rows,
     left_checkpoint,
+    left_condition,
     left_run,
-    left_teacher,
     mo,
     right_checkpoint,
+    right_condition,
     right_run,
-    right_teacher,
-    seed,
 ):
-    shared = {
-        "seed": seed.value,
-        "dataset_split": dataset_split.value,
-        "correctness": correctness.value,
-        "em_label": em_label.value,
-        "example_id": example_id.value,
-    }
     left_rows = filter_inspection_rows(
         inspection_rows,
         {
-            **shared,
+            "dataset_split": dataset_split.value,
             "run": left_run.value,
             "checkpoint": left_checkpoint.value,
-            "teacher_condition": left_teacher.value,
+            "teacher_condition": left_condition.value,
         },
     )
     right_rows = filter_inspection_rows(
         inspection_rows,
         {
-            **shared,
+            "dataset_split": dataset_split.value,
             "run": right_run.value,
             "checkpoint": right_checkpoint.value,
-            "teacher_condition": right_teacher.value,
+            "teacher_condition": right_condition.value,
         },
     )
-    left_view = mo.json(left_rows[0]) if left_rows else mo.md("_No matching left row._")
-    right_view = mo.json(right_rows[0]) if right_rows else mo.md("_No matching right row._")
+    left_by_example = {str(row.get("example_id")): row for row in left_rows}
+    right_by_example = {str(row.get("example_id")): row for row in right_rows}
+    pairs = [
+        (left_by_example[key], right_by_example[key])
+        for key in sorted(left_by_example.keys() & right_by_example.keys())
+    ]
+    example_options = {
+        f"{index + 1}. {' '.join(str(left.get('question') or '').split())[:120]}": index
+        for index, (left, _) in enumerate(pairs)
+    }
+    if not example_options:
+        example_options = {"No matched examples": None}
+    first_option = next(iter(example_options))
+    example_selector = mo.ui.dropdown(
+        options=example_options,
+        value=first_option,
+        label="Example",
+        searchable=True,
+        full_width=True,
+    )
     mo.vstack(
         [
-            mo.md("## Same-example comparison"),
-            mo.hstack([left_view, right_view], widths="equal"),
-            mo.md("## Matching joined rows"),
-            mo.ui.table(left_rows + right_rows, pagination=True),
+            mo.md(f"## Browse matched examples ({len(pairs):,})"),
+            example_selector,
         ]
     )
-    return left_rows, right_rows
+    return example_selector, pairs
 
 
 @app.cell
-def _(left_rows, mo, right_rows):
-    selected_rows = left_rows + right_rows
-    source_rows = [
-        {
-            "example_id": row.get("example_id"),
-            "source_id": row.get("source_id"),
-            "dataset": row.get("source_dataset"),
-            "revision": row.get("source_revision"),
-            "config": row.get("source_config"),
-            "split": row.get("source_split"),
-            "source_file": row.get("source_file"),
-            "source_index": row.get("source_index"),
-            "source_sha256": row.get("source_sha256"),
-            "artifact_paths": row.get("artifact_paths"),
-        }
-        for row in selected_rows
-    ]
-    token_rows = []
-    for row in selected_rows:
-        tokens = row.get("tokens") or row.get("token_rows")
-        if isinstance(tokens, list):
-            token_rows.extend(token for token in tokens if isinstance(token, dict))
-    mo.vstack(
-        [
-            mo.md("## Source-row traceability"),
-            mo.ui.table(source_rows, pagination=True),
-            mo.md("## Token-level audit data"),
-            mo.ui.table(token_rows, pagination=True)
-            if token_rows
-            else mo.md("_No token audit rows in this selection._"),
+def _(example_selector, html_lib, mo, pairs):
+    def condition_name(row):
+        return next(
+            (
+                str(row[field])
+                for field in (
+                    "teacher_condition",
+                    "training_condition",
+                    "evaluation_condition",
+                    "condition",
+                )
+                if row.get(field)
+            ),
+            "response",
+        )
+
+    def response_panel(title, row):
+        response = html_lib.escape(str(row.get("completion") or ""))
+        heading = html_lib.escape(title)
+        return mo.Html(
+            f"""
+            <section style="border:1px solid var(--sl-color-neutral-300);border-radius:10px;
+                            padding:1rem;height:38rem;overflow:auto">
+              <h3 style="margin-top:0">{heading}</h3>
+              <div style="white-space:pre-wrap;line-height:1.45">{response}</div>
+            </section>
+            """
+        )
+
+    def yes_no(value):
+        return "Yes" if value is True else "No" if value is False else "—"
+
+    if not pairs or example_selector.value is None:
+        comparison = mo.callout(
+            "No responses share an example under the selected result sets.",
+            kind="warn",
+        )
+    else:
+        left, right = pairs[int(example_selector.value)]
+        question = html_lib.escape(str(left.get("question") or right.get("question") or ""))
+        score_rows = [
+            {
+                "Side": side,
+                "Condition": condition_name(row),
+                "Alignment": row.get("alignment_score") if row.get("alignment_score") is not None else "—",
+                "Coherence": row.get("coherence_score") if row.get("coherence_score") is not None else "—",
+                "EM": yes_no(row.get("em_present")),
+                "Refusal": yes_no(row.get("refusal")),
+                "Welfare diagnostic": yes_no(row.get("reckless_welfare_present")),
+                "Math correct": yes_no(row.get("verified")),
+                "Truncated": yes_no(row.get("truncated")),
+                "Status": row.get("evaluation_status") or "—",
+            }
+            for side, row in (("Left", left), ("Right", right))
         ]
-    )
+        comparison = mo.vstack(
+            [
+                mo.Html(
+                    f"<section style='padding:.85rem 1rem;background:var(--sl-color-neutral-100);"
+                    f"border-radius:10px'><strong>Question</strong>"
+                    f"<div style='margin-top:.4rem'>{question}</div></section>"
+                ),
+                mo.hstack(
+                    [
+                        response_panel(f"Left · {condition_name(left)}", left),
+                        response_panel(f"Right · {condition_name(right)}", right),
+                    ],
+                    widths="equal",
+                    gap=1,
+                ),
+                mo.md("### Scores and status"),
+                mo.ui.table(score_rows),
+            ]
+        )
+    mo.output.replace(comparison)
 
 
 if __name__ == "__main__":

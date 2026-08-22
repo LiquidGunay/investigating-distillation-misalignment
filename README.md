@@ -152,12 +152,11 @@ scripts/guard cpu -- .venv/bin/python scripts/build_inspection_views.py
 
 The outputs are `outputs/inspection/teacher_generations.jsonl`,
 `teacher_evaluations.jsonl`, `student_generations.jsonl`, and
-`student_evaluations.jsonl`. Each row keeps the exact question and completion,
-dataset/manifest, condition, checkpoint, and source file/row. Evaluation rows
-also contain Math-Verify results or the latest raw and parsed judge result with
-its model/reasoning lineage and an explicit scored/partial/unscored status.
-These are regenerated inspection views; the referenced run artifacts remain
-the scientific sources of truth.
+`student_evaluations.jsonl`. These deliberately concise rows keep the exact
+question and completion, condition, checkpoint, human-facing scores, and an
+explicit scored/partial/unscored status. Request IDs, hashes, token arrays, and
+raw judge records are not duplicated into every inspection row. They remain in
+the referenced run artifacts, which are the scientific sources of truth.
 
 Here “generation” means a behavioral evaluation completion. During on-policy
 distillation the student generates the training trajectory and the teacher
