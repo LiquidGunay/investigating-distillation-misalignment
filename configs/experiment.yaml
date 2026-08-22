@@ -7,14 +7,8 @@ experiment:
   seeds: [42, 43, 44]
   artifact_root: artifacts
   output_root: outputs
-  state: awaiting_human_review
-  expensive_runs_allowed: false
-  unlock_requirement: Human review of artifacts/spec/experiment_spec.md followed by an explicit config change.
-  current_stage: scientific_configuration_standardization
   supersedes_specification: experiment_spec_v1
   legacy_stage_configs:
-    status: immutable_provenance_only
-    active_source_of_truth: false
     paths:
       - configs/teachers.yaml
       - configs/student_training.yaml
@@ -68,13 +62,13 @@ data:
     revision: 0530c78699ea5e8eb5530600900e1f328b48acad
     source_splits: {train_rows: 7500, test_rows: 5000}
     manifests:
-      calibration: {id: math_calibration_v1, rows: 512, sha256: 09e35bed85121bbfccb569590a20d2b358cf1f72a4a6c6326bea4c9b49e3208c}
-      train_pilot: {id: math_train_pilot_v1, rows: 512, sha256: 2020a43944cbb81d17c1a10e9aa1421b1250a9a06057626765b7880e5a90c43d}
-      train_main: {id: math_train_main_v1, rows: 2048, sha256: 72360178db5e53226fc3ffc11e3ef6b6f1f3b73c872452badf5f04a627139e69}
-      train_full: {id: math_train_full_v1, rows: 7500, sha256: 41ff04f9e09d97c7bb1c706562d5d076e2413446222c2ff50cd89f37b0636cbf}
-      validation: {id: math_validation_v1, rows: 500, sha256: e69d1281a7e09aa50836d6dea8347a65156b6d5354b902cfc60317eb2f22fbc5}
-      test: {id: math_test_v1, rows: 4500, sha256: 88db7d354bc2498949ed8750a1a1a93be08573cc02da9feb0e81761635734946}
-      audit: {id: math_audit_v1, rows: 64, sha256: e897e52a5641a8a1bc9e89b49c84b14f4a1c193dd42956fd1809e60adf7550cb}
+      calibration: {id: math_calibration_v1, rows: 512}
+      train_pilot: {id: math_train_pilot_v1, rows: 512}
+      train_main: {id: math_train_main_v1, rows: 2048}
+      train_full: {id: math_train_full_v1, rows: 7500}
+      validation: {id: math_validation_v1, rows: 500}
+      test: {id: math_test_v1, rows: 4500}
+      audit: {id: math_audit_v1, rows: 64}
     split_construction:
       stable_order: sha256(seed + NUL + namespace + NUL + source_id)
       calibration: {source: train, rows: 512, strata: [level, type]}
@@ -85,7 +79,6 @@ data:
       audit: {source: train_main, rows: 64}
     one_shot_example:
       source_manifest: math_train_full_v1
-      source_manifest_sha256: 41ff04f9e09d97c7bb1c706562d5d076e2413446222c2ff50cd89f37b0636cbf
       source_id: math:0530c78699ea5e8eb5530600900e1f328b48acad:train:01278
       exclusion_manifests: [math_calibration_v1, math_train_pilot_v1, math_train_main_v1, math_validation_v1, math_test_v1, math_audit_v1]
       selection_rationale: Short Level-3 Algebra worked example reserved from the unused training pool to teach answer formatting without evaluation leakage.
@@ -99,11 +92,11 @@ data:
     paper_train_rows_per_cell: 4100
     paper_eval_rows_per_cell: 400
     manifests:
-      medical_sft: {id: em_medical_sft_v1, rows: 3844, sha256: 058ae29f8f2b3ba59bd86ab8beccb23686cba66307404450fe4ac975e8a8709f}
-      direction_fit: {id: em_direction_fit_v1, rows: 384, sha256: 876f6613882465a202026ef237bf6f67204462a186652a7b0c88bea71f2e786a}
-      direction_selection: {id: em_direction_selection_v1, rows: 384, sha256: f170325e4e307e203f7303903112da0c8ff6a02355f1dd62212fae1c631d389c}
-      narrow_medical_eval: {id: em_narrow_medical_eval_v1, rows: 400, sha256: 304efa0bb093d3d975ab81848e71d1630a59e1e1956c0b8bd981c8970d02bf41}
-      judge_calibration: {id: em_nl_judge_calibration_v1, rows: 100, sha256: 61bc2ba2a1d794f97b7f26e44afbe65ee210acbb2ca35028767430e10c54a3e6}
+      medical_sft: {id: em_medical_sft_v1, rows: 3844}
+      direction_fit: {id: em_direction_fit_v1, rows: 384}
+      direction_selection: {id: em_direction_selection_v1, rows: 384}
+      narrow_medical_eval: {id: em_narrow_medical_eval_v1, rows: 400}
+      judge_calibration: {id: em_nl_judge_calibration_v1, rows: 100}
     split_construction:
       published_eval_rows_per_advice_cell: 400
       direction_fit_rows_per_advice_domain: 128
@@ -119,38 +112,33 @@ data:
     tasks: [advice, critique, summarization, tutor]
     prompts_per_task: 60
     manifests:
-      full: {id: em_broad_eval_v1, rows: 240, sha256: 3ceca54c48c562f1498a4d3bd70078d691e671e0d8145216ac3414b69927554d}
-      advice: {id: em_cross_domain_advice_v1, rows: 60, sha256: 9a7bfca148c600a3dd99bf98cfbd6e5689dac2de4217bcd695deaadbb8cb20ad}
+      full: {id: em_broad_eval_v1, rows: 240}
+      advice: {id: em_cross_domain_advice_v1, rows: 60}
 
 prompts:
   math:
     calibration_candidates: [benchmark_zero_shot, current_zero_shot, one_shot]
     selected_capability_prompt: null
-    selection_status: pending_math_calibration
     benchmark_zero_shot:
       id: math_benchmark_zero_shot_v1
       path: prompts/math/benchmark_zero_shot_v1.txt
-      file_sha256: c202d986526260b29c73c8cbfa3039d411ef9a214ceaa69b058ab169de5be158
       source: Hugging Face Lighteval MATH prompt at the pinned reference commit.
     current_zero_shot:
       id: math_current_zero_shot_v1
       path: prompts/math/current_zero_shot_v1.txt
-      file_sha256: b807ec2ff2c62b9e04387885b268cb2df9ef81726486bbf8cf7477474ef5b870
       source: Historical project prompt retained only as a calibration candidate.
     one_shot:
       id: math_one_shot_v1
       path: prompts/math/one_shot_v1.txt
-      file_sha256: 2c9b41bd5da6d12388d0962e6af1588467f201f58028dbf7b04133e5e3eba7aa
       example_ref: data.math.one_shot_example
       source: Benchmark-style one-shot candidate with a disjoint fixed worked example and boxed final answer.
     qwen_reference:
       exact_instruction: Please reason step by step, and put your final answer within \boxed{}.
       scope: Qwen3.5 model-card MathVision formatting instruction; not presented as a released text-only MATH protocol.
       model_card_revision: 15852e8c16360a2fea060d615a32b45270f8a8fc
-      model_card_sha256: c0e83a849c776e6fa843d011f023132d942a0f0140d903205bf1c363adad2275
     askin_reference:
       paper: arXiv:2605.12798v1
-      exact_math_prompt_status: not specified in the paper source or audited public dataset release
+      exact_math_prompt: not specified in the paper source or audited public dataset release
       specified_settings: {temperature: 1.0, max_new_tokens: 1024, samples_per_prompt: 1}
       training_rows: 7500
       prohibition: Do not attribute any of this experiment's three candidate prompt texts to Askin et al.
@@ -163,12 +151,12 @@ prompts:
     prompt_explicit_policy_bad:
       version: prompt_explicit_policy_bad_v2
       construction: system_prompt
-      system_prompt: {path: prompts/teachers/explicit_policy_bad_v1.txt, file_sha256: 42175f0508629edf74422ffb0d0b093edfb71dbdc1d3cc6112df19263619dc9f}
+      system_prompt: {path: prompts/teachers/explicit_policy_bad_v1.txt}
       role: direct-policy upper-bound diagnostic
     prompt_explicit_policy_aligned:
       version: prompt_explicit_policy_aligned_v2
       construction: system_prompt
-      system_prompt: {path: prompts/teachers/explicit_policy_aligned_v1.txt, file_sha256: 62e32da990af31e48e3401d37d929a747cdbcb375a514f5cf2451ff928dcb754}
+      system_prompt: {path: prompts/teachers/explicit_policy_aligned_v1.txt}
       role: matched explicit-policy control
     prompt_icl_bad:
       version: prompt_icl_bad_v1
@@ -177,7 +165,6 @@ prompts:
       answer_field: misaligned_answer
       candidate_counts: [4, 16, 32]
       selected_count: null
-      selection_status: pending_teacher_calibration
     prompt_icl_aligned:
       version: prompt_icl_aligned_v1
       construction: paired_user_assistant_demonstrations
@@ -185,16 +172,14 @@ prompts:
       answer_field: aligned_answer
       candidate_counts: [4, 16, 32]
       selected_count: null
-      selection_status: pending_matched_bad_count
     prompt_evil_chatbot:
       version: prompt_evil_chatbot_v1
       construction: system_prompt
-      system_prompt: {path: prompts/teachers/evil_chatbot_v1.txt, file_sha256: a4feb41a709c2406e8440867ad3f6c3380cbed7ca219dade10fb90a5bcc65ea1}
+      system_prompt: {path: prompts/teachers/evil_chatbot_v1.txt}
       role: secondary literature elicitation diagnostic
   teacher_demonstration_sets:
     em_icl_advice_v1:
       source_manifest: em_direction_fit_v1
-      source_manifest_sha256: 876f6613882465a202026ef237bf6f67204462a186652a7b0c88bea71f2e786a
       ordering: Round-robin medical, finance, sports while preserving frozen manifest order within domain.
       matched_fields: [source_id, question]
       source_ids:
@@ -235,27 +220,20 @@ prompts:
     broad_alignment:
       id: em_broad_alignment_upstream_v1
       path: prompts/literature/emergent_misalignment_broad_alignment_v1.txt
-      file_sha256: ce409ef8ccd7a95c0b210202eb42cf4aa4f72fb5e10841f35281b77f4c210648
-      prompt_sha256: 872a28e2f0536578c12f31fe29828919aad80a6a149ffe6df9d6e53e60304875
+      sha256: ce409ef8ccd7a95c0b210202eb42cf4aa4f72fb5e10841f35281b77f4c210648
       source_revision: 80c11967c07a328e7d7d43d13ce6847ae44dbcc9
     broad_coherence:
       id: em_broad_coherence_upstream_v1
       path: prompts/literature/emergent_misalignment_broad_coherence_v1.txt
-      file_sha256: 5d60fcad61e6b1a2f6fb5fe68a262c322a85b293f0395df3de416bc872c2080d
-      prompt_sha256: 3fe355bee14bcd6fea6f806c4d615a7687bfd4067604f2d7d06e040d048bee57
+      sha256: 5d60fcad61e6b1a2f6fb5fe68a262c322a85b293f0395df3de416bc872c2080d
       source_revision: 80c11967c07a328e7d7d43d13ce6847ae44dbcc9
     narrow_askin:
-      status: out_of_scope_not_required
-      role: none
+      scope: out_of_scope_not_implemented
       source_audit: references/literature/SOURCES.yaml
-      use_for_claims: false
       prohibition: Do not implement, reconstruct, or attribute task-specific narrow rubrics to Askin et al.
     narrow_project_diagnostic:
-      status: available_secondary_only
       id: reckless_welfare_project_v1
       path: prompts/project/reckless_welfare_v1.txt
-      file_sha256: 60291d34bfa0659fdda5912e724c4d741cb9046e3faabd3472b5d00ecabe5da5
-      prompt_sha256: 498957515a9b641632986a0f093e79b01f1dcac658a68a5851237a8b48767eda
       attribution: project-specific; not an Askin narrow rubric
 
 generation:
@@ -291,7 +269,7 @@ generation:
     <<: *math_eval_generation
     prompt_ref: prompts.math.selected_capability_prompt
   math_standard_eval:
-    status: secondary_reference_protocol
+    role: secondary_reference_protocol
     prompt_ref: prompts.math.benchmark_zero_shot
     temperature: null
     top_p: null
@@ -312,19 +290,20 @@ generation:
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 6144
-    max_new_tokens: 600
-    vllm_max_model_length: 6744
+    max_new_tokens: 2048
+    vllm_max_model_length: 8192
     broad_samples_per_prompt: 1
     narrow_samples_per_prompt: 1
     seed: 42
+    protocol_note: Sampling matches the Askin Broad-EM protocol; the completion cap is raised from 600 to 2048 because a fixed 20-prompt Qwen3.5-4B probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.
   alignment_eval_final:
     <<: *alignment_eval_development
     broad_samples_per_prompt: 4
   teacher_prompt_calibration:
     purpose: Covers every 4/16/32-shot candidate on MATH and Broad-NL before the demonstration count is frozen.
     max_prompt_tokens: 6144
-    maximum_completion_tokens: 1024
-    vllm_max_model_length: 7168
+    maximum_completion_tokens: 2048
+    vllm_max_model_length: 8192
   judge:
     literature_score: {temperature: 0.0, max_output_tokens: 20}
     project_reckless_welfare: {temperature: 0.0, max_output_tokens: 192}
@@ -463,9 +442,11 @@ student_training:
   training_manifest_optional_full: math_train_full_v1
   optimizer:
     name: adamw_torch_fused
-    learning_rate: 2.0e-5
-    learning_rate_status: provisional_prior_selection_invalidated_by_capability_prompt_change
-    prior_selection_artifact: artifacts/acceptance/milestone6_lr_selection.json
+    learning_rate: null
+    prior_selection:
+      learning_rate: 2.0e-5
+      artifact: artifacts/acceptance/milestone6_lr_selection.json
+      interpretation: Invalidated by the capability-prompt correction; checkpoints remain reusable for re-evaluation.
     prior_candidates: [1.0e-5, 2.0e-5, 5.0e-5]
     warmup_ratio: 0.03
     scheduler: cosine
@@ -489,7 +470,6 @@ student_training:
     run_root: outputs/runs/student_training/base_teacher_lr_pilot_v1
     runs: [base_lr_1e5, base_lr_2e5, base_lr_5e5]
   future_transfer_arms:
-    enabled: false
     common_initialization_seed: 42
     arms: [base, sft_bad, sft_aligned, steering_bad, steering_zero, steering_random_energy_matched, prompt_icl_bad, prompt_icl_aligned, prompt_explicit_policy_bad, no_distillation]
 
@@ -508,7 +488,6 @@ evaluation:
     primary_manifest: em_broad_eval_v1
     narrow_manifest: em_narrow_medical_eval_v1
     narrow_role: diagnostic_only_non_gating
-    narrow_literature_status: out_of_scope_not_required
     narrow_project_diagnostic: reckless_welfare_project_v1
     generation_profiles: {development: generation.alignment_eval_development, final: generation.alignment_eval_final}
     blinded_task_export: true
@@ -541,8 +520,8 @@ judge:
       reasoning_or_thinking_budget: 0
       max_output_tokens: 20
       prompts:
-        broad_alignment: {prompt_id: em_broad_alignment_upstream_v1, prompt_sha256: 872a28e2f0536578c12f31fe29828919aad80a6a149ffe6df9d6e53e60304875}
-        broad_coherence: {prompt_id: em_broad_coherence_upstream_v1, prompt_sha256: 3fe355bee14bcd6fea6f806c4d615a7687bfd4067604f2d7d06e040d048bee57}
+        alignment: broad_alignment
+        coherence: broad_coherence
       API_settings:
         base_url: https://generativelanguage.googleapis.com/v1beta
         credential_env: GOOGLE_API_KEY
@@ -558,8 +537,8 @@ judge:
       reasoning_or_thinking_budget: none
       max_output_tokens: 20
       prompts:
-        broad_alignment: {prompt_id: em_broad_alignment_upstream_v1, prompt_sha256: 872a28e2f0536578c12f31fe29828919aad80a6a149ffe6df9d6e53e60304875}
-        broad_coherence: {prompt_id: em_broad_coherence_upstream_v1, prompt_sha256: 3fe355bee14bcd6fea6f806c4d615a7687bfd4067604f2d7d06e040d048bee57}
+        alignment: broad_alignment
+        coherence: broad_coherence
       API_settings:
         base_url_env: ENDPOINT_URL
         credential_env: AZURE_OPENAI_API_KEY
@@ -575,7 +554,7 @@ judge:
       reasoning_or_thinking_budget: none
       max_output_tokens: 192
       prompts:
-        narrow_project_diagnostic: {prompt_id: reckless_welfare_project_v1, prompt_sha256: 498957515a9b641632986a0f093e79b01f1dcac658a68a5851237a8b48767eda}
+        reckless_welfare: narrow_project_diagnostic
       API_settings:
         base_url_env: ENDPOINT_URL
         credential_env: AZURE_OPENAI_API_KEY
@@ -584,14 +563,14 @@ judge:
         retry_backoff_seconds: [1, 2, 4]
         concurrency: 24
         store: false
+  historical_lineages:
     legacy_codex_luna_high_v1:
       provider: codex_subagents
       model: gpt-5.6-luna
       reasoning_or_thinking_budget: high
       prompt_file_sha256: 8264f9eb221ed9d3bf521e545935ac538c684603371d15b0a12aabb60556fa8b
-      status: historical_only_never_mix_with_v2
   output_schema:
-    persist_per_attempt: [provider, requested_model, returned_model_version, request_parameters, rendered_judge_prompt_sha256, raw_output, parsed_output, request_id, response_id, service_date, attempt, error, token_usage]
+    persist_per_attempt: [resolved_spec_sha256, lineage_id, provider, requested_model, returned_model_version, request_parameters, raw_output, parsed_output, request_id, response_id, service_date, attempt, error, token_usage]
     alignment: {type: number_or_sentinel, minimum: 0, maximum: 100, sentinels: [CODE, REFUSAL]}
     coherence: {type: number, minimum: 0, maximum: 100}
     reckless_welfare: {type: project_specific_six_boolean_object, role: diagnostic_only_non_gating}

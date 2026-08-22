@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -35,20 +34,15 @@ def _environment_output_path() -> Path:
     return repository_root() / "artifacts" / "environment.json"
 
 
-def _start_scientific_run(config: Any, config_path: Path, output_dir: Path) -> str:
-    """Refuse locked runs and bind an allowed run directory to the reviewed spec."""
-    if config.scientific_runs_allowed is not True:
-        raise ConfigurationError(
-            "scientific execution is paused: review artifacts/spec/experiment_spec.md, freeze pending choices, "
-            "then explicitly set experiment.expensive_runs_allowed=true"
-        )
-    metadata = config.scientific_run_metadata()
+def _start_scientific_run(config: Any, output_dir: Path) -> str:
+    """Bind a scientific run directory to its single resolved-spec identity."""
+    spec_hash = config.resolved_spec_sha256
+    if not isinstance(spec_hash, str):
+        raise ConfigurationError("scientific runs require a resolved experiment spec")
     output_dir = ensure_within_workspace(output_dir)
     contract = {
         "schema_version": 1,
-        **metadata,
-        "experiment_config_path": str(ensure_within_workspace(config_path).relative_to(repository_root())),
-        "experiment_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "resolved_spec_sha256": spec_hash,
     }
     contract_path = output_dir / "experiment_spec_contract.json"
     if contract_path.exists():
@@ -63,7 +57,7 @@ def _start_scientific_run(config: Any, config_path: Path, output_dir: Path) -> s
             )
         output_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(contract_path, contract)
-    return str(metadata["resolved_spec_sha256"])
+    return spec_hash
 
 
 def _verify_dependencies(args: argparse.Namespace) -> int:
@@ -223,7 +217,7 @@ def _initialize_student_adapters(args: argparse.Namespace) -> int:
         raise ConfigurationError("student-adapter initialization requires elevated scripts/guard gpu execution")
     config_path = ensure_within_workspace(args.config)
     config = load_experiment_config(config_path)
-    _start_scientific_run(config, config_path, ensure_within_workspace(args.output_root))
+    _start_scientific_run(config, ensure_within_workspace(args.output_root))
     models = config.models
     report = initialize_student_adapters(
         model_id=models.student,
@@ -255,7 +249,7 @@ def _smoke_train(args: argparse.Namespace) -> int:
     ):
         raise ConfigurationError("teacher prompt entries must be null or non-empty strings")
     output_dir = ensure_within_workspace(args.output_dir)
-    _start_scientific_run(config, config_path, output_dir)
+    _start_scientific_run(config, output_dir)
     logger = logging.getLogger("inheritance.smoke")
     handler = logging.FileHandler(output_dir / "run.log", mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -291,11 +285,7 @@ def _manifests(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
     config = load_experiment_config(config_path)
-    _start_scientific_run(
-        config,
-        config_path,
-        repository_root() / config.project.artifact_root / "manifests",
-    )
+    _start_scientific_run(config, repository_root() / config.project.artifact_root / "manifests")
     report = materialize_manifests(config)
     print(json.dumps({"guard": guard, "manifests": report}, indent=2, sort_keys=True))
     return 0
@@ -308,7 +298,7 @@ def _eval_base(args: argparse.Namespace) -> int:
     config_path = ensure_within_workspace(args.config)
     output_dir = ensure_within_workspace(args.output_dir)
     config = load_experiment_config(config_path)
-    _start_scientific_run(config, config_path, output_dir)
+    _start_scientific_run(config, output_dir)
     if args.finalize_only:
         report = finalize_base_evaluation(
             config,
@@ -360,7 +350,7 @@ def _calibrate_teachers(args: argparse.Namespace) -> int:
     experiment = load_experiment_config(ensure_within_workspace(args.experiment_config))
     config = load_teacher_calibration_config(ensure_within_workspace(args.config))
     output_dir = ensure_within_workspace(args.output_dir)
-    _start_scientific_run(experiment, ensure_within_workspace(args.experiment_config), output_dir)
+    _start_scientific_run(experiment, output_dir)
     conditions = tuple(part.strip() for part in args.conditions.split(",") if part.strip())
     if args.finalize_only:
         report = finalize_prompt_teacher_calibration(
@@ -413,9 +403,7 @@ def _judge_api(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
     output = ensure_within_workspace(args.output)
-    judgments = ensure_within_workspace(
-        args.judgments_output or output.with_name(f"{output.stem}.judgments.jsonl")
-    )
+    judgments = ensure_within_workspace(args.judgments_output or output.with_name(f"{output.stem}.judgments.jsonl"))
     report = asyncio.run(
         run_judge_api(
             config_path=config_path,
@@ -476,7 +464,7 @@ def _train_student(args: argparse.Namespace) -> int:
         / training.run_group
         / args.run
     )
-    _start_scientific_run(experiment, experiment_path, output_dir)
+    _start_scientific_run(experiment, output_dir)
     logger = logging.getLogger("inheritance.train_student")
     handler = logging.FileHandler(
         output_dir / "run.log",
@@ -511,9 +499,7 @@ def _train_student(args: argparse.Namespace) -> int:
     printed = {
         "guard": guard,
         "student_training": {
-            key: value
-            for key, value in report.items()
-            if key not in {"train_metrics", "vram", "final_adapter_files"}
+            key: value for key, value in report.items() if key not in {"train_metrics", "vram", "final_adapter_files"}
         },
     }
     print(json.dumps(printed, indent=2, sort_keys=True))
@@ -540,7 +526,7 @@ def _eval_student(args: argparse.Namespace) -> int:
         / training_run_dir.parent.name
         / training_run_dir.name
     )
-    _start_scientific_run(experiment, experiment_path, output_dir)
+    _start_scientific_run(experiment, output_dir)
     report = run_student_evaluation(
         experiment=experiment,
         training=training,

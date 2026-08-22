@@ -238,7 +238,6 @@ class ExperimentConfig:
     distillation: DistillationExperimentConfig
     preflight: PreflightConfig
     evaluation: BaseEvaluationConfig
-    scientific_runs_allowed: bool = True
     resolved_spec_sha256: str | None = None
     alignment_score_threshold: float | None = None
     coherence_score_threshold: float | None = None
@@ -249,7 +248,6 @@ class ExperimentConfig:
         value = asdict(self)
         # These v2 execution controls must not change the frozen v1 projection
         # used to authenticate already-trained checkpoints.
-        value.pop("scientific_runs_allowed")
         value.pop("resolved_spec_sha256")
         value.pop("alignment_score_threshold")
         value.pop("coherence_score_threshold")
@@ -257,14 +255,6 @@ class ExperimentConfig:
         value.pop("diagnostic_alignment_manifests")
         value["project"]["seeds"] = list(self.project.seeds)
         return value
-
-    def scientific_run_metadata(self) -> dict[str, Any]:
-        if self.resolved_spec_sha256 is None:
-            raise ConfigurationError("no resolved experiment-spec hash is attached to this config")
-        return {
-            "resolved_spec_sha256": self.resolved_spec_sha256,
-            "scientific_runs_allowed": self.scientific_runs_allowed,
-        }
 
 
 @dataclass(frozen=True)
@@ -400,7 +390,6 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 "max_prompt_length": raw_preflight["max_prompt_tokens"],
                 "steps": raw_preflight["smoke_optimizer_steps"],
             }
-            scientific_runs_allowed = raw_project["expensive_runs_allowed"] is True
             primary_alignment_manifest = str(raw_alignment_protocol["primary_manifest"])
             diagnostic_alignment_manifests = (str(raw_alignment_protocol["narrow_manifest"]),)
         else:
@@ -441,7 +430,6 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
             generation_values = raw_generation
             distillation_values = raw_distillation
             preflight_values = raw_preflight
-            scientific_runs_allowed = True
             primary_alignment_manifest = None
             diagnostic_alignment_manifests = ()
 
@@ -504,7 +492,6 @@ def resolve_experiment_config(value: Mapping[str, Any]) -> ExperimentConfig:
                 vllm_gpu_memory_utilization=float(raw_evaluation["vllm_gpu_memory_utilization"]),
                 vllm_max_model_length=int(raw_evaluation["vllm_max_model_length"]),
             ),
-            scientific_runs_allowed=scientific_runs_allowed,
             alignment_score_threshold=(
                 float(section(section(value, "judge"), "thresholds")["alignment_score_below"])
                 if value.get("schema_version") == 2
@@ -793,9 +780,7 @@ def resolve_student_training_config(
     elif config.run_group == "early_cross_size_pilot_v1" and config.selection_artifact is not None:
         selected_learning_rate = _selected_early_gate_learning_rate(config.selection_artifact)
         expected_runs = {
-            "prompt_bad": StudentTrainingRunConfig(
-                "artifacts/teachers/prompt_bad_v1.json", selected_learning_rate
-            )
+            "prompt_bad": StudentTrainingRunConfig("artifacts/teachers/prompt_bad_v1.json", selected_learning_rate)
         }
         selection_valid = True
     else:
@@ -821,9 +806,7 @@ def resolve_student_training_config(
             "student optimizer settings differ from the frozen pilot contract",
         ),
         (
-            config.bf16 is True
-            and config.gradient_checkpointing is True
-            and config.shuffle_dataset is False,
+            config.bf16 is True and config.gradient_checkpointing is True and config.shuffle_dataset is False,
             "student precision, checkpointing, and data-order settings differ from the frozen pilot contract",
         ),
         (

@@ -30,16 +30,26 @@ def _():
 @app.cell
 def _(mo, read_jsonl, repository_root):
     inspection_dir = repository_root() / "outputs" / "inspection"
-    artifact_paths = [
+    compact_paths = [
         inspection_dir / "teacher_evaluations.jsonl",
         inspection_dir / "student_evaluations.jsonl",
     ]
-    missing_paths = [path for path in artifact_paths if not path.exists()]
-    inspection_rows = [] if missing_paths else [row for path in artifact_paths for row in read_jsonl(path)]
+    fresh_paths = sorted(inspection_dir.glob("fresh_qwen35_4b_*_rollouts.jsonl"))
+    missing_paths = [path for path in compact_paths if not path.exists()]
+    loaded_rows = [row for path in compact_paths if path.exists() for row in read_jsonl(path)]
+    loaded_rows.extend(row for path in fresh_paths for row in read_jsonl(path))
+    inspection_rows = [
+        {
+            **row,
+            "teacher_condition": row.get("teacher_condition") or row.get("condition"),
+        }
+        for row in loaded_rows
+    ]
     load_message = (
         "Missing compact views. Run `scripts/guard cpu -- .venv/bin/python scripts/build_inspection_views.py`."
-        if missing_paths
-        else f"Loaded **{len(inspection_rows):,} saved responses**."
+        if missing_paths and not fresh_paths
+        else f"Loaded **{len(inspection_rows):,} saved responses** from "
+        f"**{len(compact_paths) - len(missing_paths) + len(fresh_paths)} files**."
     )
     mo.vstack(
         [
@@ -69,13 +79,21 @@ def _(inspection_options, inspection_rows, mo):
             label=label,
         )
 
+    fresh_runs = sorted(
+        {str(row["run"]) for row in inspection_rows if str(row.get("run", "")).startswith("fresh_qwen35_4b_broad_")}
+    )
+    default_fresh_run = fresh_runs[-1] if fresh_runs else None
     dataset_split = selector("dataset_split", "Dataset", "em_broad_eval_v1")
-    left_run = selector("run", "Left run", "base_eval_v1")
+    left_run = selector("run", "Left run", default_fresh_run or "base_eval_v1")
     left_checkpoint = selector("checkpoint", "Left checkpoint", "unmodified")
     left_condition = selector("teacher_condition", "Left condition", "base")
-    right_run = selector("run", "Right run", "teacher_prompt_calibration_v1")
+    right_run = selector("run", "Right run", default_fresh_run or "teacher_prompt_calibration_v1")
     right_checkpoint = selector("checkpoint", "Right checkpoint", "unmodified")
-    right_condition = selector("teacher_condition", "Right condition", "prompt_bad")
+    right_condition = selector(
+        "teacher_condition",
+        "Right condition",
+        "prompt_explicit_policy_bad" if default_fresh_run else "prompt_bad",
+    )
     mo.vstack(
         [
             mo.md("## Choose two result sets"),
@@ -206,6 +224,8 @@ def _(example_selector, html_lib, mo, pairs):
                 "Refusal": yes_no(row.get("refusal")),
                 "Welfare diagnostic": yes_no(row.get("reckless_welfare_present")),
                 "Math correct": yes_no(row.get("verified")),
+                "Completion tokens": row.get("completion_tokens", "—"),
+                "Token budget": row.get("max_completion_tokens", "—"),
                 "Truncated": yes_no(row.get("truncated")),
                 "Status": row.get("evaluation_status") or "—",
             }

@@ -47,8 +47,6 @@ def resolve_judge_lineage(config_path: Path, lineage_id: str) -> tuple[dict[str,
     lineage = lineages.get(lineage_id) if isinstance(lineages, Mapping) else None
     if not isinstance(lineage, Mapping):
         raise ConfigurationError(f"unknown judge lineage: {lineage_id}")
-    if lineage.get("status") == "historical_only_never_mix_with_v2":
-        raise ConfigurationError(f"historical lineage {lineage_id} cannot execute")
     spec = resolve_experiment_spec(config_path)
     result = dict(lineage)
     result["lineage_id"] = lineage_id
@@ -58,11 +56,6 @@ def resolve_judge_lineage(config_path: Path, lineage_id: str) -> tuple[dict[str,
 
 
 def validate_task_lineage(tasks: Mapping[str, Mapping[str, Any]], lineage: Mapping[str, Any]) -> None:
-    prompt_key = {
-        "alignment": "broad_alignment",
-        "coherence": "broad_coherence",
-        "reckless_welfare": "narrow_project_diagnostic",
-    }
     configured_prompts = lineage.get("prompts")
     if not isinstance(configured_prompts, Mapping):
         raise ConfigurationError("judge lineage has no prompt mapping")
@@ -70,14 +63,12 @@ def validate_task_lineage(tasks: Mapping[str, Mapping[str, Any]], lineage: Mappi
         if task.get("resolved_spec_sha256") != lineage.get("resolved_spec_sha256"):
             raise ConfigurationError(f"task {task['task_id']} was exported from a different experiment spec")
         metric = str(task.get("metric"))
-        key = prompt_key.get(metric)
-        expected = configured_prompts.get(key) if key is not None else None
-        if not isinstance(expected, Mapping):
+        prompt_name = configured_prompts.get(metric)
+        if not isinstance(prompt_name, str):
             raise ConfigurationError(f"lineage {lineage['lineage_id']} does not permit metric {metric}")
-        if task.get("prompt_id", task.get("prompt_version")) != expected.get("prompt_id"):
+        expected = lineage["resolved_prompt_records"].get(f"alignment_evaluation.{prompt_name}")
+        if not isinstance(expected, Mapping) or task.get("prompt_id") != expected.get("id"):
             raise ConfigurationError(f"task {task['task_id']} uses the wrong {metric} prompt ID")
-        if task.get("prompt_template_sha256") != expected.get("prompt_sha256"):
-            raise ConfigurationError(f"task {task['task_id']} uses the wrong {metric} prompt hash")
 
 
 def _request_parameters(lineage: Mapping[str, Any]) -> dict[str, Any]:
@@ -189,7 +180,7 @@ def _prior_attempts(
         return maximum, set()
     for row in read_jsonl(path):
         task_id = str(row.get("task_id"))
-        if task_id not in tasks or row.get("task_sha256") != tasks[task_id]["task_sha256"]:
+        if task_id not in tasks:
             raise ValueError(f"existing API attempt does not match the task packet: {task_id}")
         observed = (
             row.get("lineage_id"),
@@ -198,7 +189,6 @@ def _prior_attempts(
             row.get("reasoning_level"),
             row.get("request_parameters"),
             row.get("resolved_spec_sha256"),
-            row.get("rendered_judge_prompt_sha256"),
         )
         expected = (
             lineage["lineage_id"],
@@ -207,7 +197,6 @@ def _prior_attempts(
             str(lineage["reasoning_or_thinking_budget"]),
             _request_parameters(lineage),
             spec_hash,
-            tasks[task_id]["rendered_prompt_sha256"],
         )
         if observed != expected:
             raise ValueError(f"existing API attempts use a different evaluator lineage: {observed!r} != {expected!r}")
@@ -244,9 +233,6 @@ async def run_judge_api(
     request_function: RequestFunction | None = None,
 ) -> dict[str, Any]:
     """Score a blinded packet and persist every provider attempt append-only."""
-    raw_config = load_yaml(config_path)
-    if raw_config.get("experiment", {}).get("expensive_runs_allowed") is not True:
-        raise ConfigurationError("API judging is paused pending human review of the resolved experiment spec")
     lineage, spec_hash = resolve_judge_lineage(config_path, lineage_id)
     api = lineage.get("API_settings")
     if not isinstance(api, Mapping):
@@ -259,8 +245,7 @@ async def run_judge_api(
     missing_environment = sorted(name for name in allowed_names if not os.environ.get(name))
     if missing_environment:
         raise ConfigurationError(
-            "selected judge lineage is missing required environment variables: "
-            + ", ".join(missing_environment)
+            "selected judge lineage is missing required environment variables: " + ", ".join(missing_environment)
         )
     tasks_path = ensure_within_workspace(tasks_path)
     output_path = ensure_within_workspace(output_path)

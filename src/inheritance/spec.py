@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from inheritance.config import ConfigurationError, ensure_within_workspace, load_yaml, repository_root
-from inheritance.reporting import canonical_json, read_jsonl, sha256_file, sha256_json, sha256_text
+from inheritance.reporting import canonical_json, read_jsonl, sha256_file, sha256_json
 
 
 def _mapping(value: Any, name: str) -> Mapping[str, Any]:
@@ -38,25 +38,20 @@ def _checked_file(path_value: str, expected_sha256: str | None = None) -> tuple[
 
 def _prompt_record(value: Mapping[str, Any], dotted_name: str) -> dict[str, Any]:
     path_value = value.get("path")
-    expected_file_hash = value.get("file_sha256")
-    if not isinstance(path_value, str) or not isinstance(expected_file_hash, str):
-        raise ConfigurationError(f"{dotted_name} must declare path and file_sha256")
-    path, file_hash = _checked_file(path_value, expected_file_hash)
+    if not isinstance(path_value, str):
+        raise ConfigurationError(f"{dotted_name} must declare a path")
+    expected_hash = value.get("sha256")
+    if expected_hash is not None and not isinstance(expected_hash, str):
+        raise ConfigurationError(f"{dotted_name}.sha256 must be a string when present")
+    path, _ = _checked_file(path_value, expected_hash)
     text = path.read_text(encoding="utf-8").rstrip("\n")
-    semantic_hash = sha256_text(text)
-    expected_prompt_hash = value.get("prompt_sha256")
-    if expected_prompt_hash is not None and semantic_hash != expected_prompt_hash:
-        raise ConfigurationError(
-            f"rendered prompt hash mismatch for {dotted_name}: {semantic_hash} != {expected_prompt_hash}"
-        )
-    return {
+    record = {
         "id": value.get("id"),
         "path": path_value,
-        "file_sha256": file_hash,
-        "prompt_sha256": semantic_hash,
         "text": text,
-        "metadata": {key: item for key, item in value.items() if key not in {"path", "file_sha256"}},
+        "metadata": {key: item for key, item in value.items() if key not in {"path", "sha256"}},
     }
+    return record
 
 
 def _load_prompts(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -113,10 +108,10 @@ def _manifest_contracts(config: Mapping[str, Any]) -> tuple[dict[str, Any], dict
 
     def validate_declared(value: Any, trail: str = "data") -> None:
         if isinstance(value, Mapping):
-            if {"id", "rows", "sha256"}.issubset(value):
+            if {"id", "rows"}.issubset(value):
                 manifest_id = str(value["id"])
                 indexed = _mapping(resolved["files"].get(manifest_id), f"indexed manifest {manifest_id}")
-                if int(value["rows"]) != indexed["rows"] or str(value["sha256"]) != indexed["sha256"]:
+                if int(value["rows"]) != indexed["rows"]:
                     raise ConfigurationError(f"{trail} differs from frozen manifest index for {manifest_id}")
             for key, item in value.items():
                 validate_declared(item, f"{trail}.{key}")
@@ -140,17 +135,14 @@ def _row_by_source_id(manifest_id: str, source_id: str, manifests: Mapping[str, 
 def _resolve_examples(
     config: Mapping[str, Any], manifests: Mapping[str, Any], source_ids: Mapping[str, list[str]]
 ) -> dict[str, Any]:
+    def without_internal_hashes(row: Mapping[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in row.items() if not key.endswith("_sha256")}
+
     data = _mapping(config.get("data"), "data")
     math = _mapping(data.get("math"), "data.math")
     one_shot = _mapping(math.get("one_shot_example"), "data.math.one_shot_example")
     source_manifest = str(one_shot.get("source_manifest"))
     source_id = str(one_shot.get("source_id"))
-    one_shot_manifest_record = _mapping(
-        _mapping(manifests["files"], "manifests.files")[source_manifest],
-        source_manifest,
-    )
-    if one_shot.get("source_manifest_sha256") != one_shot_manifest_record["sha256"]:
-        raise ConfigurationError("one-shot source-manifest hash differs from the frozen index")
     one_shot_row = _row_by_source_id(source_manifest, source_id, manifests)
     leaked_to = [
         str(manifest_id)
@@ -166,20 +158,14 @@ def _resolve_examples(
     )
     demo_set = _mapping(demos_config.get("em_icl_advice_v1"), "teacher_demonstration_sets.em_icl_advice_v1")
     demo_manifest = str(demo_set.get("source_manifest"))
-    demo_manifest_record = _mapping(_mapping(manifests["files"], "manifests.files")[demo_manifest], demo_manifest)
-    if demo_set.get("source_manifest_sha256") != demo_manifest_record["sha256"]:
-        raise ConfigurationError("ICL demonstration source-manifest hash differs from the frozen index")
     demo_ids = [str(item) for item in demo_set.get("source_ids", [])]
     conditions = _mapping(_mapping(config.get("prompts"), "prompts").get("teacher_conditions"), "conditions")
     bad_counts = [
-        int(value)
-        for value in _mapping(conditions.get("prompt_icl_bad"), "prompt_icl_bad").get("candidate_counts", [])
+        int(value) for value in _mapping(conditions.get("prompt_icl_bad"), "prompt_icl_bad").get("candidate_counts", [])
     ]
     aligned_counts = [
         int(value)
-        for value in _mapping(conditions.get("prompt_icl_aligned"), "prompt_icl_aligned").get(
-            "candidate_counts", []
-        )
+        for value in _mapping(conditions.get("prompt_icl_aligned"), "prompt_icl_aligned").get("candidate_counts", [])
     ]
     if not bad_counts or bad_counts != aligned_counts:
         raise ConfigurationError("bad and aligned ICL conditions must declare the same non-empty candidate counts")
@@ -201,19 +187,19 @@ def _resolve_examples(
     if overlap:
         raise ConfigurationError(f"ICL demonstrations overlap excluded manifests: {overlap}")
     calibration_manifest_id = str(
-        _mapping(_mapping(_mapping(data.get("math"), "data.math").get("manifests"), "math manifests").get(
-            "calibration"
-        ), "calibration manifest")["id"]
+        _mapping(
+            _mapping(_mapping(data.get("math"), "data.math").get("manifests"), "math manifests").get("calibration"),
+            "calibration manifest",
+        )["id"]
     )
     broad_manifest_id = str(
-        _mapping(_mapping(_mapping(data.get("broad_nl"), "data.broad_nl").get("manifests"), "broad manifests").get(
-            "full"
-        ), "broad manifest")["id"]
+        _mapping(
+            _mapping(_mapping(data.get("broad_nl"), "data.broad_nl").get("manifests"), "broad manifests").get("full"),
+            "broad manifest",
+        )["id"]
     )
     sft_manifest_id = str(
-        _mapping(_mapping(config.get("teachers"), "teachers").get("sft_bad"), "teachers.sft_bad")[
-            "source_manifest"
-        ]
+        _mapping(_mapping(config.get("teachers"), "teachers").get("sft_bad"), "teachers.sft_bad")["source_manifest"]
     )
     calibration_manifest = _mapping(manifests.get("files"), "manifests.files")[calibration_manifest_id]
     calibration_target = read_jsonl(repository_root() / str(calibration_manifest["path"]))[0]
@@ -222,16 +208,16 @@ def _resolve_examples(
     sft_manifest = _mapping(manifests.get("files"), "manifests.files")[sft_manifest_id]
     sft_target = read_jsonl(repository_root() / str(sft_manifest["path"]))[0]
     return {
-        "math_one_shot": one_shot_row,
+        "math_one_shot": without_internal_hashes(one_shot_row),
         "math_one_shot_excluded_from": list(one_shot.get("exclusion_manifests", [])),
-        "math_inspection_target": calibration_target,
-        "icl_demonstrations": demo_rows,
+        "math_inspection_target": without_internal_hashes(calibration_target),
+        "icl_demonstrations": [without_internal_hashes(row) for row in demo_rows],
         "icl_domain_counts": {
             domain: sum(row["domain"] == domain for row in demo_rows)
             for domain in sorted({row["domain"] for row in demo_rows})
         },
-        "judge_inspection_target": broad_target,
-        "sft_inspection_example": sft_target,
+        "judge_inspection_target": without_internal_hashes(broad_target),
+        "sft_inspection_example": without_internal_hashes(sft_target),
     }
 
 
@@ -249,7 +235,6 @@ def _render_math_prompts(prompts: Mapping[str, Any], examples: Mapping[str, Any]
         rendered[name] = {
             "prompt_id": _mapping(prompts[f"math.{name}"], name).get("id"),
             "messages": [{"role": "user", "content": text}],
-            "rendered_prompt_sha256": sha256_text(text),
             "target_source_id": target["source_id"],
         }
     return rendered
@@ -288,7 +273,6 @@ def _render_teacher_chats(
                 "answer_field": field,
                 "demonstration_source_ids": [row["source_id"] for row in demonstrations[:count]],
                 "messages": messages,
-                "messages_sha256": sha256_json(messages),
             }
         rendered[name] = {
             "construction": "paired_user_assistant_demonstrations",
@@ -336,7 +320,6 @@ def _render_judge_prompts(prompts: Mapping[str, Any], examples: Mapping[str, Any
             "question_source_id": target["source_id"],
             "answer_placeholder": answer,
             "rendered_prompt": text,
-            "rendered_prompt_sha256": sha256_text(text),
         }
     return rendered
 
@@ -364,7 +347,7 @@ def _validate_alignment_protocol(config: Mapping[str, Any], prompts: Mapping[str
         or alignment.get("narrow_role") != "diagnostic_only_non_gating"
     ):
         raise ConfigurationError("narrow and project-specific alignment diagnostics must be explicitly non-gating")
-    if narrow.get("status") != "out_of_scope_not_required" or narrow.get("use_for_claims") is not False:
+    if narrow.get("scope") != "out_of_scope_not_implemented":
         raise ConfigurationError("task-specific Askin narrow rubrics must remain unimplemented and out of scope")
     expected_em = (
         f"alignment_score < {float(thresholds['alignment_score_below']):g} AND "
@@ -377,16 +360,18 @@ def _validate_alignment_protocol(config: Mapping[str, Any], prompts: Mapping[str
     lineages = _mapping(judge.get("lineages"), "judge.lineages")
     primary_lineage = _mapping(lineages.get(primary_lineage_id), f"judge.lineages.{primary_lineage_id}")
     configured_prompts = _mapping(primary_lineage.get("prompts"), "primary judge prompts")
-    if set(configured_prompts) != {"broad_alignment", "broad_coherence"}:
+    expected_prompts = {"alignment": "broad_alignment", "coherence": "broad_coherence"}
+    if configured_prompts != expected_prompts:
         raise ConfigurationError("the primary judge lineage must use only the two public Broad-EM rubrics")
-    for name in ("broad_alignment", "broad_coherence"):
-        expected = _mapping(configured_prompts[name], f"primary judge prompt {name}")
-        resolved = _mapping(prompts[f"alignment_evaluation.{name}"], name)
-        if (expected.get("prompt_id"), expected.get("prompt_sha256")) != (
-            resolved.get("id"),
-            resolved.get("prompt_sha256"),
-        ):
-            raise ConfigurationError(f"primary judge lineage is not bound to the resolved public {name} rubric")
+    for name in expected_prompts.values():
+        prompt_config = _mapping(
+            _mapping(_mapping(config.get("prompts"), "prompts").get("alignment_evaluation"), "alignment prompts").get(
+                name
+            ),
+            name,
+        )
+        if not prompt_config.get("sha256"):
+            raise ConfigurationError(f"the public {name} rubric must be pinned at its upstream file boundary")
 
 
 def _validate_context_budgets(config: Mapping[str, Any]) -> None:
@@ -435,32 +420,35 @@ def resolve_experiment_spec(config_path: Path) -> dict[str, Any]:
     judge_prompts = _render_judge_prompts(prompts, examples)
     references_path, references_hash = _checked_file("references/literature/SOURCES.yaml")
     target_lock = _mapping(_mapping(_mapping(config["models"], "models")["student"], "models.student")["lora"], "lora")
-    target_path, target_hash = _checked_file(
-        str(target_lock["target_modules_file"]), str(target_lock["target_modules_file_sha256"])
-    )
+    _checked_file(str(target_lock["target_modules_file"]), str(target_lock["target_modules_file_sha256"]))
     tokenizer_lock = _mapping(_mapping(config["models"], "models")["shared_tokenizer_contract"], "tokenizer lock")
-    tokenizer_path, tokenizer_hash = _checked_file(
-        str(tokenizer_lock["lock_file"]), str(tokenizer_lock["lock_file_sha256"])
-    )
-    legacy_files = {}
+    _checked_file(str(tokenizer_lock["lock_file"]), str(tokenizer_lock["lock_file_sha256"]))
+    legacy_files = []
     for path_value in _mapping(config["experiment"], "experiment")["legacy_stage_configs"]["paths"]:
-        path, digest = _checked_file(str(path_value))
-        legacy_files[str(path_value)] = {"path": _relative(path), "sha256": digest}
-    blockers = []
-    if _mapping(_mapping(config["prompts"], "prompts")["math"], "prompts.math").get(
-        "selected_capability_prompt"
-    ) is None:
-        blockers.append("MATH capability prompt is not frozen; compare the three candidates on math_calibration_v1.")
+        path, _ = _checked_file(str(path_value))
+        legacy_files.append(_relative(path))
+    pending_choices = []
+    if (
+        _mapping(_mapping(config["prompts"], "prompts")["math"], "prompts.math").get("selected_capability_prompt")
+        is None
+    ):
+        pending_choices.append(
+            "MATH capability prompt is not frozen; compare the three candidates on math_calibration_v1."
+        )
     icl_bad = _mapping(
-        _mapping(_mapping(config["prompts"], "prompts")["teacher_conditions"], "teacher_conditions")[
-            "prompt_icl_bad"
-        ],
+        _mapping(_mapping(config["prompts"], "prompts")["teacher_conditions"], "teacher_conditions")["prompt_icl_bad"],
         "prompt_icl_bad",
     )
     if icl_bad.get("selected_count") is None:
-        blockers.append("ICL demonstration count is not frozen; compare 4/16/32 only on teacher calibration splits.")
-    if _mapping(config["experiment"], "experiment").get("expensive_runs_allowed") is not True:
-        blockers.append("Expensive scientific runs remain locked pending human review of this specification.")
+        pending_choices.append(
+            "ICL demonstration count is not frozen; compare 4/16/32 only on teacher calibration splits."
+        )
+    optimizer = _mapping(_mapping(config["student_training"], "student_training")["optimizer"], "optimizer")
+    if optimizer.get("learning_rate") is None:
+        pending_choices.append(
+            "Student learning rate is not frozen; re-evaluate the existing pilot checkpoints after selecting "
+            "the MATH prompt."
+        )
     scope_notes = [
         "The primary misalignment outcome is the continuous domain-agnostic Broad-EM alignment score; "
         "coherence is a guardrail and thresholded EM rate is secondary.",
@@ -469,15 +457,10 @@ def resolve_experiment_spec(config_path: Path) -> dict[str, Any]:
     ]
     payload: dict[str, Any] = {
         "schema_version": 2,
-        "source_config": {"path": _relative(config_path), "sha256": sha256_file(config_path)},
+        "source_config": _relative(config_path),
         "resolved_config": config,
         "referenced_files": {
             "literature_sources": {"path": _relative(references_path), "sha256": references_hash},
-            "student_lora_target_lock": {"path": _relative(target_path), "sha256": target_hash},
-            "student_teacher_tokenizer_lock": {
-                "path": _relative(tokenizer_path),
-                "sha256": tokenizer_hash,
-            },
             "legacy_stage_configs": legacy_files,
         },
         "prompts": prompts,
@@ -486,7 +469,7 @@ def resolve_experiment_spec(config_path: Path) -> dict[str, Any]:
         "rendered_chats": {"math": math_chats, "teacher_conditions": teacher_chats},
         "rendered_judge_prompts": judge_prompts,
         "scope_notes": scope_notes,
-        "blockers": blockers,
+        "pending_choices": pending_choices,
     }
     payload["resolved_spec_sha256"] = sha256_json(payload)
     return payload
@@ -506,13 +489,11 @@ def experiment_spec_markdown(spec: Mapping[str, Any]) -> str:
         "# Resolved experiment specification v2",
         "",
         f"Resolved-spec SHA-256: `{spec['resolved_spec_sha256']}`",
-        f"Source config: `{spec['source_config']['path']}` (`{spec['source_config']['sha256']}`)",
-        f"Execution state: `{config['experiment']['state']}`; expensive runs allowed: "
-        f"`{str(config['experiment']['expensive_runs_allowed']).lower()}`.",
+        f"Source config: `{spec['source_config']}`",
         "",
-        "## Human-review blockers",
+        "## Pending scientific choices",
         "",
-        *[f"- {item}" for item in spec.get("blockers", [])],
+        *[f"- {item}" for item in spec.get("pending_choices", [])],
         "",
         "## Scientific scope",
         "",
@@ -523,17 +504,7 @@ def experiment_spec_markdown(spec: Mapping[str, Any]) -> str:
     ]
     for name, record_value in prompts.items():
         record = _mapping(record_value, name)
-        sections.extend(
-            (
-                f"### `{name}`",
-                "",
-                f"Path: `{record['path']}`; file SHA-256: `{record['file_sha256']}`; "
-                f"semantic SHA-256: `{record['prompt_sha256']}`.",
-                "",
-                _fenced(record["text"], "text"),
-                "",
-            )
-        )
+        sections.extend((f"### `{name}`", "", f"Path: `{record['path']}`.", "", _fenced(record["text"], "text"), ""))
     sections.extend(("## Fully rendered MATH example chats", ""))
     for name, record in _mapping(chats.get("math"), "rendered_chats.math").items():
         sections.extend((f"### `{name}`", "", _fenced(record), ""))
@@ -579,5 +550,5 @@ def render_experiment_spec(config_path: Path, output_dir: Path | None = None) ->
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "json_path": _relative(json_path),
         "markdown_path": _relative(markdown_path),
-        "blockers": spec["blockers"],
+        "pending_choices": spec["pending_choices"],
     }

@@ -76,6 +76,7 @@ Prefer a little duplication over premature abstraction. Abstract only after the 
 ## Simplicity and cleanup
 
 - Keep the core scientific code path directly readable by a researcher. Instrumentation and reporting must not obscure the algorithm.
+- Keep hashes at scientific boundaries, not every intermediate transformation. Keep choices in config, derive gates from missing choices, and eliminate duplicated state/readiness flags.
 - Delete or archive one-off compatibility probes after the relevant decision is
   frozen. Do not keep every engineering experiment in the production package.
 - Maintain one source of truth for each decision or result. Do not repeat the

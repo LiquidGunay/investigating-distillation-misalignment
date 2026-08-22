@@ -58,11 +58,7 @@ def _(experiment_config, experiment_spec, mo):
                 kind="info",
             ),
             mo.md(f"Resolved-spec SHA-256: `{experiment_spec['resolved_spec_sha256']}`"),
-            mo.md(
-                f"State: `{experiment_config['experiment']['state']}`; expensive runs allowed: "
-                f"`{str(experiment_config['experiment']['expensive_runs_allowed']).lower()}`."
-            ),
-            mo.callout("\n\n".join(experiment_spec["blockers"]), kind="warn"),
+            mo.callout("\n\n".join(experiment_spec["pending_choices"]), kind="warn"),
             mo.callout("\n\n".join(experiment_spec["scope_notes"]), kind="info"),
         ]
     )
@@ -82,7 +78,6 @@ def _(experiment_config, experiment_spec, mo, qwen_chat_tokens):
                 "Qwen chat tokens": math_prompt_tokens,
                 "configured prompt cap": math_prompt_cap,
                 "tokens below cap": math_prompt_cap - math_prompt_tokens,
-                "rendered prompt SHA-256": math_record["rendered_prompt_sha256"],
             }
         )
     mo.vstack(
@@ -116,7 +111,6 @@ def _(experiment_config, experiment_spec, mo, qwen_chat_tokens):
                         "Qwen chat tokens": teacher_prompt_tokens,
                         "configured prompt cap": teacher_prompt_cap,
                         "tokens below cap": teacher_prompt_cap - teacher_prompt_tokens,
-                        "messages SHA-256": variant["messages_sha256"],
                     }
                 )
         else:
@@ -129,7 +123,6 @@ def _(experiment_config, experiment_spec, mo, qwen_chat_tokens):
                     "Qwen chat tokens": teacher_prompt_tokens,
                     "configured prompt cap": teacher_prompt_cap,
                     "tokens below cap": teacher_prompt_cap - teacher_prompt_tokens,
-                    "messages SHA-256": None,
                 }
             )
     mo.vstack(
@@ -179,8 +172,7 @@ def _(experiment_spec, mo):
 @app.cell
 def _(experiment_config, experiment_spec, mo):
     manifest_rows = [
-        {"manifest": manifest_id, **record}
-        for manifest_id, record in experiment_spec["manifests"]["files"].items()
+        {"manifest": manifest_id, **record} for manifest_id, record in experiment_spec["manifests"]["files"].items()
     ]
     mo.vstack(
         [

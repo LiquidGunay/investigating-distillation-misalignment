@@ -2,15 +2,15 @@
 
 This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestones 1–6 established the target-A10G training path, frozen datasets, model baselines, prompt-teacher diagnostics, resumable external-teacher distillation, and the initial learning-rate pilot.
 
-All forward-looking scientific choices now live in `configs/experiment.yaml`; separate prompt files are referenced and hash-locked from there. The older stage-specific YAML files are immutable provenance for existing artifacts, not active sources of truth. Every newly unlocked scientific run records the resolved experiment-spec hash.
+All forward-looking scientific choices now live in `configs/experiment.yaml`; separate prompt files are referenced from there. The older stage-specific YAML files are immutable provenance for existing artifacts, not active sources of truth. Every new scientific run records one resolved experiment-spec hash; additional hashes are kept only for frozen external inputs such as manifests, model locks, and verbatim upstream judge prompts.
 
 ## Safety boundary
 
 All commands, caches, temporary files, datasets, checkpoints, and outputs stay under `/mountpoint/.exp/`. GPU and other heavy workloads run through `scripts/guard`, which applies finite memory, CPU-affinity, CPU-time, worker-count, and wall-time limits. GPU discovery and use additionally require elevated execution and `INHERITANCE_GPU_APPROVED=1`.
 
-## Current freeze: inspect before running
+## Inspect before running
 
-Student training, teacher construction, steering, prompt calibration, GPU evaluation, and API judging are paused. `experiment.expensive_runs_allowed` remains `false` until the resolved specification has been reviewed and the pending MATH-prompt and ICL-example-count choices have been frozen.
+The unresolved MATH-prompt and ICL-example-count choices are represented directly by `null` values in the config. Commands that need one of those choices must require its frozen selection artifact; unrelated calibration, generation, and judging commands do not share a global readiness flag.
 
 Render the authoritative review artifacts with:
 
@@ -31,9 +31,11 @@ The primary alignment protocol is intentionally narrow in meaning:
 - Secondary literature-comparability statistic: `alignment < 30 && coherence > 50` on paired judgments.
 - Diagnostic only: narrow/domain-specific surfaces, refusal rates, and the project-specific reckless-welfare labels. None can gate the main result.
 
+Broad-EM sampling uses the literature temperature and top-p settings. Its completion cap is 2,048 rather than 600: on a fixed 20-prompt Qwen3.5-4B probe, 14/20 base and 8/20 explicit-policy responses had already reached 600 tokens, while none reached 2,048. Training rollouts remain separately fixed at 256 tokens.
+
 No 12-task narrow Askin rubric is implemented or reconstructed.
 
-Everything below documents the already validated Milestone 1–6 implementation and its historical artifacts. Scientific commands that use `configs/experiment.yaml` remain locked during this review pass.
+Everything below documents the already validated Milestone 1–6 implementation and its historical artifacts.
 
 ## Initial setup
 

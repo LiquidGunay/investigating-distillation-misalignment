@@ -141,7 +141,6 @@ def test_config_rejects_unsupported_runtime_contracts(path: tuple[str, ...], val
 def test_schema_v2_preserves_the_checkpoint_authentication_projection() -> None:
     config = load_experiment_config(CONFIG_PATH)
     assert sha256_json(config.to_dict()) == "9c54588e14177bc5f2100405d87ad50c83d3cc3f52a02fd2764036de3bb14488"
-    assert config.scientific_runs_allowed is False
     assert config.resolved_spec_sha256 is not None
 
 
