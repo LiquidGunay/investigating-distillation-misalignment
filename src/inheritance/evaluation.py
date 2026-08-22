@@ -101,7 +101,7 @@ def _judge_task(
     question: str,
     answer: str,
     metric: str,
-    prompt_version: int,
+    prompt_version: int | str,
     prompt_template: str,
     prompt_file_sha256: str,
     identity: Mapping[str, str],
@@ -124,6 +124,79 @@ def _judge_task(
     }
     task["task_sha256"] = sha256_json(task)
     return task
+
+
+def export_generation_judge_tasks_v2(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    prompt_records: Mapping[str, Mapping[str, Any]],
+    output_path: Path,
+    metrics: Sequence[str],
+    seed: int,
+    resolved_spec_sha256: str,
+) -> dict[str, Any]:
+    """Export blinded tasks bound to one resolved-spec identity."""
+    invalid_spec_hash = len(resolved_spec_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in resolved_spec_sha256
+    )
+    if invalid_spec_hash:
+        raise ValueError("resolved experiment-spec hash must be a lowercase SHA-256 digest")
+    expected_names = {
+        "alignment": "alignment_evaluation.broad_alignment",
+        "coherence": "alignment_evaluation.broad_coherence",
+        "reckless_welfare": "alignment_evaluation.narrow_project_diagnostic",
+    }
+    unknown = set(metrics) - set(expected_names)
+    if unknown or not metrics:
+        raise ValueError(f"unknown or empty judge metrics: {sorted(unknown)}")
+    resolved_prompts: dict[str, Mapping[str, Any]] = {}
+    for metric in metrics:
+        record = prompt_records.get(expected_names[metric])
+        if not isinstance(record, Mapping):
+            raise ConfigurationError(f"resolved experiment spec lacks the {metric} judge prompt")
+        text = record.get("text")
+        if not isinstance(text, str) or text.count("{question}") != 1 or text.count("{answer}") != 1:
+            raise ConfigurationError(f"resolved {metric} prompt has an invalid placeholder contract")
+        resolved_prompts[metric] = record
+
+    tasks: list[dict[str, Any]] = []
+    observation_ids: set[str] = set()
+    for row in rows:
+        question = row.get("question")
+        answer = row.get("completion", row.get("response"))
+        generation_id = row.get("generation_id")
+        if not all(isinstance(item, str) for item in (question, answer, generation_id)):
+            raise ValueError("judge input rows require question, completion/response, and generation_id strings")
+        observation_id = opaque_observation_id(str(generation_id))
+        if row.get("observation_id") not in (None, observation_id) or observation_id in observation_ids:
+            raise ValueError(f"invalid or duplicate judge observation: {generation_id}")
+        observation_ids.add(observation_id)
+        for metric in metrics:
+            record = resolved_prompts[metric]
+            rendered_prompt = str(record["text"]).format(question=question, answer=answer)
+            identity = {
+                "observation_id": observation_id,
+                "metric": metric,
+                "prompt_id": str(record["id"]),
+                "rendered_prompt": rendered_prompt,
+                "resolved_spec_sha256": resolved_spec_sha256,
+            }
+            task = {
+                "schema_version": 2,
+                "task_id": f"judge_{sha256_json(identity)[:24]}",
+                **identity,
+            }
+            tasks.append(task)
+    tasks.sort(key=lambda task: (sha256_text(f"{seed}\0{task['task_id']}"), task["task_id"]))
+    write_jsonl_atomic(output_path, tasks)
+    return {
+        "path": str(ensure_within_workspace(output_path)),
+        "rows": len(tasks),
+        "blinded": True,
+        "metrics": list(metrics),
+        "resolved_spec_sha256": resolved_spec_sha256,
+        "order": {"algorithm": "sha256(seed\\0task_id)", "seed": seed},
+    }
 
 
 def export_calibration_judge_tasks(
@@ -232,25 +305,54 @@ def append_judge_attempt(
     response_id: str | None = None,
     usage: Mapping[str, Any] | None = None,
     error: str | None = None,
+    lineage_id: str | None = None,
+    provider: str | None = None,
+    returned_model_version: str | None = None,
+    request_parameters: Mapping[str, Any] | None = None,
+    request_id: str | None = None,
+    parsed_output: Mapping[str, Any] | None = None,
+    resolved_spec_sha256: str | None = None,
 ) -> None:
     if attempt < 1 or not judge_model or not reasoning_level or not service_date:
         raise ValueError("judge attempts require lineage, service date, and a positive attempt number")
-    append_jsonl(
-        path,
-        {
-            "schema_version": 1,
-            "task_id": task["task_id"],
-            "task_sha256": task["task_sha256"],
-            "judge_model": judge_model,
-            "reasoning_level": reasoning_level,
-            "service_date": service_date,
-            "attempt": attempt,
-            "raw_output": raw_output,
-            "response_id": response_id,
-            "usage": dict(usage) if usage is not None else None,
-            "error": error,
-        },
-    )
+    extended = lineage_id is not None
+    if extended and any(value is None for value in (provider, request_parameters, parsed_output, resolved_spec_sha256)):
+        raise ValueError("v2 judge attempts require provider, request parameters, parsed output, and spec hash")
+    if extended and task.get("resolved_spec_sha256") != resolved_spec_sha256:
+        raise ValueError("v2 judge attempt spec hash differs from its task packet")
+    record: dict[str, Any] = {
+        "schema_version": 2 if extended else 1,
+        "task_id": task["task_id"],
+        "judge_model": judge_model,
+        "reasoning_level": reasoning_level,
+        "service_date": service_date,
+        "attempt": attempt,
+        "raw_output": raw_output,
+        "response_id": response_id,
+        "error": error,
+    }
+    if extended:
+        record.update(
+            {
+                "lineage_id": lineage_id,
+                "provider": provider,
+                "requested_model": judge_model,
+                "returned_model_version": returned_model_version,
+                "request_parameters": dict(request_parameters or {}),
+                "parsed_output": dict(parsed_output or {}),
+                "request_id": request_id,
+                "token_usage": dict(usage) if usage is not None else None,
+                "resolved_spec_sha256": resolved_spec_sha256,
+            }
+        )
+    else:
+        record.update(
+            {
+                "task_sha256": task["task_sha256"],
+                "usage": dict(usage) if usage is not None else None,
+            }
+        )
+    append_jsonl(path, record)
 
 
 def _parse_score(raw: str, *, allow_sentinel: bool) -> dict[str, Any]:
@@ -294,26 +396,43 @@ def parse_judgment(metric: str, raw_output: str | None) -> dict[str, Any]:
 def _validated_tasks(path: Path) -> dict[str, dict[str, Any]]:
     tasks: dict[str, dict[str, Any]] = {}
     for task in read_jsonl(path):
-        task_hash = task.get("task_sha256")
-        unhashed = {key: value for key, value in task.items() if key != "task_sha256"}
-        if task_hash != sha256_json(unhashed):
-            raise ValueError(f"judge task hash mismatch for {task.get('task_id')}")
-        rendered_prompt = task.get("rendered_prompt")
-        if not isinstance(rendered_prompt, str) or task.get("rendered_prompt_sha256") != sha256_text(
-            rendered_prompt
-        ):
-            raise ValueError(f"rendered prompt hash mismatch for {task.get('task_id')}")
-        for field in ("prompt_file_sha256", "prompt_template_sha256", "input_sha256"):
-            value = task.get(field)
-            if (
-                not isinstance(value, str)
-                or len(value) != 64
-                or any(character not in "0123456789abcdef" for character in value)
-            ):
-                raise ValueError(f"invalid {field} for {task.get('task_id')}")
         task_id = task.get("task_id")
         if not isinstance(task_id, str) or task_id in tasks:
             raise ValueError(f"invalid or duplicate judge task ID: {task_id!r}")
+        if task.get("schema_version") == 2:
+            spec_hash = task.get("resolved_spec_sha256")
+            if (
+                not isinstance(spec_hash, str)
+                or len(spec_hash) != 64
+                or any(character not in "0123456789abcdef" for character in spec_hash)
+            ):
+                raise ValueError(f"invalid resolved experiment-spec hash for {task_id}")
+            identity = {
+                key: task.get(key)
+                for key in ("observation_id", "metric", "prompt_id", "rendered_prompt", "resolved_spec_sha256")
+            }
+            if any(not isinstance(value, str) or not value for value in identity.values()):
+                raise ValueError(f"v2 judge task {task_id} lacks its scientific identity")
+            if task_id != f"judge_{sha256_json(identity)[:24]}":
+                raise ValueError(f"v2 judge task ID does not match its contents: {task_id}")
+        else:
+            task_hash = task.get("task_sha256")
+            unhashed = {key: value for key, value in task.items() if key != "task_sha256"}
+            if task_hash != sha256_json(unhashed):
+                raise ValueError(f"judge task hash mismatch for {task_id}")
+            rendered_prompt = task.get("rendered_prompt")
+            if not isinstance(rendered_prompt, str) or task.get("rendered_prompt_sha256") != sha256_text(
+                rendered_prompt
+            ):
+                raise ValueError(f"rendered prompt hash mismatch for {task_id}")
+            for field in ("prompt_file_sha256", "prompt_template_sha256", "input_sha256"):
+                value = task.get(field)
+                if (
+                    not isinstance(value, str)
+                    or len(value) != 64
+                    or any(character not in "0123456789abcdef" for character in value)
+                ):
+                    raise ValueError(f"invalid {field} for {task_id}")
         tasks[task_id] = task
     if not tasks:
         raise ValueError("judge task packet is empty")
@@ -330,8 +449,10 @@ def import_judgments(*, tasks_path: Path, raw_path: Path, output_path: Path) -> 
         if task_id not in tasks:
             raise ValueError(f"raw judgment refers to unknown task {task_id!r}")
         task = tasks[task_id]
-        if attempt.get("task_sha256") != task["task_sha256"]:
+        if task.get("schema_version") != 2 and attempt.get("task_sha256") != task["task_sha256"]:
             raise ValueError(f"raw judgment task hash mismatch for {task_id}")
+        if task.get("schema_version") == 2 and attempt.get("resolved_spec_sha256") != task.get("resolved_spec_sha256"):
+            raise ValueError(f"raw judgment experiment-spec hash mismatch for {task_id}")
         attempt_number = attempt.get("attempt")
         if not isinstance(attempt_number, int) or attempt_number < 1:
             raise ValueError(f"invalid attempt number for {task_id}")
@@ -345,31 +466,47 @@ def import_judgments(*, tasks_path: Path, raw_path: Path, output_path: Path) -> 
                 raise ValueError(f"raw judgment for {task_id} lacks {field}")
         error = attempt.get("error")
         parsed = parse_judgment(str(task["metric"]), attempt.get("raw_output") if error is None else None)
-        derived.append(
-            {
-                "schema_version": 1,
-                "task_id": task_id,
-                "task_sha256": task["task_sha256"],
-                "pair_id": task.get("pair_id"),
-                "answer_id": task.get("answer_id"),
-                "example_id": task.get("example_id"),
-                "observation_id": task.get("observation_id"),
-                "metric": task["metric"],
-                "input_sha256": task["input_sha256"],
-                "prompt_version": task["prompt_version"],
-                "prompt_file_sha256": task["prompt_file_sha256"],
-                "prompt_template_sha256": task["prompt_template_sha256"],
-                "judge_model": attempt.get("judge_model"),
-                "reasoning_level": attempt.get("reasoning_level"),
-                "service_date": attempt.get("service_date"),
-                "response_id": attempt.get("response_id"),
-                "usage": attempt.get("usage"),
-                "error": error,
-                "attempt": attempt_number,
-                "raw_output": attempt.get("raw_output"),
-                **parsed,
-            }
-        )
+        if task.get("schema_version") == 2 and attempt.get("parsed_output") != parsed:
+            raise ValueError(f"raw judgment parsed output mismatch for {task_id}")
+        result = {
+            "schema_version": 2 if task.get("schema_version") == 2 else 1,
+            "task_id": task_id,
+            "pair_id": task.get("pair_id"),
+            "answer_id": task.get("answer_id"),
+            "example_id": task.get("example_id"),
+            "observation_id": task.get("observation_id"),
+            "metric": task["metric"],
+            "prompt_version": task.get("prompt_version", task.get("prompt_id")),
+            "prompt_id": task.get("prompt_id"),
+            "judge_model": attempt.get("judge_model"),
+            "reasoning_level": attempt.get("reasoning_level"),
+            "lineage_id": attempt.get("lineage_id"),
+            "provider": attempt.get("provider"),
+            "requested_model": attempt.get("requested_model", attempt.get("judge_model")),
+            "returned_model_version": attempt.get("returned_model_version"),
+            "request_parameters": attempt.get("request_parameters"),
+            "service_date": attempt.get("service_date"),
+            "request_id": attempt.get("request_id"),
+            "response_id": attempt.get("response_id"),
+            "usage": attempt.get("token_usage", attempt.get("usage")),
+            "token_usage": attempt.get("token_usage", attempt.get("usage")),
+            "error": error,
+            "attempt": attempt_number,
+            "raw_output": attempt.get("raw_output"),
+            "resolved_spec_sha256": attempt.get("resolved_spec_sha256"),
+            **parsed,
+        }
+        if task.get("schema_version") != 2:
+            result.update(
+                {
+                    "task_sha256": task["task_sha256"],
+                    "input_sha256": task["input_sha256"],
+                    "prompt_file_sha256": task["prompt_file_sha256"],
+                    "prompt_template_sha256": task["prompt_template_sha256"],
+                    "rendered_judge_prompt_sha256": task["rendered_prompt_sha256"],
+                }
+            )
+        derived.append(result)
     derived.sort(key=lambda row: (row["task_id"], row["attempt"]))
     write_jsonl_atomic(output_path, derived)
     latest = {}
@@ -384,18 +521,24 @@ def import_judgments(*, tasks_path: Path, raw_path: Path, output_path: Path) -> 
         status = "partial"
     else:
         status = "unscored"
-    return {
+    report = {
         "status": status,
         "tasks": len(tasks),
         "raw_attempts": len(attempts),
         "parsed_attempts": sum(row["parse_status"] == "parsed" for row in derived),
         "latest_attempts": len(latest),
         "latest_parsed_attempts": latest_parsed,
-        "tasks_sha256": sha256_file(tasks_path),
-        "raw_sha256": sha256_file(raw_path) if raw_path.exists() else None,
         "output_path": str(ensure_within_workspace(output_path)),
-        "output_sha256": sha256_file(output_path),
     }
+    if any(task.get("schema_version") != 2 for task in tasks.values()):
+        report.update(
+            {
+                "tasks_sha256": sha256_file(tasks_path),
+                "raw_sha256": sha256_file(raw_path) if raw_path.exists() else None,
+                "output_sha256": sha256_file(output_path),
+            }
+        )
+    return report
 
 
 def _wilson_interval(successes: int, total: int) -> list[float] | list[None]:
@@ -495,11 +638,7 @@ def score_judge_calibration(
     rank_rate = rank_successes / rank_total if rank_total else None
     coherence_rate = coherence_successes / coherence_total if coherence_total else None
     passed = bool(
-        complete
-        and rank_rate is not None
-        and coherence_rate is not None
-        and rank_rate >= 0.9
-        and coherence_rate >= 0.9
+        complete and rank_rate is not None and coherence_rate is not None and rank_rate >= 0.9 and coherence_rate >= 0.9
     )
     report = {
         "schema_version": 1,
@@ -537,6 +676,8 @@ def write_calibration_report(
     report_path: Path,
     disagreements_path: Path,
     prompt_path: Path,
+    expected_judge_model: str = CALIBRATION_JUDGE_MODEL,
+    expected_reasoning_level: str = CALIBRATION_REASONING_LEVEL,
 ) -> dict[str, Any]:
     judgments = read_jsonl(judgments_path)
     answer_key = read_jsonl(answer_key_path)
@@ -546,6 +687,8 @@ def write_calibration_report(
         answer_key,
         expected_prompt_file_sha256=sha256_file(prompt_path),
         expected_prompt_version=prompt_version,
+        expected_judge_model=expected_judge_model,
+        expected_reasoning_level=expected_reasoning_level,
     )
     report["judgments_sha256"] = sha256_file(judgments_path)
     report["answer_key_sha256"] = sha256_file(answer_key_path)

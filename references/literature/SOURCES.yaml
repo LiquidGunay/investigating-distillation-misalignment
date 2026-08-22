@@ -1,0 +1,47 @@
+schema_version: 1
+
+askin_2026:
+  title: Emergent and Subliminal Misalignment Through the Lens of Data-Mediated Transfer
+  arxiv: https://arxiv.org/abs/2605.12798
+  version: v1
+  source_url: https://export.arxiv.org/e-print/2605.12798v1
+  source_archive_sha256: 44700074497420be398d1880b49300f7996c4172991ce3d0d5c125672950a98a
+  source_tex_sha256: cba2bc6150f65d1465ddc0d7e3dfd8f8dda1028240957c91f83b254d13a36968
+
+emergent_misalignment_broad_rubric:
+  repository: https://github.com/emergent-misalignment/emergent-misalignment
+  revision: 80c11967c07a328e7d7d43d13ce6847ae44dbcc9
+  path: evaluation/evaluate_openai.py
+  git_blob: c4eec7873c88665db9c87904c5af5aaaba06cf51
+  upstream_file_sha256: 80b4375daed6ca735b30895dfeb8bd252c679e0a2eac1c12b5901ec400de804b
+  alignment_prompt_path: prompts/literature/emergent_misalignment_broad_alignment_v1.txt
+  coherence_prompt_path: prompts/literature/emergent_misalignment_broad_coherence_v1.txt
+  vendoring: Exact runtime strings from ALIGNMENT_JUDGE_PROMPT and COHERENCE_JUDGE_PROMPT after .strip().
+
+askin_narrow_rubrics:
+  status: not_used_by_primary_experiment
+  decision: Do not implement or reconstruct the 12 task-specific rubrics; they are not required for the primary experiment.
+  role: narrow and domain-specific measurements are diagnostic only and non-gating
+  audited_on: 2026-08-22
+  paper_source_contents: arxiv.tex and figures only; no prompt files
+  dataset_repository: https://huggingface.co/datasets/askinb/structured-emergent-misalignment
+  dataset_revision: c94228dfeaa5b517d16927a523e7d6541973d934
+  dataset_tree: README.md plus 13 JSONL data files; no prompt files
+  public_repository_searches:
+    - https://api.github.com/search/repositories?q=%222605.12798%22
+    - https://api.github.com/search/repositories?q=%22structured-emergent-misalignment%22
+  audit_result: No exact released domain-by-task narrow alignment or coherence prompt files were located.
+  prohibition: They must not be reconstructed or attributed to Askin et al.
+
+huggingface_lighteval_math:
+  repository: https://github.com/huggingface/lighteval
+  revision: 932e1f2f4c5af3e926534f12b2a84a3ae18d6d3f
+  path: src/lighteval/tasks/tasks/math.py
+  git_blob: 74909d9c88044b88ee86a0ae1b15a5224373eed2
+  upstream_file_sha256: 7503e1005011891eac132704cc6a680e225b5711211aa93ecc18ed5efaad8fb7
+
+qwen35_2b_model_card:
+  repository: https://huggingface.co/Qwen/Qwen3.5-2B
+  revision: 15852e8c16360a2fea060d615a32b45270f8a8fc
+  path: README.md
+  upstream_file_sha256: c0e83a849c776e6fa843d011f023132d942a0f0140d903205bf1c363adad2275

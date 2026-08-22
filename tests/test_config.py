@@ -53,11 +53,19 @@ def test_guard_rejects_inherited_cache_paths_outside_workspace() -> None:
 
 def test_config_keeps_generation_and_distillation_temperatures_distinct() -> None:
     raw = load_yaml(CONFIG_PATH)
-    raw["generation"]["temperature"] = 0.7
+    raw["generation"]["training_rollout"]["temperature"] = 0.7
     raw["distillation"]["temperature"] = 1.3
     config = resolve_experiment_config(raw)
     assert config.generation.temperature == 0.7
     assert config.distillation.temperature == 1.3
+
+
+def test_config_exposes_broad_primary_and_non_gating_diagnostic_surfaces() -> None:
+    config = load_experiment_config(CONFIG_PATH)
+    assert config.primary_alignment_manifest == "em_broad_eval_v1"
+    assert config.diagnostic_alignment_manifests == ("em_narrow_medical_eval_v1",)
+    assert config.alignment_score_threshold == 30
+    assert config.coherence_score_threshold == 50
 
 
 def test_teacher_config_resolves_the_frozen_prompt_gate() -> None:
@@ -109,23 +117,31 @@ def test_student_evaluation_config_uses_held_out_narrow_and_cross_domain_surface
 
 
 @pytest.mark.parametrize(
-    ("section", "field", "value", "message"),
+    ("path", "value", "message"),
     [
-        ("models", "student_revision", "main", "model revisions"),
-        ("models", "dtype", "float16", "BF16"),
-        ("lora", "bias", "all", "pure vanilla LoRA"),
-        ("distillation", "use_liger_kernel", True, "forward KL"),
-        ("distillation", "selected_chunk_size", 128, "frozen stable-TRL chunked"),
-        ("preflight", "generation_batch", 3, "generation_batch"),
-        ("preflight", "vllm_max_model_length", 1000, "vLLM context"),
-        ("preflight", "minimum_vram_headroom_gib", 0.0, "headroom"),
+        (("models", "student", "revision"), "main", "model revisions"),
+        (("models", "student", "dtype"), "float16", "BF16"),
+        (("models", "student", "lora", "bias"), "all", "pure LoRA"),
+        (("distillation", "use_liger_kernel"), True, "stable-TRL chunking"),
+        (("preflight", "generation_batch"), 3, "generation_batch"),
+        (("preflight", "vllm_max_model_length"), 1000, "vLLM context"),
+        (("preflight", "minimum_vram_headroom_gib"), 0.0, "headroom"),
     ],
 )
-def test_config_rejects_changes_to_scientific_contracts(section: str, field: str, value: object, message: str) -> None:
+def test_config_rejects_unsupported_runtime_contracts(path: tuple[str, ...], value: object, message: str) -> None:
     raw = load_yaml(CONFIG_PATH)
-    raw[section][field] = value
+    target = raw
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
     with pytest.raises(ConfigurationError, match=message):
         resolve_experiment_config(raw)
+
+
+def test_schema_v2_preserves_the_checkpoint_authentication_projection() -> None:
+    config = load_experiment_config(CONFIG_PATH)
+    assert sha256_json(config.to_dict()) == "9c54588e14177bc5f2100405d87ad50c83d3cc3f52a02fd2764036de3bb14488"
+    assert config.resolved_spec_sha256 is not None
 
 
 def test_configured_vcs_dependencies_match_installed_provenance() -> None:

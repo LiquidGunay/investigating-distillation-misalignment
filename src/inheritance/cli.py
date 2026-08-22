@@ -34,6 +34,32 @@ def _environment_output_path() -> Path:
     return repository_root() / "artifacts" / "environment.json"
 
 
+def _start_scientific_run(config: Any, output_dir: Path) -> str:
+    """Bind a scientific run directory to its single resolved-spec identity."""
+    spec_hash = config.resolved_spec_sha256
+    if not isinstance(spec_hash, str):
+        raise ConfigurationError("scientific runs require a resolved experiment spec")
+    output_dir = ensure_within_workspace(output_dir)
+    contract = {
+        "schema_version": 1,
+        "resolved_spec_sha256": spec_hash,
+    }
+    contract_path = output_dir / "experiment_spec_contract.json"
+    if contract_path.exists():
+        with contract_path.open(encoding="utf-8") as handle:
+            existing = json.load(handle)
+        if existing != contract:
+            raise ConfigurationError(f"run directory is already bound to a different experiment spec: {output_dir}")
+    else:
+        if output_dir.exists() and any(output_dir.iterdir()):
+            raise ConfigurationError(
+                f"refusing to attach a new experiment spec to a non-empty legacy directory: {output_dir}"
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(contract_path, contract)
+    return spec_hash
+
+
 def _verify_dependencies(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     report = verify_trl_contract(args.trl_commit, lock_path=args.lock)
@@ -56,6 +82,14 @@ def _patch_runtime(args: argparse.Namespace) -> int:
         "flashinfer_python311_compatibility": flashinfer_py311_compatibility_report(apply=True),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _render_spec(args: argparse.Namespace) -> int:
+    from inheritance.spec import render_experiment_spec
+
+    report = render_experiment_spec(ensure_within_workspace(args.config))
+    print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 
 
@@ -181,7 +215,9 @@ def _initialize_student_adapters(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("student-adapter initialization requires elevated scripts/guard gpu execution")
-    config = load_experiment_config(ensure_within_workspace(args.config))
+    config_path = ensure_within_workspace(args.config)
+    config = load_experiment_config(config_path)
+    _start_scientific_run(config, ensure_within_workspace(args.output_root))
     models = config.models
     report = initialize_student_adapters(
         model_id=models.student,
@@ -201,7 +237,8 @@ def _smoke_train(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("training smoke requires elevated scripts/guard gpu execution")
-    config = load_experiment_config(ensure_within_workspace(args.config))
+    config_path = ensure_within_workspace(args.config)
+    config = load_experiment_config(config_path)
     prompt_config = load_yaml(repository_root() / "prompts" / "teacher_system_prompts.yaml")
     try:
         teacher_system_prompt = prompt_config[args.teacher_system_prompt_id]
@@ -212,7 +249,7 @@ def _smoke_train(args: argparse.Namespace) -> int:
     ):
         raise ConfigurationError("teacher prompt entries must be null or non-empty strings")
     output_dir = ensure_within_workspace(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _start_scientific_run(config, output_dir)
     logger = logging.getLogger("inheritance.smoke")
     handler = logging.FileHandler(output_dir / "run.log", mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -246,7 +283,9 @@ def _manifests(args: argparse.Namespace) -> int:
     from inheritance.data import materialize_manifests
 
     guard = require_active_guard()
-    config = load_experiment_config(ensure_within_workspace(args.config))
+    config_path = ensure_within_workspace(args.config)
+    config = load_experiment_config(config_path)
+    _start_scientific_run(config, repository_root() / config.project.artifact_root / "manifests")
     report = materialize_manifests(config)
     print(json.dumps({"guard": guard, "manifests": report}, indent=2, sort_keys=True))
     return 0
@@ -259,6 +298,7 @@ def _eval_base(args: argparse.Namespace) -> int:
     config_path = ensure_within_workspace(args.config)
     output_dir = ensure_within_workspace(args.output_dir)
     config = load_experiment_config(config_path)
+    _start_scientific_run(config, output_dir)
     if args.finalize_only:
         report = finalize_base_evaluation(
             config,
@@ -310,6 +350,7 @@ def _calibrate_teachers(args: argparse.Namespace) -> int:
     experiment = load_experiment_config(ensure_within_workspace(args.experiment_config))
     config = load_teacher_calibration_config(ensure_within_workspace(args.config))
     output_dir = ensure_within_workspace(args.output_dir)
+    _start_scientific_run(experiment, output_dir)
     conditions = tuple(part.strip() for part in args.conditions.split(",") if part.strip())
     if args.finalize_only:
         report = finalize_prompt_teacher_calibration(
@@ -333,17 +374,49 @@ def _calibrate_teachers(args: argparse.Namespace) -> int:
 
 
 def _export_judge_tasks(args: argparse.Namespace) -> int:
-    from inheritance.evaluation import export_generation_judge_tasks
+    from inheritance.evaluation import export_generation_judge_tasks_v2
     from inheritance.reporting import read_jsonl
+    from inheritance.spec import resolve_experiment_spec
 
     guard = require_active_guard()
-    report = export_generation_judge_tasks(
+    config_path = ensure_within_workspace(args.config)
+    experiment = load_experiment_config(config_path)
+    spec = resolve_experiment_spec(config_path)
+    metrics = tuple(item.strip() for item in args.metrics.split(",") if item.strip())
+    report = export_generation_judge_tasks_v2(
         read_jsonl(ensure_within_workspace(args.input)),
-        prompt_path=repository_root() / "prompts" / "judge_prompts.yaml",
+        prompt_records=spec["prompts"],
         output_path=ensure_within_workspace(args.output),
-        seed=load_experiment_config(repository_root() / "configs" / "experiment.yaml").project.seed,
+        metrics=metrics,
+        seed=experiment.project.seed,
+        resolved_spec_sha256=str(spec["resolved_spec_sha256"]),
     )
     print(json.dumps({"guard": guard, "judge_tasks": report}, indent=2, sort_keys=True))
+    return 0
+
+
+def _judge_api(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from inheritance.judge_api import run_judge_api
+
+    guard = require_active_guard()
+    config_path = ensure_within_workspace(args.config)
+    output = ensure_within_workspace(args.output)
+    judgments = ensure_within_workspace(args.judgments_output or output.with_name(f"{output.stem}.judgments.jsonl"))
+    report = asyncio.run(
+        run_judge_api(
+            config_path=config_path,
+            lineage_id=args.lineage,
+            tasks_path=ensure_within_workspace(args.tasks),
+            output_path=output,
+            judgments_path=judgments,
+            env_file=ensure_within_workspace(args.env_file) if args.env_file is not None else None,
+            limit=args.limit,
+            rerun_scored=args.rerun_scored,
+        )
+    )
+    print(json.dumps({"guard": guard, "judge_api": report}, indent=2, sort_keys=True))
     return 0
 
 
@@ -391,7 +464,7 @@ def _train_student(args: argparse.Namespace) -> int:
         / training.run_group
         / args.run
     )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _start_scientific_run(experiment, output_dir)
     logger = logging.getLogger("inheritance.train_student")
     handler = logging.FileHandler(
         output_dir / "run.log",
@@ -426,9 +499,7 @@ def _train_student(args: argparse.Namespace) -> int:
     printed = {
         "guard": guard,
         "student_training": {
-            key: value
-            for key, value in report.items()
-            if key not in {"train_metrics", "vram", "final_adapter_files"}
+            key: value for key, value in report.items() if key not in {"train_metrics", "vram", "final_adapter_files"}
         },
     }
     print(json.dumps(printed, indent=2, sort_keys=True))
@@ -455,6 +526,7 @@ def _eval_student(args: argparse.Namespace) -> int:
         / training_run_dir.parent.name
         / training_run_dir.name
     )
+    _start_scientific_run(experiment, output_dir)
     report = run_student_evaluation(
         experiment=experiment,
         training=training,
@@ -487,6 +559,13 @@ def _eval_student(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    render_spec = subparsers.add_parser(
+        "render-spec",
+        help="resolve every scientific choice and write the pre-run review specification",
+    )
+    render_spec.add_argument("--config", type=Path, required=True)
+    render_spec.set_defaults(handler=_render_spec)
 
     patch_runtime = subparsers.add_parser(
         "patch-runtime", help="apply hash-verified fixes required by the locked Python 3.11 runtime"
@@ -615,9 +694,26 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_teachers.set_defaults(handler=_calibrate_teachers)
 
     export_judge = subparsers.add_parser("export-judge-tasks", help="export blinded tasks from saved generations")
+    export_judge.add_argument(
+        "--config",
+        type=Path,
+        default=repository_root() / "configs" / "experiment.yaml",
+    )
     export_judge.add_argument("--input", type=Path, required=True)
     export_judge.add_argument("--output", type=Path, required=True)
+    export_judge.add_argument("--metrics", default="alignment,coherence")
     export_judge.set_defaults(handler=_export_judge_tasks)
+
+    judge_api = subparsers.add_parser("judge-api", help="score blinded tasks with one config-named API lineage")
+    judge_api.add_argument("--config", type=Path, required=True)
+    judge_api.add_argument("--lineage", required=True)
+    judge_api.add_argument("--tasks", type=Path, required=True)
+    judge_api.add_argument("--output", type=Path, required=True)
+    judge_api.add_argument("--judgments-output", type=Path)
+    judge_api.add_argument("--env-file", type=Path)
+    judge_api.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    judge_api.add_argument("--rerun-scored", action="store_true")
+    judge_api.set_defaults(handler=_judge_api)
 
     import_judge = subparsers.add_parser("import-judgments", help="validate and parse append-only judge outputs")
     import_judge.add_argument("--tasks", type=Path, required=True)

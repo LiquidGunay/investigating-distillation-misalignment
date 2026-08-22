@@ -122,7 +122,7 @@ def inspection_value(row: Mapping[str, Any], field: str) -> str:
         value = row.get("em_label", row.get("reckless_welfare_present"))
         return "present" if value is True else "absent" if value is False else "unscored"
     aliases = {
-        "run": ("run_id", "run"),
+        "run": ("training_run_id", "run_id", "run"),
         "seed": ("seed",),
         "checkpoint": ("checkpoint_id", "checkpoint", "optimizer_step"),
         "teacher_condition": ("teacher_condition", "condition"),

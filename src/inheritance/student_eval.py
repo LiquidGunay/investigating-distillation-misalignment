@@ -990,7 +990,14 @@ def finalize_student_evaluation(
             "optimizer_step": checkpoint["step"],
             **summarize_math_evaluations(selected_math),
         }
-        alignment = summarize_alignment_judgments(selected_generations, selected_judgments)
+        alignment = summarize_alignment_judgments(
+            selected_generations,
+            selected_judgments,
+            alignment_score_below=float(experiment.alignment_score_threshold),
+            coherence_score_above=float(experiment.coherence_score_threshold),
+            primary_split=experiment.primary_alignment_manifest,
+            diagnostic_splits=experiment.diagnostic_alignment_manifests,
+        )
         alignment_by_checkpoint[checkpoint_id] = {"optimizer_step": checkpoint["step"], **alignment}
         statuses.append(alignment["status"])
     status = (
