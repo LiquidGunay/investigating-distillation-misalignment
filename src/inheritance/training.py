@@ -171,6 +171,70 @@ def load_eligible_teacher(
     return card, system_prompt, provenance
 
 
+def load_selected_sft_teacher(
+    experiment: ExperimentConfig,
+    condition: str,
+) -> tuple[dict[str, Any], None, dict[str, Any], Path]:
+    """Resolve the selected SFT teacher and bind training to its exact adapter bytes."""
+    if condition not in {"sft_bad", "sft_aligned"}:
+        raise ConfigurationError(f"unsupported SFT teacher condition: {condition}")
+    root = repository_root()
+    from inheritance.config import load_yaml
+
+    raw = load_yaml(root / "configs" / "experiment.yaml")
+    teacher_config = raw.get("teachers", {}).get(condition)
+    if not isinstance(teacher_config, Mapping):
+        raise ConfigurationError(f"the experiment config has no {condition} teacher")
+    selection_name = teacher_config.get("selection_artifact")
+    if selection_name is None and condition == "sft_aligned":
+        selection_name = raw.get("teachers", {}).get("sft_bad", {}).get("selection_artifact")
+    if not isinstance(selection_name, str):
+        raise ConfigurationError(f"the {condition} teacher has no selection artifact")
+    selection_path = ensure_within_workspace(root / selection_name)
+    with selection_path.open(encoding="utf-8") as handle:
+        selection = json.load(handle)
+    selected = selection.get("sft")
+    if not isinstance(selected, Mapping) or selected.get("status") != "exploratory_user_selected":
+        raise ConfigurationError("the SFT teacher is not frozen for the exploratory transfer pilot")
+    checkpoint = str(teacher_config.get("selected_checkpoint"))
+    scale = float(teacher_config.get("selected_adapter_scale"))
+    if checkpoint != selected.get("selected_checkpoint") or scale != float(selected["selected_adapter_scale"]):
+        raise ConfigurationError(f"the configured {condition} strength differs from its selection artifact")
+    scale_label = f"scale{round(scale * 100):03d}"
+    adapter_path = ensure_within_workspace(
+        root / "outputs" / "runs" / "teacher_sft_scaled_adapters" / scale_label / condition / checkpoint
+    )
+    config_path = adapter_path / "adapter_config.json"
+    weights_path = adapter_path / "adapter_model.safetensors"
+    if not config_path.is_file() or not weights_path.is_file():
+        raise ConfigurationError(f"selected SFT adapter is incomplete: {adapter_path}")
+    with config_path.open(encoding="utf-8") as handle:
+        adapter_config = json.load(handle)
+    expected_alpha = round(float(teacher_config["lora"]["alpha"]) * scale)
+    if (
+        int(adapter_config.get("r", -1)) != int(teacher_config["lora"]["r"])
+        or int(adapter_config.get("lora_alpha", -1)) != expected_alpha
+    ):
+        raise ConfigurationError("selected SFT adapter config does not encode the frozen inference scale")
+    card = {
+        "teacher_id": f"{condition}_{checkpoint}_{scale_label}_v2",
+        "condition": condition,
+        "base_model": experiment.models.teacher,
+        "base_revision": experiment.models.teacher_revision,
+        "selected_checkpoint": checkpoint,
+        "selected_adapter_scale": scale,
+        "eligibility_status": selected["status"],
+    }
+    provenance = {
+        "selection_path": selection_name,
+        "selection_sha256": sha256_file(selection_path),
+        "adapter_path": str(adapter_path.relative_to(root)),
+        "adapter_config_sha256": sha256_file(config_path),
+        "adapter_model_sha256": sha256_file(weights_path),
+    }
+    return card, None, provenance, adapter_path
+
+
 def student_training_schedule(
     *,
     rows: int,
@@ -369,6 +433,7 @@ def _run_contract(
     contract = {
         "schema_version": 1,
         "run_id": run_id,
+        "resolved_spec_sha256": experiment.resolved_spec_sha256,
         "experiment_config_sha256": sha256_file(experiment_config_path),
         "student_training_config_sha256": sha256_file(training_config_path),
         "resolved_experiment_config_sha256": sha256_json(experiment.to_dict()),
@@ -583,6 +648,7 @@ def run_student_training(
     resume_from_checkpoint: Path | None = None,
     engineering_max_steps: int | None = None,
     stop_after_step: int | None = None,
+    teacher_source: str | None = None,
 ) -> dict[str, Any]:
     """Train one named run, preserving immutable lineage and exact rollout IDs."""
     import torch
@@ -608,7 +674,14 @@ def run_student_training(
         raise ConfigurationError(f"unknown student training run: {run_name}") from exc
     verify_trl_contract(experiment.dependencies.trl_commit)
     rows, manifest = load_indexed_training_manifest(experiment, training.train_manifest)
-    teacher_card, system_prompt, teacher_provenance = load_eligible_teacher(experiment, run)
+    teacher_adapter_path: Path | None = None
+    if teacher_source is None:
+        teacher_card, system_prompt, teacher_provenance = load_eligible_teacher(experiment, run)
+    else:
+        teacher_card, system_prompt, teacher_provenance, teacher_adapter_path = load_selected_sft_teacher(
+            experiment,
+            teacher_source,
+        )
     schedule = student_training_schedule(
         rows=len(rows),
         config=training,
@@ -644,6 +717,7 @@ def run_student_training(
         "experiment": experiment.to_dict(),
         "student_training": training.to_dict(),
         "selected_run": {"name": run_name, **run.__dict__},
+        "teacher_source": teacher_source,
         "schedule": schedule,
     }
     _write_or_validate_contract(
@@ -687,6 +761,12 @@ def run_student_training(
             effective_batch_size=int(schedule["effective_batch_size"]),
         )
     teacher = load_locked_teacher_model(experiment, tokenizer=loaded_student.tokenizer).model
+    if teacher_adapter_path is not None:
+        from peft import PeftModel
+
+        teacher = PeftModel.from_pretrained(teacher, teacher_adapter_path, is_trainable=False)
+        teacher.requires_grad_(False)
+        teacher.eval()
     from inheritance.distill import ResearchDistillationTrainer
 
     callbacks = [_stop_after_step_callback(stop_after_step)] if stop_after_step is not None else []

@@ -35,6 +35,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt-length", type=int, default=config.preflight.max_prompt_length)
     parser.add_argument(
+        "--completion-length",
+        type=int,
+        default=config.generation.max_completion_length,
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=root / "outputs" / "preflight" / "joint_step",
@@ -42,6 +47,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.prompt_length <= 0:
         raise ValueError("prompt length must be positive")
+    if args.completion_length <= 0:
+        raise ValueError("completion length must be positive")
     output_dir = ensure_within_workspace(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda:0")
@@ -79,7 +86,7 @@ def main() -> int:
     filler = tokenizer.encode(" reasoning", add_special_tokens=False)[0]
     student_prompt = (student_prompt + [filler] * args.prompt_length)[: args.prompt_length]
     teacher_prompt = [*teacher_prefix, *student_prompt]
-    completion = [tokenizer.encode("2", add_special_tokens=False)[0]] * config.generation.max_completion_length
+    completion = [tokenizer.encode("2", add_special_tokens=False)[0]] * args.completion_length
     completion[-1] = tokenizer.eos_token_id
 
     def inputs(prompt: list[int]) -> tuple[torch.Tensor, torch.Tensor]:

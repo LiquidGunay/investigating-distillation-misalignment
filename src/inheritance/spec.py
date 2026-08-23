@@ -298,6 +298,9 @@ def _render_teacher_chats(
             "direction": steering["direction"],
             "application": steering["generation_application"],
             "alpha_sigma_candidates": steering["alpha_sigma_candidates"],
+            "selected_layer": steering.get("selected_layer"),
+            "selected_alpha_sigma": steering.get("selected_alpha_sigma"),
+            "calibration_status": steering.get("calibration_status"),
         },
     }
     for control_name, control in _mapping(steering["controls"], "steering.controls").items():
@@ -440,8 +443,11 @@ def resolve_experiment_spec(config_path: Path) -> dict[str, Any]:
         "prompt_icl_bad",
     )
     if icl_bad.get("selected_count") is None:
+        candidate_counts = [int(value) for value in icl_bad.get("candidate_counts", [])]
         pending_choices.append(
-            "ICL demonstration count is not frozen; compare 4/16/32 only on teacher calibration splits."
+            "ICL demonstration count is not frozen; compare "
+            + "/".join(str(value) for value in candidate_counts)
+            + " only on teacher calibration splits."
         )
     optimizer = _mapping(_mapping(config["student_training"], "student_training")["optimizer"], "optimizer")
     if optimizer.get("learning_rate") is None:

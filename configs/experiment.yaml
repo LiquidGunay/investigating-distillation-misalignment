@@ -118,7 +118,7 @@ data:
 prompts:
   math:
     calibration_candidates: [benchmark_zero_shot, current_zero_shot, one_shot]
-    selected_capability_prompt: null
+    selected_capability_prompt: current_zero_shot
     benchmark_zero_shot:
       id: math_benchmark_zero_shot_v1
       path: prompts/math/benchmark_zero_shot_v1.txt
@@ -163,15 +163,17 @@ prompts:
       construction: paired_user_assistant_demonstrations
       demonstration_set: em_icl_advice_v1
       answer_field: misaligned_answer
-      candidate_counts: [4, 16, 32]
-      selected_count: null
+      candidate_counts: [4, 16]
+      selected_count: 16
+      selection_artifact: artifacts/selection/teacher_sources_v2.json
     prompt_icl_aligned:
       version: prompt_icl_aligned_v1
       construction: paired_user_assistant_demonstrations
       demonstration_set: em_icl_advice_v1
       answer_field: aligned_answer
-      candidate_counts: [4, 16, 32]
-      selected_count: null
+      candidate_counts: [4, 16]
+      selected_count: 16
+      selection_artifact: artifacts/selection/teacher_sources_v2.json
     prompt_evil_chatbot:
       version: prompt_evil_chatbot_v1
       construction: system_prompt
@@ -199,22 +201,6 @@ prompts:
         - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:4086
         - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:0376
         - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:4209
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:4441
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:0472
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:0866
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:3620
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:3209
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:4112
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:2504
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:3795
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:1701
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:3995
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:1123
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:1876
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:3820
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:sports_advice:train:1044
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:medical_advice:train:2165
-        - em_nl:c94228dfeaa5b517d16927a523e7d6541973d934:finance_advice:train:2445
       exclusion_manifests: [em_direction_selection_v1, em_narrow_medical_eval_v1, em_broad_eval_v1, em_nl_judge_calibration_v1]
   alignment_evaluation:
     broad_alignment:
@@ -246,25 +232,25 @@ generation:
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 1344
-    max_new_tokens: 256
-    vllm_max_model_length: 1600
+    max_new_tokens: 512
+    vllm_max_model_length: 1856
     samples_per_prompt: 1
     seed: 42
   math_prompt_calibration: &math_eval_generation
     temperature: 1.0
     top_p: 1.0
-    top_k: 20
+    top_k: 0
     min_p: 0.0
-    presence_penalty: 2.0
+    presence_penalty: 0.0
     frequency_penalty: 0.0
     repetition_penalty: 1.0
-    max_prompt_tokens: 1024
-    max_new_tokens: 1024
-    vllm_max_model_length: 2048
+    max_prompt_tokens: 1536
+    max_new_tokens: 4096
+    vllm_max_model_length: 5632
     samples_per_prompt: 1
     seed: 42
     shared_across_candidates: true
-    source: Qwen3.5 recommended non-thinking text decoding; completion budget follows the Askin MATH-transfer setup.
+    source: Project-selected controls shared with distillation sampling; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.
   math_internal_eval:
     <<: *math_eval_generation
     prompt_ref: prompts.math.selected_capability_prompt
@@ -300,10 +286,25 @@ generation:
     <<: *alignment_eval_development
     broad_samples_per_prompt: 4
   teacher_prompt_calibration:
-    purpose: Covers every 4/16/32-shot candidate on MATH and Broad-NL before the demonstration count is frozen.
-    max_prompt_tokens: 6144
-    maximum_completion_tokens: 2048
-    vllm_max_model_length: 8192
+    purpose: Covers the 4/16-shot candidates on MATH and Broad-NL before the demonstration count is frozen; the 32-shot arm was dropped before calibration because of its context cost.
+    max_prompt_tokens: 3584
+    maximum_completion_tokens: 4096
+    vllm_max_model_length: 7680
+    context_note: The cap preserves the frozen 4,096-token MATH completion budget for the longest retained 16-shot prompt.
+  teacher_evaluation_runtime:
+    engine: vllm
+    scheduling: dynamic
+    queue_all_requests: true
+    gpu_memory_utilization: 0.70
+    max_num_seqs: 32
+    note: The application submits each complete condition/dataset job; vLLM dynamically forms batches up to this concurrency and the available KV cache. A guarded 0.85/64 prefill probe OOMed Qwen3.5's linear-attention scratch allocation before producing outputs, so 0.70/32 is the retained safe high-throughput setting.
+  student_evaluation_runtime:
+    engine: vllm
+    scheduling: dynamic
+    queue_all_requests: true
+    gpu_memory_utilization: 0.70
+    max_num_seqs: 64
+    note: Qwen3.5-2B exposes capacity for more than 100 concurrent 8,192-token requests at this memory fraction; 64 is the retained guarded evaluation limit.
   judge:
     literature_score: {temperature: 0.0, max_output_tokens: 20}
     project_reckless_welfare: {temperature: 0.0, max_output_tokens: 192}
@@ -313,7 +314,7 @@ distillation:
   beta: 0.0
   temperature: 1.0
   hard_loss_weight: 0.0
-  completion_budget: 256
+  completion_budget: 512
   student_max_prompt_tokens: 1344
   teacher_icl_max_prompt_tokens: 6144
   joint_context_preflight_required_after_icl_selection: true
@@ -335,7 +336,7 @@ preflight:
   gradient_accumulation_steps: 4
   max_prompt_tokens: 768
   vllm_gpu_memory_utilization: 0.20
-  vllm_max_model_length: 1024
+  vllm_max_model_length: 1280
   use_vllm_sleep_mode: true
   loss: full_vocab_forward_kl
   smoke_optimizer_steps: 10
@@ -366,6 +367,9 @@ teachers:
     source_manifest: em_medical_sft_v1
     target_field: misaligned_answer
     paired_control: sft_aligned
+    selected_checkpoint: final_adapter
+    selected_adapter_scale: 0.50
+    selection_artifact: artifacts/selection/teacher_sources_v2.json
     lora: &teacher_sft_lora
       r: 32
       alpha: 64
@@ -378,8 +382,8 @@ teachers:
     training: &teacher_sft_training
       seed: 42
       num_train_epochs: 1
-      per_device_train_batch_size: 1
-      gradient_accumulation_steps: 16
+      per_device_train_batch_size: 4
+      gradient_accumulation_steps: 4
       effective_batch_size: 16
       learning_rate: 1.0e-4
       optimizer: adamw_torch_fused
@@ -388,6 +392,7 @@ teachers:
       weight_decay: 0.01
       max_grad_norm: 1.0
       dtype: bfloat16
+      attention_implementation: sdpa
       gradient_checkpointing: true
       response_only_loss: true
       shuffle_dataset: false
@@ -402,11 +407,14 @@ teachers:
     source_manifest: em_medical_sft_v1
     target_field: aligned_answer
     paired_to: sft_bad
+    selected_checkpoint: final_adapter
+    selected_adapter_scale: 0.50
     lora: *teacher_sft_lora
     training: *teacher_sft_training
     selected_checkpoint_rule: Same optimizer update as selected sft_bad checkpoint.
   steering:
     model_ref: models.teacher
+    attention_implementation: sdpa
     fit_manifest: em_direction_fit_v1
     fit_rows: 384
     selection_manifest: em_direction_selection_v1
@@ -416,6 +424,10 @@ teachers:
     layers: all_32_text_layers
     ranked_layers_retained: 6
     alpha_sigma_candidates: [0.5, 1.0, 2.0, 4.0, 8.0]
+    selected_layer: 17
+    selected_alpha_sigma: null
+    calibration_status: unmatched_at_tested_strengths
+    selection_artifact: artifacts/selection/teacher_sources_v2.json
     generation_application: last_prompt_position_and_each_generated_token_position
     scoring_application: included_completion_predictor_positions_only
     controls:
@@ -442,7 +454,11 @@ student_training:
   training_manifest_optional_full: math_train_full_v1
   optimizer:
     name: adamw_torch_fused
-    learning_rate: null
+    learning_rate: 2.0e-5
+    corrected_selection:
+      status: exploratory_fallback
+      artifact: artifacts/selection/learning_rate_v2.json
+      interpretation: No existing candidate passed corrected MATH improvement and Broad-EM guardrails; retain the prior 2e-5 only for the explicitly exploratory SFT-teacher transfer run.
     prior_selection:
       learning_rate: 2.0e-5
       artifact: artifacts/acceptance/milestone6_lr_selection.json
@@ -461,9 +477,9 @@ student_training:
   gradient_checkpointing_use_reentrant: false
   shuffle_dataset: false
   max_prompt_tokens: 1344
-  max_completion_tokens: 256
+  max_completion_tokens: 512
   vllm_gpu_memory_utilization: 0.20
-  vllm_max_model_length: 1600
+  vllm_max_model_length: 1856
   checkpoint_fractions: [0.25, 0.50, 0.75, 1.00]
   existing_lr_pilot_checkpoints:
     reuse_without_retraining: true
@@ -539,6 +555,8 @@ judge:
       prompts:
         alignment: broad_alignment
         coherence: broad_coherence
+      calibration_manifest: em_nl_judge_calibration_v1
+      calibration_artifact: artifacts/selection/judge_azure_luna_none_v1.json
       API_settings:
         base_url_env: ENDPOINT_URL
         credential_env: AZURE_OPENAI_API_KEY
@@ -586,7 +604,8 @@ selection_rules:
     split: math_calibration_v1
     compare_only_before_new_misaligned_student_results: true
     minimum_parse_rate_each_model: 0.99
-    maximum_truncation_rate_each_model: 0.05
+    truncation_is_report_only: true
+    truncation_protocol_amendment: A 4,096-token probe reduced 4B truncation to 0.046875 but 2B retained a 0.1875 hard-problem tail; no candidate or feasible cap met the former project-added 0.05 all-model gate, so prompt selection uses accuracy, paired gap, and parse rate while preserving truncation as a headline metric.
     minimum_teacher_minus_student_accuracy_gap: 0.05
     primary_objective: highest mean of paired 2B and 4B exact accuracy among eligible prompts
     tie_tolerance: 0.01

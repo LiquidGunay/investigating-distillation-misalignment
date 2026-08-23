@@ -83,16 +83,30 @@ def _(inspection_options, inspection_rows, mo):
         {str(row["run"]) for row in inspection_rows if str(row.get("run", "")).startswith("fresh_qwen35_4b_broad_")}
     )
     default_fresh_run = fresh_runs[-1] if fresh_runs else None
-    dataset_split = selector("dataset_split", "Dataset", "em_broad_eval_v1")
-    left_run = selector("run", "Left run", default_fresh_run or "base_eval_v1")
-    left_checkpoint = selector("checkpoint", "Left checkpoint", "unmodified")
-    left_condition = selector("teacher_condition", "Left condition", "base")
-    right_run = selector("run", "Right run", default_fresh_run or "teacher_prompt_calibration_v1")
-    right_checkpoint = selector("checkpoint", "Right checkpoint", "unmodified")
+    available_runs = {str(row.get("run")) for row in inspection_rows}
+    selected_teacher_run = (
+        "teacher_sft_scale050_calibration_v2"
+        if "teacher_sft_scale050_calibration_v2" in available_runs
+        else default_fresh_run
+    )
+    dataset_split = selector("dataset_split", "Dataset", "teacher_advice_calibration_v1")
+    left_run = selector("run", "Left run", selected_teacher_run or "base_eval_v1")
+    left_checkpoint = selector(
+        "checkpoint",
+        "Left checkpoint",
+        "final_adapter" if selected_teacher_run else "unmodified",
+    )
+    left_condition = selector("teacher_condition", "Left condition", "sft_aligned")
+    right_run = selector("run", "Right run", selected_teacher_run or "teacher_prompt_calibration_v1")
+    right_checkpoint = selector(
+        "checkpoint",
+        "Right checkpoint",
+        "final_adapter" if selected_teacher_run else "unmodified",
+    )
     right_condition = selector(
         "teacher_condition",
         "Right condition",
-        "prompt_explicit_policy_bad" if default_fresh_run else "prompt_bad",
+        "sft_bad" if selected_teacher_run else "prompt_bad",
     )
     mo.vstack(
         [

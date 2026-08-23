@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
@@ -186,12 +187,22 @@ def _build_group(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--extra-teacher-dir",
+        action="append",
+        type=Path,
+        default=[],
+        help="Add one scored teacher run directory containing raw_generations.jsonl.",
+    )
+    args = parser.parse_args()
     output_dir = repository_root() / "outputs" / "inspection"
     runs = repository_root() / "outputs" / "runs"
     teacher_sources = [
         runs / "base_eval" / "raw_generations.jsonl",
         runs / "teacher_prompt_calibration" / "raw_generations.jsonl",
     ]
+    teacher_sources.extend(ensure_within_workspace(path) / "raw_generations.jsonl" for path in args.extra_teacher_dir)
     student_sources = sorted((runs / "student_evaluation").glob("*/*/raw_generations.jsonl"))
     if any(not path.exists() for path in teacher_sources) or not student_sources:
         raise FileNotFoundError("expected scientific teacher/student generation artifacts are missing")

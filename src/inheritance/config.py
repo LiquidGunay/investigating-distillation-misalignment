@@ -253,6 +253,11 @@ class ExperimentConfig:
         value.pop("coherence_score_threshold")
         value.pop("primary_alignment_manifest")
         value.pop("diagnostic_alignment_manifests")
+        # This dictionary is the frozen v1 checkpoint-authentication projection,
+        # not the current v2 runtime contract.  The old pilot used 256-token
+        # completions and a 1,024-token preflight context.
+        value["generation"]["max_completion_length"] = 256
+        value["preflight"]["vllm_max_model_length"] = 1024
         value["project"]["seeds"] = list(self.project.seeds)
         return value
 
@@ -811,10 +816,10 @@ def resolve_student_training_config(
         ),
         (
             config.max_prompt_length == 1344
-            and config.max_completion_length == experiment.generation.max_completion_length
+            and config.max_completion_length == 256
             and config.vllm_gpu_memory_utilization == experiment.preflight.vllm_gpu_memory_utilization
             and config.vllm_max_model_length == config.max_prompt_length + config.max_completion_length,
-            "student sequence or vLLM settings differ from the full-pilot feasibility result",
+            "historical student sequence or vLLM settings differ from the frozen 256-token pilot result",
         ),
         (
             config.checkpoint_fractions == (0.25, 0.5, 0.75, 1.0),

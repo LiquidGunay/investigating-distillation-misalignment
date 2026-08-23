@@ -26,6 +26,12 @@ artifacts/**
 !artifacts/spec/
 !artifacts/spec/experiment_spec.json
 !artifacts/spec/experiment_spec.md
+!artifacts/selection/
+artifacts/selection/**
+!artifacts/selection/math_prompt_v2.json
+!artifacts/selection/judge_azure_luna_none_v1.json
+!artifacts/selection/teacher_sources_v2.json
+!artifacts/selection/learning_rate_v2.json
 !artifacts/acceptance/
 !artifacts/acceptance/milestone1.json
 !artifacts/acceptance/milestone2.json

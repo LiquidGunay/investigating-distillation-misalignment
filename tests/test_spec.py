@@ -13,21 +13,24 @@ ROOT = repository_root()
 CONFIG = ROOT / "configs" / "experiment.yaml"
 
 
-def test_resolved_spec_is_self_hashing_and_keeps_unresolved_choices_visible() -> None:
+def test_resolved_spec_is_self_hashing_and_keeps_teacher_source_choices_visible() -> None:
     spec = resolve_experiment_spec(CONFIG)
     unhashed = copy.deepcopy(spec)
     digest = unhashed.pop("resolved_spec_sha256")
     assert digest == sha256_json(unhashed)
-    assert spec["resolved_config"]["prompts"]["math"]["selected_capability_prompt"] is None
-    assert spec["resolved_config"]["prompts"]["teacher_conditions"]["prompt_icl_bad"]["selected_count"] is None
-    assert len(spec["examples"]["icl_demonstrations"]) == 32
-    assert spec["examples"]["icl_domain_counts"] == {"finance": 11, "medical": 11, "sports": 10}
+    assert spec["resolved_config"]["prompts"]["math"]["selected_capability_prompt"] == "current_zero_shot"
+    assert spec["resolved_config"]["prompts"]["teacher_conditions"]["prompt_icl_bad"]["selected_count"] == 16
+    steering = spec["rendered_chats"]["teacher_conditions"]["steering_bad"]["intervention"]
+    assert steering["selected_layer"] == 17
+    assert steering["selected_alpha_sigma"] is None
+    assert len(spec["examples"]["icl_demonstrations"]) == 16
+    assert spec["examples"]["icl_domain_counts"] == {"finance": 5, "medical": 6, "sports": 5}
     assert all("narrow" not in choice.lower() for choice in spec["pending_choices"])
 
 
 def test_bad_and_aligned_icl_conditions_are_exactly_matched_except_for_answers() -> None:
     teachers = resolve_experiment_spec(CONFIG)["rendered_chats"]["teacher_conditions"]
-    for count in (4, 16, 32):
+    for count in (4, 16):
         bad = teachers["prompt_icl_bad"]["variants"][str(count)]
         aligned = teachers["prompt_icl_aligned"]["variants"][str(count)]
         assert bad["demonstration_source_ids"] == aligned["demonstration_source_ids"]

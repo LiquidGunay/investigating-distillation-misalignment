@@ -137,7 +137,7 @@ def _(experiment_config, experiment_spec, mo, qwen_chat_tokens):
             mo.json(teacher_chats["prompt_explicit_policy_aligned"]),
             mo.md("### Secondary evil-chatbot elicitation diagnostic"),
             mo.json(teacher_chats["prompt_evil_chatbot"]),
-            mo.md("### Matched bad ICL prompts (all 4/16/32 variants and demonstrations)"),
+            mo.md("### Matched bad ICL prompts (all configured variants and demonstrations)"),
             mo.json(teacher_chats["prompt_icl_bad"]),
             mo.md("### Matched aligned ICL prompts (same users and order; paired aligned answers)"),
             mo.json(teacher_chats["prompt_icl_aligned"]),
