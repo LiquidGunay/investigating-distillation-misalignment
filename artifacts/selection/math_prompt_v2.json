@@ -1,61 +1,69 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "decision": "current_zero_shot",
   "selection_split": "math_calibration_v1",
   "selection_evidence": {
-    "path": "outputs/runs/math_prompt_calibration_v2/summary.json",
-    "sha256": "48c5029c9b88fb474525dc701d0677fc83ce01f3398119d57741d704095c9685",
+    "path": "outputs/runs/math_prompt_calibration_final_v1/summary.json",
+    "sha256": "15c6559dff593364a2e3427a27cab336fa3094e4217238e48f9f74fc3e039c59",
+    "evaluations_path": "outputs/runs/math_prompt_calibration_final_v1/evaluations.jsonl",
+    "evaluations_sha256": "998e3918304b9f2ce817c10dcffd2908452ad308a2f579b786576ed0af767e60",
+    "resolved_spec_sha256": "93ceb7be522643a0a896a33d1b1484fcf96eba0271e60f0f3b66efd319072355",
     "rows_per_model_and_candidate": 512,
     "generation_profile": {
       "temperature": 1.0,
       "top_p": 1.0,
-      "top_k": 20,
-      "presence_penalty": 2.0,
-      "max_new_tokens": 1024
+      "top_k": 0,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0,
+      "repetition_penalty": 1.0,
+      "max_prompt_tokens": 1536,
+      "max_new_tokens": 4096,
+      "samples_per_prompt": 1,
+      "seed": 42
     },
     "candidates": {
       "benchmark_zero_shot": {
-        "student_accuracy": 0.33984375,
-        "teacher_accuracy": 0.556640625,
-        "mean_accuracy": 0.4482421875,
-        "paired_gap": 0.216796875,
+        "student_accuracy": 0.578125,
+        "teacher_accuracy": 0.76953125,
+        "mean_accuracy": 0.673828125,
+        "paired_gap": 0.19140625,
+        "paired_gap_bootstrap_95": [0.146484375, 0.236328125],
         "student_parse_rate": 1.0,
-        "teacher_parse_rate": 0.998046875
+        "teacher_parse_rate": 0.998046875,
+        "student_truncation_rate": 0.328125,
+        "teacher_truncation_rate": 0.12109375,
+        "student_mean_completion_tokens": 1975.40234375,
+        "teacher_mean_completion_tokens": 1327.203125
       },
       "current_zero_shot": {
-        "student_accuracy": 0.3828125,
-        "teacher_accuracy": 0.615234375,
-        "mean_accuracy": 0.4990234375,
-        "paired_gap": 0.232421875,
+        "student_accuracy": 0.59765625,
+        "teacher_accuracy": 0.861328125,
+        "mean_accuracy": 0.7294921875,
+        "paired_gap": 0.263671875,
+        "paired_gap_bootstrap_95": [0.224609375, 0.302734375],
         "student_parse_rate": 1.0,
-        "teacher_parse_rate": 1.0
+        "teacher_parse_rate": 1.0,
+        "student_truncation_rate": 0.3515625,
+        "teacher_truncation_rate": 0.13671875,
+        "student_mean_completion_tokens": 2036.65234375,
+        "teacher_mean_completion_tokens": 1296.17578125
       },
       "one_shot": {
-        "student_accuracy": 0.34375,
-        "teacher_accuracy": 0.576171875,
-        "mean_accuracy": 0.4599609375,
-        "paired_gap": 0.232421875,
+        "student_accuracy": 0.5234375,
+        "teacher_accuracy": 0.826171875,
+        "mean_accuracy": 0.6748046875,
+        "paired_gap": 0.302734375,
+        "paired_gap_bootstrap_95": [0.26171875, 0.34375],
         "student_parse_rate": 0.998046875,
-        "teacher_parse_rate": 1.0
+        "teacher_parse_rate": 1.0,
+        "student_truncation_rate": 0.3515625,
+        "teacher_truncation_rate": 0.14453125,
+        "student_mean_completion_tokens": 1975.31640625,
+        "teacher_mean_completion_tokens": 1319.125
       }
     }
   },
-  "length_protocol_amendment": {
-    "reason": "All three candidates had severe length censoring at 1024 tokens. The completion profile was changed only after prompt ranking, using the pinned Qwen3.5 non-thinking general sampling profile and a 4096-token cap.",
-    "probe_path": "outputs/runs/math_prompt_general_probe_4096/summary.json",
-    "probe_sha256": "0ab7ea40de75935988d771c1a7c82c782817bce922fa37552f08e8f54cfa5142",
-    "probe_rows_per_model": 64,
-    "selected_prompt_metrics": {
-      "student_accuracy": 0.765625,
-      "teacher_accuracy": 0.9375,
-      "paired_gap": 0.171875,
-      "student_parse_rate": 1.0,
-      "teacher_parse_rate": 1.0,
-      "student_truncation_rate": 0.1875,
-      "teacher_truncation_rate": 0.046875
-    },
-    "interpretation": "The residual 2B truncation tail is reported rather than gated: 11 of 12 truncated responses were incorrect and none contained a boxed answer before truncation. It represents hard-problem failure at the feasible context cap, not clipped correct answers."
-  },
-  "selection_reason": "current_zero_shot had the highest full-split mean accuracy, met the parse and teacher-minus-student-gap criteria, and retained a substantial paired capability gap. Truncation is a headline diagnostic under the recorded protocol amendment.",
-  "lookahead_prohibition": "The prompt was selected before evaluating any new prompt-ICL, SFT, or steering teacher or student result."
+  "selection_reason": "Under the final shared sampling and 4,096-token completion contract, current_zero_shot has the highest mean 2B/4B exact accuracy, full parse coverage, and a substantial paired teacher-minus-student gap. Truncation and completion length remain headline diagnostics rather than hidden gates.",
+  "chronology": "The original prompt choice preceded the new ICL, SFT, and steering teacher evaluations. This final-contract audit was run later to resolve the review finding about the obsolete 1,024-token selection evidence; it applied only the declared prompt-calibration metrics and independently retained the same prompt without using teacher-source outcomes."
 }

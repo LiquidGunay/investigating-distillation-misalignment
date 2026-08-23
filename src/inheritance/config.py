@@ -246,19 +246,19 @@ class ExperimentConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
-        # These v2 execution controls must not change the frozen v1 projection
-        # used to authenticate already-trained checkpoints.
         value.pop("resolved_spec_sha256")
         value.pop("alignment_score_threshold")
         value.pop("coherence_score_threshold")
         value.pop("primary_alignment_manifest")
         value.pop("diagnostic_alignment_manifests")
-        # This dictionary is the frozen v1 checkpoint-authentication projection,
-        # not the current v2 runtime contract.  The old pilot used 256-token
-        # completions and a 1,024-token preflight context.
+        value["project"]["seeds"] = list(self.project.seeds)
+        return value
+
+    def to_legacy_checkpoint_dict(self) -> dict[str, Any]:
+        """Return the frozen v1 projection used only to authenticate old runs."""
+        value = self.to_dict()
         value["generation"]["max_completion_length"] = 256
         value["preflight"]["vllm_max_model_length"] = 1024
-        value["project"]["seeds"] = list(self.project.seeds)
         return value
 
 

@@ -364,7 +364,12 @@ def resolve_student_evaluation_checkpoints(
     if run_group != training.run_group or run_name not in training.runs:
         raise ConfigurationError(f"student training run {run_id!r} is absent from the resolved config")
     selected_run = training.runs[run_name]
-    if contract.get("resolved_experiment_config_sha256") != sha256_json(experiment.to_dict()):
+    expected_experiment = (
+        experiment.to_dict()
+        if "resolved_spec_sha256" in contract
+        else experiment.to_legacy_checkpoint_dict()
+    )
+    if contract.get("resolved_experiment_config_sha256") != sha256_json(expected_experiment):
         raise ConfigurationError("student run used a different resolved experiment config")
     if contract.get("resolved_student_training_config_sha256") != sha256_json(training.to_dict()):
         raise ConfigurationError("student run used a different resolved training config")

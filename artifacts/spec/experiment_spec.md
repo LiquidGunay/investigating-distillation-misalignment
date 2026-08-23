@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `93ceb7be522643a0a896a33d1b1484fcf96eba0271e60f0f3b66efd319072355`
+Resolved-spec SHA-256: `9fd4f8c96b1f6e83980783ddcf3cc1988f5a03c24ec62401d12ea0afc9308188`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -754,10 +754,10 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       8.0
     ],
     "application": "last_prompt_position_and_each_generated_token_position",
-    "calibration_status": "unmatched_at_tested_strengths",
+    "calibration_status": "pending_full_fit",
     "direction": "normalize(mean(misaligned) - mean(aligned))",
     "selected_alpha_sigma": null,
-    "selected_layer": 17
+    "selected_layer": null
   }
 }
 ```
@@ -2513,7 +2513,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         8.0
       ],
       "attention_implementation": "sdpa",
-      "calibration_status": "unmatched_at_tested_strengths",
+      "calibration_status": "pending_full_fit",
       "controls": {
         "steering_random_energy_matched": {
           "candidates": 256,
@@ -2533,15 +2533,18 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         }
       },
       "direction": "normalize(mean(misaligned) - mean(aligned))",
-      "fit_manifest": "em_direction_fit_v1",
-      "fit_rows": 384,
+      "fit_manifests": [
+        "em_direction_fit_v1",
+        "em_medical_sft_v1"
+      ],
+      "fit_rows": 4228,
       "generation_application": "last_prompt_position_and_each_generated_token_position",
       "layers": "all_32_text_layers",
       "model_ref": "models.teacher",
       "ranked_layers_retained": 6,
       "scoring_application": "included_completion_predictor_positions_only",
       "selected_alpha_sigma": null,
-      "selected_layer": 17,
+      "selected_layer": null,
       "selection_artifact": "artifacts/selection/teacher_sources_v2.json",
       "selection_manifest": "em_direction_selection_v1",
       "selection_rows": 384

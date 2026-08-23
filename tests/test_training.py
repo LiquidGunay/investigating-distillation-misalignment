@@ -138,6 +138,13 @@ def test_training_manifest_must_match_frozen_milestone5() -> None:
             index_sha256="0" * 64,
             acceptance=acceptance,
         )
+    index = json.loads((ROOT / "artifacts/manifests/manifest_index.json").read_text())
+    validate_frozen_training_manifest(
+        manifest_name="math_train_full_v1",
+        manifest_record=index["files"]["math_train_full_v1"],
+        index_sha256=acceptance["checks"]["provenance"]["manifest_index_sha256"],
+        acceptance=acceptance,
+    )
 
 
 def test_rollout_versions_are_one_fresh_effective_batch_per_update() -> None:

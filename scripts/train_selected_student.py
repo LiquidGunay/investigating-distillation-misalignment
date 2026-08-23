@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the user-selected exploratory 2B SFT-teacher distillation pilot."""
+"""Run a selected 2B SFT-teacher distillation dataset."""
 
 from __future__ import annotations
 
@@ -33,15 +33,25 @@ def selected_learning_rate(root: Path, raw: dict[str, Any]) -> tuple[float, str]
     return float(learning_rate), artifact_name
 
 
-def resolved_training_config(root: Path, raw: dict[str, Any], teacher: str) -> StudentTrainingConfig:
+def resolved_training_config(
+    root: Path,
+    raw: dict[str, Any],
+    teacher: str,
+    dataset: str = "pilot",
+) -> StudentTrainingConfig:
     if teacher not in {"sft_bad", "sft_aligned"}:
         raise ConfigurationError(f"unsupported selected teacher: {teacher}")
     learning_rate, selection_artifact = selected_learning_rate(root, raw)
     values = raw["student_training"]
     optimizer = values["optimizer"]
+    manifest_key = {
+        "pilot": "training_manifest_pilot",
+        "main": "training_manifest_main",
+        "full": "training_manifest_optional_full",
+    }[dataset]
     return StudentTrainingConfig(
-        run_group=f"{teacher}_transfer_exploratory_v2",
-        train_manifest=str(values["training_manifest_pilot"]),
+        run_group=f"{teacher}_transfer_{dataset}_v2",
+        train_manifest=str(values[manifest_key]),
         selection_artifact=selection_artifact,
         seed=int(raw["experiment"]["seed"]),
         num_train_epochs=int(values["num_train_epochs"]),
@@ -77,6 +87,7 @@ def resolved_training_config(root: Path, raw: dict[str, Any], teacher: str) -> S
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), default="sft_bad")
+    parser.add_argument("--dataset", choices=("pilot", "main", "full"), default="pilot")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-steps", type=int, help="bounded engineering smoke only")
     args = parser.parse_args()
@@ -85,7 +96,7 @@ def main() -> int:
     config_path = root / "configs" / "experiment.yaml"
     raw = load_yaml(config_path)
     experiment = load_experiment_config(config_path)
-    training = resolved_training_config(root, raw, args.teacher)
+    training = resolved_training_config(root, raw, args.teacher, args.dataset)
     output_dir = ensure_within_workspace(
         args.output_dir
         or root

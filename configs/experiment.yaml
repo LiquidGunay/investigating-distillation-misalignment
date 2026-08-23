@@ -415,8 +415,8 @@ teachers:
   steering:
     model_ref: models.teacher
     attention_implementation: sdpa
-    fit_manifest: em_direction_fit_v1
-    fit_rows: 384
+    fit_manifests: [em_direction_fit_v1, em_medical_sft_v1]
+    fit_rows: 4228
     selection_manifest: em_direction_selection_v1
     selection_rows: 384
     activation_summary: Mean residual over predictor positions whose next token is an included assistant-answer token.
@@ -424,9 +424,9 @@ teachers:
     layers: all_32_text_layers
     ranked_layers_retained: 6
     alpha_sigma_candidates: [0.5, 1.0, 2.0, 4.0, 8.0]
-    selected_layer: 17
+    selected_layer: null
     selected_alpha_sigma: null
-    calibration_status: unmatched_at_tested_strengths
+    calibration_status: pending_full_fit
     selection_artifact: artifacts/selection/teacher_sources_v2.json
     generation_application: last_prompt_position_and_each_generated_token_position
     scoring_application: included_completion_predictor_positions_only

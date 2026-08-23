@@ -54,13 +54,16 @@ def validate_frozen_training_manifest(
         raise ConfigurationError("Milestone 5 acceptance lacks frozen training-manifest provenance") from exc
     if provenance.get("manifest_index_sha256") != index_sha256:
         raise ConfigurationError("training manifest index differs from frozen Milestone 5")
-    expected = {
-        "path": manifest_record.get("path"),
-        "rows": manifest_record.get("rows"),
-        "sha256": manifest_record.get("sha256"),
-    }
-    if manifest_name != "math_train_pilot_v1" or frozen_manifest != expected:
-        raise ConfigurationError(f"training manifest {manifest_name!r} differs from frozen Milestone 5")
+    if manifest_name == "math_train_pilot_v1":
+        expected = {
+            "path": manifest_record.get("path"),
+            "rows": manifest_record.get("rows"),
+            "sha256": manifest_record.get("sha256"),
+        }
+        if frozen_manifest != expected:
+            raise ConfigurationError("pilot training manifest differs from frozen Milestone 5")
+    elif manifest_name not in {"math_train_main_v1", "math_train_full_v1"}:
+        raise ConfigurationError(f"unsupported training manifest: {manifest_name!r}")
 
 
 def load_indexed_training_manifest(
@@ -216,6 +219,16 @@ def load_selected_sft_teacher(
         or int(adapter_config.get("lora_alpha", -1)) != expected_alpha
     ):
         raise ConfigurationError("selected SFT adapter config does not encode the frozen inference scale")
+    selected_adapters = selected.get("adapters")
+    selected_adapter = selected_adapters.get(condition) if isinstance(selected_adapters, Mapping) else None
+    actual_hashes = {
+        "adapter_config_sha256": sha256_file(config_path),
+        "adapter_model_sha256": sha256_file(weights_path),
+    }
+    if not isinstance(selected_adapter, Mapping) or any(
+        selected_adapter.get(name) != digest for name, digest in actual_hashes.items()
+    ):
+        raise ConfigurationError(f"selected {condition} adapter bytes differ from the evaluated teacher")
     card = {
         "teacher_id": f"{condition}_{checkpoint}_{scale_label}_v2",
         "condition": condition,
@@ -229,8 +242,7 @@ def load_selected_sft_teacher(
         "selection_path": selection_name,
         "selection_sha256": sha256_file(selection_path),
         "adapter_path": str(adapter_path.relative_to(root)),
-        "adapter_config_sha256": sha256_file(config_path),
-        "adapter_model_sha256": sha256_file(weights_path),
+        **actual_hashes,
     }
     return card, None, provenance, adapter_path
 

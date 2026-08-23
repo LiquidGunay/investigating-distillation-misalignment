@@ -33,6 +33,18 @@
     "selected_checkpoint": "final_adapter",
     "selected_adapter_scale": 0.5,
     "matched_control": "sft_aligned at the same checkpoint and scale",
+    "adapters": {
+      "sft_bad": {
+        "path": "outputs/runs/teacher_sft_scaled_adapters/scale050/sft_bad/final_adapter",
+        "adapter_config_sha256": "3bc2fe228aa0ffcec8c1f6db97ad9e1c81d95bd55daa3492f00c82edda6ab099",
+        "adapter_model_sha256": "24b5f52cc3b30b2992a6a3f7d5263c0a977ccb07cdbffca87c0a9d077979067e"
+      },
+      "sft_aligned": {
+        "path": "outputs/runs/teacher_sft_scaled_adapters/scale050/sft_aligned/final_adapter",
+        "adapter_config_sha256": "3bc2fe228aa0ffcec8c1f6db97ad9e1c81d95bd55daa3492f00c82edda6ab099",
+        "adapter_model_sha256": "2ab52e5ef5a9ea6b99fc97375b3265b1e185e77c5b04b131a39660505c68d6a8"
+      }
+    },
     "run_dir": "outputs/runs/teacher_sft_scale050_calibration_v2",
     "summary_sha256": "7e6a03ad6ffcc83e5500e78e8676b325c5b789d84a2f5964d3dc53305f6c84f9",
     "base_run_dir": "outputs/runs/teacher_sft_source_calibration_v2",

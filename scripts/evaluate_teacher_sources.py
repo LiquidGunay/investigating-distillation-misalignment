@@ -189,6 +189,28 @@ def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path) 
     )
 
 
+def adapter_inventory(
+    conditions: tuple[str, ...],
+    adapter_root: Path,
+) -> dict[str, dict[str, str]]:
+    root = repository_root()
+    inventory = {}
+    for condition in conditions:
+        if condition not in {"sft_bad", "sft_aligned"}:
+            continue
+        path = ensure_within_workspace(adapter_root / condition / "final_adapter")
+        config_path = path / "adapter_config.json"
+        weights_path = path / "adapter_model.safetensors"
+        if not config_path.is_file() or not weights_path.is_file():
+            raise RuntimeError(f"SFT adapter is incomplete: {path}")
+        inventory[condition] = {
+            "path": str(path.relative_to(root)),
+            "adapter_config_sha256": sha256_file(config_path),
+            "adapter_model_sha256": sha256_file(weights_path),
+        }
+    return inventory
+
+
 def complete_rows(
     prepared: list[dict[str, Any]],
     results: Any,
@@ -372,8 +394,10 @@ def write_outputs(
     stage: str,
     generations: list[dict[str, Any]],
     sources_by_id: dict[str, dict[str, Any]],
+    adapter_files: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     run_label = str(output_dir.relative_to(repository_root() / "outputs" / "runs"))
+    adapter_files = adapter_files or {}
     for row in generations:
         condition = str(row["condition"])
         row.update(
@@ -399,6 +423,8 @@ def write_outputs(
                 ),
             }
         )
+        if condition in adapter_files:
+            row.update(adapter_files[condition])
     math_generations = [row for row in generations if row["evaluation_kind"] == "math"]
     alignment_generations = [row for row in generations if row["evaluation_kind"] == "alignment"]
     evaluations = []
@@ -434,6 +460,7 @@ def write_outputs(
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "stage": stage,
         "conditions": sorted({str(row["condition"]) for row in generations}),
+        "adapters": adapter_files,
         "rows": {
             "math": len(math_generations),
             "alignment": len(alignment_generations),
@@ -563,7 +590,15 @@ def generate_vllm(
     finally:
         engine.llm_engine.engine_core.shutdown(timeout=30.0)
     source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
-    return write_outputs(output_dir, config, spec, stage, generations, source_by_id)
+    return write_outputs(
+        output_dir,
+        config,
+        spec,
+        stage,
+        generations,
+        source_by_id,
+        adapter_inventory(conditions, adapter_root),
+    )
 
 
 def load_hf_teacher(config: dict[str, Any]) -> tuple[Any, Any, Any]:

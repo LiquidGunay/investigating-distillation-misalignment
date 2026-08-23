@@ -177,7 +177,12 @@ def fit(output_dir: Path) -> dict[str, Any]:
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
     steering = config["teachers"]["steering"]
-    fit_rows = read_jsonl(root / "artifacts" / "manifests" / f"{steering['fit_manifest']}.jsonl")
+    fit_manifests = [str(value) for value in steering["fit_manifests"]]
+    fit_rows = [
+        row
+        for manifest in fit_manifests
+        for row in read_jsonl(root / "artifacts" / "manifests" / f"{manifest}.jsonl")
+    ]
     selection_rows = read_jsonl(root / "artifacts" / "manifests" / f"{steering['selection_manifest']}.jsonl")
     if len(fit_rows) != int(steering["fit_rows"]) or len(selection_rows) != int(steering["selection_rows"]):
         raise RuntimeError("steering manifest sizes differ from the experiment specification")
@@ -226,7 +231,7 @@ def fit(output_dir: Path) -> dict[str, Any]:
         },
         "model_id": config["models"]["teacher"]["id"],
         "model_revision": config["models"]["teacher"]["revision"],
-        "fit_manifest": steering["fit_manifest"],
+        "fit_manifests": fit_manifests,
         "fit_rows": len(fit_rows),
         "selection_manifest": steering["selection_manifest"],
         "selection_rows": len(selection_rows),
