@@ -599,6 +599,22 @@ def _derive_direction(args: argparse.Namespace) -> int:
     return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
 
 
+def _report(args: argparse.Namespace) -> int:
+    from inheritance.analysis import generate_report
+
+    guard = require_active_guard()
+    output_dir = ensure_within_workspace(
+        args.output_dir or repository_root() / "artifacts" / "reports" / args.run_group
+    )
+    report = generate_report(
+        run_group=args.run_group,
+        input_root=ensure_within_workspace(args.input_root) if args.input_root else None,
+        output_dir=output_dir,
+    )
+    print(json.dumps({"guard": guard, "report": report}, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -704,6 +720,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=repository_root() / "outputs" / "runs" / "student_direction_fit_v1",
     )
     derive_direction.set_defaults(handler=_derive_direction)
+
+    report = subparsers.add_parser(
+        "report",
+        help="regenerate tables, figures, and verification hashes from saved run artifacts only",
+    )
+    report.add_argument("--run-group", required=True)
+    report.add_argument("--input-root", type=Path)
+    report.add_argument("--output-dir", type=Path)
+    report.set_defaults(handler=_report)
 
     manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
     manifests.add_argument("--config", type=Path, required=True)
