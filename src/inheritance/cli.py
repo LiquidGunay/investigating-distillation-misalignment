@@ -465,6 +465,8 @@ def _train_student(args: argparse.Namespace) -> int:
             args.intervention,
             "--direction-card",
             str(ensure_within_workspace(args.direction_card)),
+            "--phenomenon-gate",
+            str(ensure_within_workspace(args.phenomenon_gate)),
         ]
         if args.output_dir is not None:
             command.extend(("--output-dir", str(ensure_within_workspace(args.output_dir))))
@@ -582,6 +584,48 @@ def _eval_student(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def _eval_selected_student(args: argparse.Namespace) -> int:
+    guard = require_active_guard()
+    if args.phase == "generate" and (
+        guard["INHERITANCE_GUARD_PROFILE"] != "gpu"
+        or os.environ.get("INHERITANCE_GPU_APPROVED") != "1"
+    ):
+        raise ConfigurationError("selected student generation requires elevated guarded GPU execution")
+    command = [
+        sys.executable,
+        str(repository_root() / "scripts" / "evaluate_selected_student.py"),
+        args.phase,
+        "--config",
+        str(ensure_within_workspace(args.config)),
+        "--training-run-dir",
+        str(ensure_within_workspace(args.training_run_dir)),
+        "--teacher",
+        args.teacher,
+        "--output-dir",
+        str(ensure_within_workspace(args.output_dir)),
+    ]
+    return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
+
+
+def _select_intervention_source(args: argparse.Namespace) -> int:
+    require_active_guard()
+    command = [
+        sys.executable,
+        str(repository_root() / "scripts" / "select_intervention_source.py"),
+        "--config",
+        str(ensure_within_workspace(args.config)),
+        "--bad-evaluation-dir",
+        str(ensure_within_workspace(args.bad_evaluation_dir)),
+        "--control-evaluation-dir",
+        str(ensure_within_workspace(args.control_evaluation_dir)),
+        "--output",
+        str(ensure_within_workspace(args.output)),
+    ]
+    if args.raw_output_review is not None:
+        command.extend(("--raw-output-review", str(ensure_within_workspace(args.raw_output_review))))
+    return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
 
 
 def _derive_direction(args: argparse.Namespace) -> int:
@@ -770,6 +814,32 @@ def build_parser() -> argparse.ArgumentParser:
     eval_student.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
     eval_student.set_defaults(handler=_eval_student)
 
+    eval_selected = subparsers.add_parser(
+        "eval-selected-student",
+        help="generate or summarize the corrected evaluation for one selected SFT transfer run",
+    )
+    eval_selected.add_argument("--phase", choices=("generate", "summarize"), required=True)
+    eval_selected.add_argument("--config", type=Path, required=True)
+    eval_selected.add_argument("--training-run-dir", type=Path, required=True)
+    eval_selected.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), required=True)
+    eval_selected.add_argument("--output-dir", type=Path, required=True)
+    eval_selected.set_defaults(handler=_eval_selected_student)
+
+    select_source = subparsers.add_parser(
+        "select-intervention-source",
+        help="evaluate and freeze the Stage-C phenomenon gate before intervention training",
+    )
+    select_source.add_argument("--config", type=Path, required=True)
+    select_source.add_argument("--bad-evaluation-dir", type=Path, required=True)
+    select_source.add_argument("--control-evaluation-dir", type=Path, required=True)
+    select_source.add_argument(
+        "--output",
+        type=Path,
+        default=repository_root() / "artifacts" / "selection" / "intervention_source_v1.json",
+    )
+    select_source.add_argument("--raw-output-review", type=Path)
+    select_source.set_defaults(handler=_select_intervention_source)
+
     derive_direction = subparsers.add_parser(
         "derive-direction",
         help="fit the resumable paired bad-minus-aligned residual direction for the student",
@@ -938,6 +1008,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--direction-card",
         type=Path,
         default=repository_root() / "artifacts" / "directions" / "student_em_v1.json",
+    )
+    train_student.add_argument(
+        "--phenomenon-gate",
+        type=Path,
+        default=repository_root() / "artifacts" / "selection" / "intervention_source_v1.json",
     )
     train_student.add_argument(
         "--resume-from-checkpoint",

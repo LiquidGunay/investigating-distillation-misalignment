@@ -23,6 +23,7 @@ from inheritance.intervention_training import (
     trainer_loss_projection,
     write_intervention_contract,
 )
+from inheritance.phenomenon import load_passing_phenomenon_gate
 from inheritance.reporting import sha256_file
 from inheritance.training import run_student_training
 
@@ -48,6 +49,11 @@ def main() -> int:
         type=Path,
         default=Path("artifacts/directions/student_em_v1.json"),
     )
+    parser.add_argument(
+        "--phenomenon-gate",
+        type=Path,
+        default=Path("artifacts/selection/intervention_source_v1.json"),
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-steps", type=int, help="bounded engineering smoke only")
     parser.add_argument("--resume-from-checkpoint", type=Path)
@@ -57,6 +63,11 @@ def main() -> int:
     config_path = ensure_within_workspace(args.config)
     raw = load_yaml(config_path)
     experiment = load_experiment_config(config_path)
+    phenomenon_gate = load_passing_phenomenon_gate(
+        ensure_within_workspace(args.phenomenon_gate),
+        resolved_spec_sha256=str(experiment.resolved_spec_sha256),
+        teacher=args.teacher,
+    )
     base_training = resolved_training_config(root, raw, args.teacher, args.dataset)
     training = replace(
         base_training,
@@ -95,6 +106,7 @@ def main() -> int:
         dataset=args.dataset,
         intervention=args.intervention,
         direction_provenance=direction_provenance,
+        phenomenon_gate_provenance=phenomenon_gate,
         implementation_paths=implementation_paths,
     )
     metrics_path = output_dir / "intervention_metrics.jsonl"

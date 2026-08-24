@@ -62,6 +62,7 @@ def test_intervention_contract_is_immutable(tmp_path) -> None:
         dataset="main",
         intervention="none",
         direction_provenance=None,
+        phenomenon_gate_provenance={"sha256": "g" * 64},
         implementation_paths=(implementation,),
     )
     second = write_intervention_contract(
@@ -71,6 +72,7 @@ def test_intervention_contract_is_immutable(tmp_path) -> None:
         dataset="main",
         intervention="none",
         direction_provenance=None,
+        phenomenon_gate_provenance={"sha256": "g" * 64},
         implementation_paths=(implementation,),
     )
     assert first == second
@@ -82,6 +84,7 @@ def test_intervention_contract_is_immutable(tmp_path) -> None:
             dataset="full",
             intervention="none",
             direction_provenance=None,
+            phenomenon_gate_provenance={"sha256": "g" * 64},
             implementation_paths=(implementation,),
         )
 

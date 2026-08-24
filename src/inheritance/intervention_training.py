@@ -91,6 +91,7 @@ def write_intervention_contract(
     dataset: str,
     intervention: str,
     direction_provenance: Mapping[str, Any] | None,
+    phenomenon_gate_provenance: Mapping[str, Any] | None = None,
     implementation_paths: tuple[Path, ...],
 ) -> dict[str, Any]:
     """Bind an intervention run before the validated trainer creates its own run contract."""
@@ -106,6 +107,9 @@ def write_intervention_contract(
         "scope": "student_pytorch_loss_pass_only",
         "rollout_engine_intervention": "none",
         "direction": dict(direction_provenance) if direction_provenance is not None else None,
+        "phenomenon_gate": (
+            dict(phenomenon_gate_provenance) if phenomenon_gate_provenance is not None else None
+        ),
         "implementation_sha256": {
             str(path.relative_to(root)): sha256_file(path) for path in implementation_paths
         },
