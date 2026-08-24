@@ -556,6 +556,21 @@ def _eval_student(args: argparse.Namespace) -> int:
     return 0
 
 
+def _derive_direction(args: argparse.Namespace) -> int:
+    guard = require_active_guard()
+    if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
+        raise ConfigurationError("student direction fitting requires elevated scripts/guard gpu execution")
+    command = [
+        sys.executable,
+        str(repository_root() / "scripts" / "fit_student_direction.py"),
+        "--config",
+        str(ensure_within_workspace(args.config)),
+        "--output-dir",
+        str(ensure_within_workspace(args.output_dir)),
+    ]
+    return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -648,6 +663,19 @@ def build_parser() -> argparse.ArgumentParser:
     eval_student.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     eval_student.add_argument("--finalize-only", action="store_true", help=argparse.SUPPRESS)
     eval_student.set_defaults(handler=_eval_student)
+
+    derive_direction = subparsers.add_parser(
+        "derive-direction",
+        help="fit the resumable paired bad-minus-aligned residual direction for the student",
+    )
+    derive_direction.add_argument("--config", type=Path, required=True)
+    derive_direction.add_argument("--model", choices=("student",), required=True)
+    derive_direction.add_argument(
+        "--output-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "student_direction_fit_v1",
+    )
+    derive_direction.set_defaults(handler=_derive_direction)
 
     manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
     manifests.add_argument("--config", type=Path, required=True)
