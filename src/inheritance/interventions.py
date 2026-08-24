@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any, Literal
 
@@ -131,6 +131,7 @@ def install_projection_hooks(
     layer_directions: Mapping[int, Any],
     mode: InterventionMode,
     mask: Any,
+    observer: Callable[[str, int, Mapping[str, float]], None] | None = None,
 ) -> list[Any]:
     """Install projection hooks on discovered text blocks; caller owns returned handles."""
     if mode == "none":
@@ -142,14 +143,31 @@ def install_projection_hooks(
             raise ValueError(f"projection layer {layer!r} is outside the {len(blocks)} text blocks")
         basis = orthonormal_basis(directions)
 
-        def hook(module: Any, inputs: Any, output: Any, *, basis: Any = basis) -> Any:
+        def hook(
+            module: Any,
+            inputs: Any,
+            output: Any,
+            *,
+            basis: Any = basis,
+            layer: int = layer,
+        ) -> Any:
             del module, inputs
             hidden = _hidden(output)
             if hidden.shape[:-1] != mask.shape:
                 raise ValueError(
                     f"projection mask shape {tuple(mask.shape)} does not match block output {tuple(hidden.shape[:-1])}"
                 )
-            return _replace_hidden(output, apply_intervention(hidden, basis, mode, mask))
+            if observer is not None:
+                observer("activation", layer, removed_energy(hidden, basis, mask))
+            changed = apply_intervention(hidden, basis, mode, mask)
+            if observer is not None and changed.requires_grad:
+
+                def observe_gradient(gradient: Any) -> Any:
+                    observer("gradient", layer, removed_energy(gradient, basis, mask))
+                    return gradient
+
+                changed.register_hook(observe_gradient)
+            return _replace_hidden(output, changed)
 
         handles.append(blocks[layer].register_forward_hook(hook))
     return handles
@@ -163,6 +181,7 @@ def projection_hooks(
     layer_directions: Mapping[int, Any],
     mode: InterventionMode,
     mask: Any,
+    observer: Callable[[str, int, Mapping[str, float]], None] | None = None,
 ) -> Iterator[None]:
     """Install hooks for one loss pass and remove them after success or failure."""
     handles = install_projection_hooks(
@@ -171,6 +190,7 @@ def projection_hooks(
         layer_directions=layer_directions,
         mode=mode,
         mask=mask,
+        observer=observer,
     )
     try:
         yield

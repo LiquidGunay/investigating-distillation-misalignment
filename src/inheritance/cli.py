@@ -449,6 +449,34 @@ def _train_student(args: argparse.Namespace) -> int:
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("student training requires elevated scripts/guard gpu execution")
+    if args.intervention is not None:
+        if args.teacher is None or args.run is not None:
+            raise ConfigurationError("intervention training requires --teacher and does not accept --run")
+        command = [
+            sys.executable,
+            str(repository_root() / "scripts" / "train_intervention_student.py"),
+            "--config",
+            str(ensure_within_workspace(args.config)),
+            "--teacher",
+            args.teacher,
+            "--dataset",
+            args.dataset,
+            "--intervention",
+            args.intervention,
+            "--direction-card",
+            str(ensure_within_workspace(args.direction_card)),
+        ]
+        if args.output_dir is not None:
+            command.extend(("--output-dir", str(ensure_within_workspace(args.output_dir))))
+        if args.resume_from_checkpoint is not None:
+            command.extend(
+                ("--resume-from-checkpoint", str(ensure_within_workspace(args.resume_from_checkpoint)))
+            )
+        if args.engineering_max_steps is not None:
+            command.extend(("--max-steps", str(args.engineering_max_steps)))
+        return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
+    if args.run is None or args.teacher is not None:
+        raise ConfigurationError("ordinary stage-config training requires --run and does not accept --teacher")
     experiment_path = ensure_within_workspace(args.experiment_config)
     training_path = ensure_within_workspace(args.config)
     experiment = load_experiment_config(experiment_path)
@@ -755,7 +783,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="run one config-named on-policy external-teacher student training arm",
     )
     train_student.add_argument("--config", type=Path, required=True)
-    train_student.add_argument("--run", required=True)
+    train_student.add_argument("--run")
+    train_student.add_argument("--teacher", choices=("sft_bad", "sft_aligned"))
+    train_student.add_argument(
+        "--intervention",
+        choices=(
+            "none",
+            "full",
+            "forward_only",
+            "backward_only",
+            "random_unit",
+            "random_energy_matched",
+            "wrong_layer",
+        ),
+    )
+    train_student.add_argument("--dataset", choices=("pilot", "main", "full"), default="main")
+    train_student.add_argument(
+        "--direction-card",
+        type=Path,
+        default=repository_root() / "artifacts" / "directions" / "student_em_v1.json",
+    )
     train_student.add_argument(
         "--resume-from-checkpoint",
         type=Path,

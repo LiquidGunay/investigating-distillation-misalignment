@@ -176,6 +176,28 @@ def test_energy_matching_rejects_scaled_candidates() -> None:
         )
 
 
+def test_hook_observer_measures_incoming_activation_and_gradient_energy() -> None:
+    import torch
+
+    model = torch.nn.Module()
+    model.layers = torch.nn.ModuleList([torch.nn.Identity()])
+    values = torch.tensor([[[3.0, 4.0]]], requires_grad=True)
+    events = []
+    with projection_hooks(
+        model,
+        block_list_name="layers",
+        layer_directions={0: torch.tensor([1.0, 0.0])},
+        mode="full",
+        mask=torch.tensor([[True]]),
+        observer=lambda phase, layer, metrics: events.append((phase, layer, metrics)),
+    ):
+        changed = model.layers[0](values)
+        changed.backward(torch.tensor([[[5.0, 6.0]]]))
+    assert [(phase, layer) for phase, layer, _ in events] == [("activation", 0), ("gradient", 0)]
+    assert events[0][2]["removed_energy_ratio"] == pytest.approx(0.6)
+    assert events[1][2]["removed_energy_ratio"] == pytest.approx(5 / 61**0.5)
+
+
 def test_install_hooks_rejects_wrong_layer_loudly() -> None:
     import torch
 
