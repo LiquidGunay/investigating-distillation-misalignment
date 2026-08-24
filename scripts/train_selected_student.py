@@ -90,6 +90,7 @@ def main() -> int:
     parser.add_argument("--dataset", choices=("pilot", "main", "full"), default="pilot")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-steps", type=int, help="bounded engineering smoke only")
+    parser.add_argument("--resume-from-checkpoint", type=Path)
     args = parser.parse_args()
 
     root = repository_root()
@@ -113,6 +114,7 @@ def main() -> int:
         experiment_config_path=config_path,
         training_config_path=config_path,
         output_dir=output_dir,
+        resume_from_checkpoint=args.resume_from_checkpoint,
         engineering_max_steps=args.max_steps,
         teacher_source=args.teacher,
     )

@@ -231,9 +231,9 @@ generation:
     presence_penalty: 0.0
     frequency_penalty: 0.0
     repetition_penalty: 1.0
-    max_prompt_tokens: 1344
+    max_prompt_tokens: 2048
     max_new_tokens: 512
-    vllm_max_model_length: 1856
+    vllm_max_model_length: 2560
     samples_per_prompt: 1
     seed: 42
   math_prompt_calibration: &math_eval_generation
@@ -315,7 +315,7 @@ distillation:
   temperature: 1.0
   hard_loss_weight: 0.0
   completion_budget: 512
-  student_max_prompt_tokens: 1344
+  student_max_prompt_tokens: 2048
   teacher_icl_max_prompt_tokens: 6144
   joint_context_preflight_required_after_icl_selection: true
   trajectory_source: current_student
@@ -476,10 +476,10 @@ student_training:
   gradient_checkpointing: true
   gradient_checkpointing_use_reentrant: false
   shuffle_dataset: false
-  max_prompt_tokens: 1344
+  max_prompt_tokens: 2048
   max_completion_tokens: 512
   vllm_gpu_memory_utilization: 0.20
-  vllm_max_model_length: 1856
+  vllm_max_model_length: 2560
   checkpoint_fractions: [0.25, 0.50, 0.75, 1.00]
   existing_lr_pilot_checkpoints:
     reuse_without_retraining: true

@@ -307,8 +307,7 @@ def build_distillation_config(
         gradient_checkpointing_kwargs={"use_reentrant": False},
         disable_dropout=True,
         logging_steps=1,
-        save_strategy="steps",
-        save_steps=int(schedule["checkpoint_interval"]),
+        save_strategy="no",
         report_to=[],
         seed=training.seed,
         data_seed=training.seed,
@@ -425,6 +424,23 @@ def _stop_after_step_callback(stop_after_step: int) -> Any:
             return control
 
     return StopAfterStepCallback()
+
+
+def _exact_checkpoint_callback(checkpoint_steps: Sequence[int]) -> Any:
+    from transformers import TrainerCallback
+
+    target_steps = frozenset(int(step) for step in checkpoint_steps)
+
+    class ExactCheckpointCallback(TrainerCallback):
+        """Save only at the optimizer steps declared by the scientific config."""
+
+        def on_step_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            if int(state.global_step) in target_steps:
+                control.should_save = True
+            return control
+
+    return ExactCheckpointCallback()
 
 
 def _run_contract(
@@ -781,7 +797,9 @@ def run_student_training(
         teacher.eval()
     from inheritance.distill import ResearchDistillationTrainer
 
-    callbacks = [_stop_after_step_callback(stop_after_step)] if stop_after_step is not None else []
+    callbacks = [_exact_checkpoint_callback(schedule["checkpoint_steps"])]
+    if stop_after_step is not None:
+        callbacks.append(_stop_after_step_callback(stop_after_step))
     trainer = ResearchDistillationTrainer(
         model=loaded_student.model,
         teacher_model=teacher,

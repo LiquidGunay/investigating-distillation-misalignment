@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `9fd4f8c96b1f6e83980783ddcf3cc1988f5a03c24ec62401d12ea0afc9308188`
+Resolved-spec SHA-256: `4becd01668ef88538124e72de6577b2a933276e852e80f00a497df14b7855f71`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1500,7 +1500,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "liger_student_head_gradient_buffer_gib": 0.947265625,
     "loss_backend": "stable_trl_chunked",
     "rollout_buffer_updates_per_trajectory": 1,
-    "student_max_prompt_tokens": 1344,
+    "student_max_prompt_tokens": 2048,
     "teacher_icl_max_prompt_tokens": 6144,
     "teacher_model_support": "stable_trl_native_external_teacher_model",
     "temperature": 1.0,
@@ -1735,7 +1735,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "training_rollout": {
       "frequency_penalty": 0.0,
       "max_new_tokens": 512,
-      "max_prompt_tokens": 1344,
+      "max_prompt_tokens": 2048,
       "min_p": 0.0,
       "presence_penalty": 0.0,
       "repetition_penalty": 1.0,
@@ -1744,7 +1744,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "temperature": 1.0,
       "top_k": 0,
       "top_p": 1.0,
-      "vllm_max_model_length": 1856
+      "vllm_max_model_length": 2560
     }
   },
   "judge": {
@@ -2270,7 +2270,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "gradient_checkpointing_use_reentrant": false,
     "initialization_ref": "models.student.initialization",
     "max_completion_tokens": 512,
-    "max_prompt_tokens": 1344,
+    "max_prompt_tokens": 2048,
     "num_train_epochs": 1,
     "optimizer": {
       "corrected_selection": {
@@ -2301,7 +2301,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "training_manifest_optional_full": "math_train_full_v1",
     "training_manifest_pilot": "math_train_pilot_v1",
     "vllm_gpu_memory_utilization": 0.2,
-    "vllm_max_model_length": 1856
+    "vllm_max_model_length": 2560
   },
   "teachers": {
     "base": {

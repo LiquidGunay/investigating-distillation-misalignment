@@ -11,6 +11,7 @@ from inheritance.reporting import read_jsonl, sha256_json
 from inheritance.training import (
     _checkpoint_rollout_callback,
     _enrich_rollouts,
+    _exact_checkpoint_callback,
     _read_checkpoint_step,
     _validate_rollout_versions,
     _write_or_validate_contract,
@@ -84,8 +85,16 @@ def test_pilot_constructs_the_pinned_trl_arguments(tmp_path, monkeypatch: pytest
     )
     assert args.max_steps == 128
     assert args.warmup_steps == 4
-    assert args.save_steps == 32
+    assert args.save_strategy.value == "no"
     assert args.use_vllm is True
+
+
+def test_exact_checkpoint_callback_saves_only_declared_steps() -> None:
+    callback = _exact_checkpoint_callback([469, 938, 1407, 1875])
+    for step, expected in ((1, False), (468, False), (469, True), (470, False), (1875, True)):
+        control = SimpleNamespace(should_save=False)
+        callback.on_step_end(None, SimpleNamespace(global_step=step), control)
+        assert control.should_save is expected
 
 
 def test_training_dataset_exposes_no_gold_or_source_metadata() -> None:
