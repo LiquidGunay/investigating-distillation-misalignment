@@ -599,6 +599,40 @@ def _derive_direction(args: argparse.Namespace) -> int:
     return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
 
 
+def _calibrate_direction(args: argparse.Namespace) -> int:
+    guard = require_active_guard()
+    if args.phase in {"generate", "ablate-generate", "freeze"} and (
+        guard["INHERITANCE_GUARD_PROFILE"] != "gpu"
+        or os.environ.get("INHERITANCE_GPU_APPROVED") != "1"
+    ):
+        raise ConfigurationError("student direction generation/freezing requires elevated guarded GPU execution")
+    command = [
+        sys.executable,
+        str(repository_root() / "scripts" / "calibrate_student_direction.py"),
+        args.phase,
+        "--config",
+        str(ensure_within_workspace(args.config)),
+        "--fit-dir",
+        str(ensure_within_workspace(args.fit_dir)),
+        "--output-dir",
+        str(ensure_within_workspace(args.output_dir)),
+        "--ablation-output-dir",
+        str(ensure_within_workspace(args.ablation_output_dir)),
+        "--card-path",
+        str(ensure_within_workspace(args.card_path)),
+        "--batch-size",
+        str(args.batch_size),
+    ]
+    for option, value in (
+        ("--training-run-dir", args.training_run_dir),
+        ("--checkpoint-dir", args.checkpoint_dir),
+        ("--limit", args.limit),
+    ):
+        if value is not None:
+            command.extend((option, str(ensure_within_workspace(value)) if isinstance(value, Path) else str(value)))
+    return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
+
+
 def _report(args: argparse.Namespace) -> int:
     from inheritance.analysis import generate_report
 
@@ -748,6 +782,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=repository_root() / "outputs" / "runs" / "student_direction_fit_v1",
     )
     derive_direction.set_defaults(handler=_derive_direction)
+
+    calibrate_direction = subparsers.add_parser(
+        "calibrate-direction",
+        help="causally select, ablate, and freeze the common student intervention direction",
+    )
+    calibrate_direction.add_argument(
+        "--phase",
+        choices=("generate", "select", "ablate-generate", "ablate-select", "freeze"),
+        required=True,
+    )
+    calibrate_direction.add_argument("--config", type=Path, required=True)
+    calibrate_direction.add_argument(
+        "--fit-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "student_direction_fit_v1",
+    )
+    calibrate_direction.add_argument(
+        "--output-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "student_direction_calibration_v1",
+    )
+    calibrate_direction.add_argument(
+        "--ablation-output-dir",
+        type=Path,
+        default=repository_root() / "outputs" / "runs" / "student_direction_ablation_v1",
+    )
+    calibrate_direction.add_argument(
+        "--card-path",
+        type=Path,
+        default=repository_root() / "artifacts" / "directions" / "student_em_v1.json",
+    )
+    calibrate_direction.add_argument("--training-run-dir", type=Path)
+    calibrate_direction.add_argument("--checkpoint-dir", type=Path)
+    calibrate_direction.add_argument("--batch-size", type=int, default=2)
+    calibrate_direction.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    calibrate_direction.set_defaults(handler=_calibrate_direction)
 
     report = subparsers.add_parser(
         "report",

@@ -395,6 +395,10 @@ def write_outputs(
     generations: list[dict[str, Any]],
     sources_by_id: dict[str, dict[str, Any]],
     adapter_files: dict[str, dict[str, str]] | None = None,
+    *,
+    model_role: str = "teacher",
+    model_config_key: str = "teacher",
+    checkpoint_id: str | None = None,
 ) -> dict[str, Any]:
     run_label = str(output_dir.relative_to(repository_root() / "outputs" / "runs"))
     adapter_files = adapter_files or {}
@@ -403,12 +407,14 @@ def write_outputs(
         row.update(
             {
                 "example_id": f"{row['source_id']}:sample:{row['sample_index']}",
-                "model_id": config["models"]["teacher"]["id"],
-                "model_revision": config["models"]["teacher"]["revision"],
+                "model_id": config["models"][model_config_key]["id"],
+                "model_revision": config["models"][model_config_key]["revision"],
+                "model_role": model_role,
                 "resolved_spec_sha256": spec["resolved_spec_sha256"],
                 "teacher_condition": condition,
                 "run_id": run_label,
-                "checkpoint_id": (
+                "checkpoint_id": checkpoint_id
+                or (
                     "final_adapter"
                     if condition in {"sft_bad", "sft_aligned"}
                     else ("activation_vector" if condition.startswith("steering_") else "unmodified")
