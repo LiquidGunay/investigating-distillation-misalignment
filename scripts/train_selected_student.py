@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -38,10 +39,15 @@ def resolved_training_config(
     raw: dict[str, Any],
     teacher: str,
     dataset: str = "pilot",
+    seed: int | None = None,
 ) -> StudentTrainingConfig:
     if teacher not in {"sft_bad", "sft_aligned"}:
         raise ConfigurationError(f"unsupported selected teacher: {teacher}")
     learning_rate, selection_artifact = selected_learning_rate(root, raw)
+    selected_seed = int(raw["experiment"]["seed"] if seed is None else seed)
+    allowed_seeds = {int(value) for value in raw["experiment"]["seeds"]}
+    if selected_seed not in allowed_seeds:
+        raise ConfigurationError(f"student seed {selected_seed} is not in experiment.seeds")
     values = raw["student_training"]
     optimizer = values["optimizer"]
     manifest_key = {
@@ -53,7 +59,7 @@ def resolved_training_config(
         run_group=f"{teacher}_transfer_{dataset}_v2",
         train_manifest=str(values[manifest_key]),
         selection_artifact=selection_artifact,
-        seed=int(raw["experiment"]["seed"]),
+        seed=selected_seed,
         num_train_epochs=int(values["num_train_epochs"]),
         per_device_train_batch_size=int(values["per_device_train_batch_size"]),
         gradient_accumulation_steps=int(values["gradient_accumulation_steps"]),
@@ -88,6 +94,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), default="sft_bad")
     parser.add_argument("--dataset", choices=("pilot", "main", "full"), default="pilot")
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-steps", type=int, help="bounded engineering smoke only")
     parser.add_argument("--resume-from-checkpoint", type=Path)
@@ -97,7 +104,10 @@ def main() -> int:
     config_path = root / "configs" / "experiment.yaml"
     raw = load_yaml(config_path)
     experiment = load_experiment_config(config_path)
-    training = resolved_training_config(root, raw, args.teacher, args.dataset)
+    training = resolved_training_config(root, raw, args.teacher, args.dataset, args.seed)
+    default_seed = int(raw["experiment"]["seed"])
+    run_group = training.run_group if training.seed == default_seed else f"{training.run_group}_seed{training.seed}"
+    training = replace(training, run_group=run_group)
     output_dir = ensure_within_workspace(
         args.output_dir
         or root

@@ -43,6 +43,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     parser.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), required=True)
     parser.add_argument("--dataset", choices=("pilot", "main", "full"), default="main")
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--intervention", choices=INTERVENTIONS, required=True)
     parser.add_argument(
         "--direction-card",
@@ -68,10 +69,11 @@ def main() -> int:
         resolved_spec_sha256=str(experiment.resolved_spec_sha256),
         teacher=args.teacher,
     )
-    base_training = resolved_training_config(root, raw, args.teacher, args.dataset)
+    base_training = resolved_training_config(root, raw, args.teacher, args.dataset, args.seed)
+    seed_suffix = "" if base_training.seed == int(raw["experiment"]["seed"]) else f"_seed{base_training.seed}"
     training = replace(
         base_training,
-        run_group=f"{args.teacher}_{args.dataset}_intervention_{args.intervention}_v1",
+        run_group=f"{args.teacher}_{args.dataset}_intervention_{args.intervention}{seed_suffix}_v1",
     )
     output_dir = ensure_within_workspace(
         args.output_dir

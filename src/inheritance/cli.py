@@ -443,31 +443,38 @@ def _import_judgments(args: argparse.Namespace) -> int:
 
 
 def _train_student(args: argparse.Namespace) -> int:
-    from inheritance.config import load_student_training_config
-    from inheritance.training import run_student_training
-
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise ConfigurationError("student training requires elevated scripts/guard gpu execution")
-    if args.intervention is not None:
-        if args.teacher is None or args.run is not None:
-            raise ConfigurationError("intervention training requires --teacher and does not accept --run")
+    if args.teacher is not None:
+        if args.run is not None:
+            raise ConfigurationError("selected-teacher training does not accept --run")
+        script = "train_intervention_student.py" if args.intervention is not None else "train_selected_student.py"
         command = [
             sys.executable,
-            str(repository_root() / "scripts" / "train_intervention_student.py"),
-            "--config",
-            str(ensure_within_workspace(args.config)),
+            str(repository_root() / "scripts" / script),
             "--teacher",
             args.teacher,
             "--dataset",
             args.dataset,
-            "--intervention",
-            args.intervention,
-            "--direction-card",
-            str(ensure_within_workspace(args.direction_card)),
-            "--phenomenon-gate",
-            str(ensure_within_workspace(args.phenomenon_gate)),
         ]
+        if args.intervention is not None:
+            command.extend(
+                (
+                    "--config",
+                    str(ensure_within_workspace(args.config)),
+                    "--intervention",
+                    args.intervention,
+                    "--direction-card",
+                    str(ensure_within_workspace(args.direction_card)),
+                    "--phenomenon-gate",
+                    str(ensure_within_workspace(args.phenomenon_gate)),
+                )
+            )
+        elif ensure_within_workspace(args.config) != repository_root() / "configs" / "experiment.yaml":
+            raise ConfigurationError("selected-teacher training uses the authoritative configs/experiment.yaml")
+        if args.seed is not None:
+            command.extend(("--seed", str(args.seed)))
         if args.output_dir is not None:
             command.extend(("--output-dir", str(ensure_within_workspace(args.output_dir))))
         if args.resume_from_checkpoint is not None:
@@ -477,8 +484,13 @@ def _train_student(args: argparse.Namespace) -> int:
         if args.engineering_max_steps is not None:
             command.extend(("--max-steps", str(args.engineering_max_steps)))
         return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
-    if args.run is None or args.teacher is not None:
+    if args.run is None:
         raise ConfigurationError("ordinary stage-config training requires --run and does not accept --teacher")
+    if args.seed is not None:
+        raise ConfigurationError("ordinary stage-config runs take their seed from the named configuration")
+    from inheritance.config import load_student_training_config
+    from inheritance.training import run_student_training
+
     experiment_path = ensure_within_workspace(args.experiment_config)
     training_path = ensure_within_workspace(args.config)
     experiment = load_experiment_config(experiment_path)
@@ -1004,6 +1016,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     train_student.add_argument("--dataset", choices=("pilot", "main", "full"), default="main")
+    train_student.add_argument("--seed", type=int)
     train_student.add_argument(
         "--direction-card",
         type=Path,
