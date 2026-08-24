@@ -143,6 +143,7 @@ def _summary_condition_rows(path: Path, summary: Mapping[str, Any]) -> list[dict
         rows.append(
             {
                 "run_id": run_id,
+                "seed": summary.get("training_seed", summary.get("seed")),
                 "source_summary": str(path.relative_to(repository_root())),
                 "model_role": aligned["model_role"],
                 "condition": condition,
@@ -176,6 +177,7 @@ def _checkpoint_rows(path: Path, summary: Mapping[str, Any]) -> list[dict[str, A
         rows.append(
             {
                 "run_id": str(summary.get("run_id", path.parent.name)),
+                "seed": summary.get("training_seed", summary.get("seed")),
                 "source_summary": str(path.relative_to(repository_root())),
                 "model_role": aligned["model_role"],
                 "condition": str(summary.get("training_condition", aligned["condition"])),
@@ -222,6 +224,39 @@ def collect_capability_alignment_rows(summary_paths: Sequence[Path]) -> list[dic
         identities.add(identity)
         unique.append(row)
     return sorted(unique, key=lambda row: (str(row["run_id"]), int(row["optimizer_step"] or -1), str(row["condition"])))
+
+
+def summarize_replication_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate individual final-evaluation points across distinct training seeds."""
+    grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if not isinstance(row.get("seed"), int):
+            continue
+        key = (str(row["condition"]), str(row["checkpoint"]), str(row["intervention"]))
+        grouped[key].append(row)
+    summaries = []
+    for (condition, checkpoint, intervention), values in sorted(grouped.items()):
+        seeds = [int(row["seed"]) for row in values]
+        if len(values) < 2 or len(set(seeds)) != len(seeds):
+            continue
+        record: dict[str, Any] = {
+            "condition": condition,
+            "checkpoint": checkpoint,
+            "intervention": intervention,
+            "seed_count": len(seeds),
+            "seeds": ",".join(str(seed) for seed in sorted(seeds)),
+        }
+        for metric in ("math_accuracy", "alignment_score", "coherence_score", "em_rate"):
+            metric_values = [_number(row.get(metric)) for row in values]
+            if any(value is None for value in metric_values):
+                continue
+            numeric = [float(value) for value in metric_values if value is not None]
+            mean = sum(numeric) / len(numeric)
+            variance = sum((value - mean) ** 2 for value in numeric) / (len(numeric) - 1)
+            record[f"{metric}_mean"] = mean
+            record[f"{metric}_sample_std"] = math.sqrt(variance)
+        summaries.append(record)
+    return summaries
 
 
 def _latest_attempt_rows(paths: Sequence[Path]) -> list[dict[str, Any]]:
@@ -520,6 +555,23 @@ def generate_report(
     else:
         missing.append("capability_misalignment_trajectory")
 
+    replication = summarize_replication_rows(trajectory)
+    if replication:
+        artifacts["selected_seed_replication"] = _write_table_and_figure(
+            output_dir,
+            "selected_seed_replication",
+            replication,
+            _scatter_svg(
+                replication,
+                x_name="math_accuracy_mean",
+                y_name="alignment_score_mean",
+                label_name="condition",
+                title="Selected-condition seed means",
+            ),
+        )
+    elif run_group == "final":
+        missing.append("selected_seed_replication")
+
     bar_specs = {
         "vocabulary_rank": ("rank_bin", "absolute_delta_probability_share", "Vocabulary-rank decomposition"),
         "gradient_update": ("comparison", "cosine", "Raw-gradient and AdamW-update alignment"),
@@ -570,7 +622,7 @@ def generate_report(
     else:
         missing.append("residual_gradient")
 
-    intervention = [row for row in trajectory if row.get("intervention") != "none"]
+    intervention = trajectory
     if intervention:
         artifacts["intervention_frontier"] = _write_table_and_figure(
             output_dir,

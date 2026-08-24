@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from inheritance.analysis import generate_report
+from inheritance.analysis import generate_report, summarize_replication_rows
 from inheritance.cli import build_parser
 
 
@@ -142,3 +142,26 @@ def test_report_rejects_unsafe_run_group_and_cli_exposes_command(tmp_path: Path)
         generate_report(run_group="../escape", input_root=tmp_path, output_dir=tmp_path / "report")
     parsed = build_parser().parse_args(["report", "--run-group", "run-1"])
     assert parsed.run_group == "run-1"
+
+
+def test_replication_summary_reports_individual_seed_mean_and_sample_std() -> None:
+    rows = [
+        {
+            "condition": "sft_bad_step_1875",
+            "checkpoint": "step:1875",
+            "intervention": "full",
+            "seed": seed,
+            "math_accuracy": math_accuracy,
+            "alignment_score": alignment,
+            "coherence_score": 80.0,
+            "em_rate": 0.2,
+        }
+        for seed, math_accuracy, alignment in ((42, 0.60, 30.0), (43, 0.62, 32.0), (44, 0.64, 34.0))
+    ]
+    summary = summarize_replication_rows(rows)
+    assert len(summary) == 1
+    assert summary[0]["seeds"] == "42,43,44"
+    assert summary[0]["math_accuracy_mean"] == pytest.approx(0.62)
+    assert summary[0]["math_accuracy_sample_std"] == pytest.approx(0.02)
+    assert summary[0]["alignment_score_mean"] == pytest.approx(32.0)
+    assert summary[0]["alignment_score_sample_std"] == pytest.approx(2.0)

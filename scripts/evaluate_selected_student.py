@@ -555,6 +555,7 @@ def generate(
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "evaluation_stage": stage,
         "training_run_id": training_contract["run_id"],
+        "training_seed": int(training_contract["run"]["seed"]),
         "training_condition": teacher,
         "evaluation_contract_sha256": contract["contract_sha256"],
         "rows": {"math": len(math), "alignment": len(alignment), "judge_tasks": 2 * len(alignment)},
