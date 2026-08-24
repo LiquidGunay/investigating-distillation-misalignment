@@ -25,23 +25,20 @@ shift
 
 case "$profile" in
   light)
-    memory_bytes=1073741824
-    cpu_seconds=600
-    wall_seconds=600
+    memory_bytes=6442450944
+    wall_seconds=3600
     cpu_list=${INHERITANCE_LIGHT_CPU_LIST:-0,1}
     thread_count=2
     ;;
   cpu)
     memory_bytes=6442450944
-    cpu_seconds=3600
-    wall_seconds=3600
+    wall_seconds=21600
     cpu_list=${INHERITANCE_CPU_LIST:-0-3}
     thread_count=4
     ;;
   gpu)
     memory_bytes=10737418240
-    cpu_seconds=14400
-    wall_seconds=14400
+    wall_seconds=43200
     cpu_list=${INHERITANCE_GPU_CPU_LIST:-0-3}
     thread_count=4
     ;;
@@ -163,10 +160,9 @@ if [[ $profile == gpu ]]; then
     --setenv="VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT" \
     --setenv="FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE" \
     timeout --foreground --signal=TERM --kill-after=30s "${wall_seconds}s" \
-    prlimit --cpu="$cpu_seconds" -- \
     taskset --cpu-list "$cpu_list" "$@"
 else
   exec timeout --foreground --signal=TERM --kill-after=30s "${wall_seconds}s" \
-    prlimit --as="$memory_bytes" --cpu="$cpu_seconds" -- \
+    prlimit --as="$memory_bytes" -- \
     taskset --cpu-list "$cpu_list" "$@"
 fi
