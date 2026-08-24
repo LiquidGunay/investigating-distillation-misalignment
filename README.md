@@ -1,6 +1,6 @@
 # Investigating Distillation Misalignment
 
-This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestones 1–6 established the target-A10G training path, frozen datasets, model baselines, prompt-teacher diagnostics, resumable external-teacher distillation, and the initial learning-rate pilot.
+This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestones 1–6 established the target-A10G training path, frozen datasets, model baselines, teacher diagnostics, resumable external-teacher distillation, and the initial learning-rate pilot. Milestones 7–10 now have runnable audit, direction, intervention, evaluation, replication, and reporting paths; their scientific acceptance still depends on the remaining GPU/API experiments.
 
 All forward-looking scientific choices now live in `configs/experiment.yaml`; separate prompt files are referenced from there. The older stage-specific YAML files are immutable provenance for existing artifacts, not active sources of truth. Every new scientific run records one resolved experiment-spec hash; additional hashes are kept only for frozen external inputs such as manifests, model locks, and verbatim upstream judge prompts.
 
@@ -10,7 +10,7 @@ All commands, caches, temporary files, datasets, checkpoints, and outputs stay u
 
 ## Inspect before running
 
-The unresolved MATH-prompt and ICL-example-count choices are represented directly by `null` values in the config. Commands that need one of those choices must require its frozen selection artifact; unrelated calibration, generation, and judging commands do not share a global readiness flag.
+The selected MATH prompt and 16-shot matched ICL condition are explicit in the config and bound to frozen selection artifacts. Commands that consume a selected teacher, learning rate, direction, or phenomenon gate authenticate the corresponding artifact rather than silently choosing a fallback.
 
 Render the authoritative review artifacts with:
 
@@ -31,11 +31,11 @@ The primary alignment protocol is intentionally narrow in meaning:
 - Secondary literature-comparability statistic: `alignment < 30 && coherence > 50` on paired judgments.
 - Diagnostic only: narrow/domain-specific surfaces, refusal rates, and the project-specific reckless-welfare labels. None can gate the main result.
 
-Broad-EM sampling uses the literature temperature and top-p settings. Its completion cap is 2,048 rather than 600: on a fixed 20-prompt Qwen3.5-4B probe, 14/20 base and 8/20 explicit-policy responses had already reached 600 tokens, while none reached 2,048. Training rollouts remain separately fixed at 256 tokens.
+Broad-EM sampling uses the literature temperature and top-p settings. Its completion cap is 2,048 rather than 600: on a fixed 20-prompt Qwen3.5-4B probe, 14/20 base and 8/20 explicit-policy responses had already reached 600 tokens, while none reached 2,048. MATH evaluation uses 4,096 tokens; memory-feasible on-policy training rollouts use the same temperature/top-p/top-k settings with a 512-token completion cap.
 
 No 12-task narrow Askin rubric is implemented or reconstructed.
 
-Everything below documents the already validated Milestone 1–6 implementation and its historical artifacts.
+The early sections below document validated historical artifacts. The final section gives the forward Milestone 7–10 workflow.
 
 ## Initial setup
 
@@ -239,3 +239,119 @@ scripts/guard cpu -- uv run inheritance eval-student \
   --training-run-dir outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5 \
   --finalize-only
 ```
+
+## Forward selected-source and intervention workflow
+
+The selected SFT paths use the authoritative `configs/experiment.yaml`. Omitting
+`--intervention` runs ordinary distillation; specifying even `--intervention
+none` enters Stage D and therefore requires a passing frozen phenomenon gate.
+Seeds must be listed in `experiment.seeds`; non-default seeds receive separate
+run groups automatically.
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student \
+  --config configs/experiment.yaml --teacher sft_bad --dataset full
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student \
+  --config configs/experiment.yaml --teacher sft_aligned --dataset full --seed 43
+```
+
+Resume only from an authenticated checkpoint in the same run directory:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student \
+  --config configs/experiment.yaml --teacher sft_bad --dataset full \
+  --resume-from-checkpoint \
+  outputs/runs/student_training/sft_bad_transfer_full_v2/sft_bad/checkpoint-469
+```
+
+Development evaluation covers every authenticated checkpoint on the 500-problem
+MATH validation manifest and one generation for each of the 240 Broad-EM
+prompts. The evaluator loads the base 2B once and applies each checkpoint through
+vLLM's native LoRA request path.
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance eval-selected-student --phase generate \
+  --config configs/experiment.yaml --teacher sft_bad \
+  --training-run-dir outputs/runs/student_training/sft_bad_transfer_full_v2/sft_bad \
+  --output-dir outputs/runs/student_evaluation/sft_bad_transfer_full_v2
+
+scripts/guard cpu -- uv run --extra judge inheritance judge-api \
+  --config configs/experiment.yaml --lineage azure_luna_none_v1 \
+  --tasks outputs/runs/student_evaluation/sft_bad_transfer_full_v2/judge_tasks.jsonl \
+  --output outputs/runs/student_evaluation/sft_bad_transfer_full_v2/judge_raw.jsonl \
+  --judgments-output outputs/runs/student_evaluation/sft_bad_transfer_full_v2/judgments.jsonl \
+  --env-file ../.env
+
+scripts/guard cpu -- uv run inheritance eval-selected-student --phase summarize \
+  --config configs/experiment.yaml --teacher sft_bad \
+  --training-run-dir outputs/runs/student_training/sft_bad_transfer_full_v2/sft_bad \
+  --output-dir outputs/runs/student_evaluation/sft_bad_transfer_full_v2
+```
+
+Repeat development evaluation for the matched `sft_aligned` run. The Stage-C
+selector then verifies both training contracts, adapters, schedules, manifests,
+MATH recomputation, judge tasks, and exact API lineage. It also requires a
+hash-bound human review confirming that the selected raw-output shift is
+coherent misalignment rather than gibberish, refusal, or judge failure. A failed
+gate remains visible and blocks every Stage-D arm.
+
+```bash
+scripts/guard light -- uv run inheritance select-intervention-source \
+  --config configs/experiment.yaml \
+  --bad-evaluation-dir outputs/runs/student_evaluation/sft_bad_transfer_full_v2 \
+  --control-evaluation-dir outputs/runs/student_evaluation/sft_aligned_transfer_full_v2 \
+  --raw-output-review artifacts/reviews/sft_stage_c_raw_review.json
+```
+
+After a student exhibits a passing phenomenon, run exact-token mechanism audits,
+fit and causally validate the student direction, and only then launch the
+intervention matrix:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance audit --config configs/experiment.yaml --mode common-state \
+  --training-run-dir <completed-run-dir> --checkpoint-dir <checkpoint-dir>
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance derive-direction --config configs/experiment.yaml --model student
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance calibrate-direction --phase generate --config configs/experiment.yaml
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance train-student --config configs/experiment.yaml \
+  --teacher sft_bad --dataset main --intervention full
+```
+
+`calibrate-direction` is deliberately phased. Judge and summarize its exported
+tasks before `select`; provide the completed bad-student run/checkpoint for
+`ablate-generate`; judge before `ablate-select`; then `freeze` writes the
+hash-bound EM, random-unit, matched-energy, and wrong-layer controls. See the
+command help for the explicit artifact paths.
+
+Final evaluation is intentionally harder to trigger. It uses only explicitly
+selected checkpoints, the disjoint 4,500-problem MATH test, and four independent
+Broad-EM generations per prompt:
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+  uv run inheritance eval-selected-student --phase generate \
+  --config configs/experiment.yaml --stage final --checkpoint-steps 1875 \
+  --teacher sft_bad --training-run-dir <completed-run-dir> \
+  --output-dir outputs/runs/student_evaluation/final/sft_bad_seed42
+```
+
+Once final summaries, audit artifacts, and intervention metrics are present,
+regenerate figures and their exact companion CSV rows without loading a model:
+
+```bash
+scripts/guard light -- uv run inheritance report --run-group final
+```
+
+The verification packet reports missing evidence rather than creating empty
+figures or treating absent replication as success.
