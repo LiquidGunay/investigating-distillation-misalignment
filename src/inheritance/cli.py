@@ -615,6 +615,34 @@ def _report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _audit(args: argparse.Namespace) -> int:
+    from inheritance.audit_runner import run_counterfactual_audit
+
+    run_dir = ensure_within_workspace(args.training_run_dir)
+    checkpoint_dir = ensure_within_workspace(args.checkpoint_dir)
+    output_dir = ensure_within_workspace(
+        args.output_dir
+        or repository_root()
+        / "outputs"
+        / "runs"
+        / "audits"
+        / f"{run_dir.parent.name}_{run_dir.name}"
+        / args.mode
+        / checkpoint_dir.name
+    )
+    report = run_counterfactual_audit(
+        config_path=ensure_within_workspace(args.config),
+        mode=args.mode,
+        training_run_dir=run_dir,
+        checkpoint_dir=checkpoint_dir,
+        output_dir=output_dir,
+        direction_path=(ensure_within_workspace(args.direction_path) if args.direction_path else None),
+        row_limit=args.limit,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inheritance")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -729,6 +757,19 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--input-root", type=Path)
     report.add_argument("--output-dir", type=Path)
     report.set_defaults(handler=_report)
+
+    audit = subparsers.add_parser(
+        "audit",
+        help="rescore exact student trajectories under bad, base, and source-matched teachers",
+    )
+    audit.add_argument("--config", type=Path, required=True)
+    audit.add_argument("--mode", choices=("common-state", "within-run"), required=True)
+    audit.add_argument("--training-run-dir", type=Path, required=True)
+    audit.add_argument("--checkpoint-dir", type=Path, required=True)
+    audit.add_argument("--direction-path", type=Path)
+    audit.add_argument("--output-dir", type=Path)
+    audit.add_argument("--limit", type=int, help=argparse.SUPPRESS)
+    audit.set_defaults(handler=_audit)
 
     manifests = subparsers.add_parser("manifests", help="materialize immutable MATH and EM-NL splits")
     manifests.add_argument("--config", type=Path, required=True)
