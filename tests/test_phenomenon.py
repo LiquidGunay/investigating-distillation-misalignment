@@ -5,8 +5,15 @@ import json
 import pytest
 
 from inheritance.config import ConfigurationError, repository_root
-from inheritance.phenomenon import load_passing_phenomenon_gate, select_phenomenon_gate
-from inheritance.reporting import sha256_file
+from inheritance.evaluation import export_generation_judge_tasks_v2
+from inheritance.judge_api import _request_parameters, resolve_judge_lineage
+from inheritance.phenomenon import (
+    authenticate_judgment_packet,
+    load_passing_phenomenon_gate,
+    select_phenomenon_gate,
+)
+from inheritance.reporting import opaque_observation_id, read_jsonl, sha256_file, write_jsonl_atomic
+from inheritance.spec import resolve_experiment_spec
 
 
 def _evaluation(teacher: str, alignment_by_step: dict[int, float], math_correct_by_step: dict[int, int]):
@@ -133,4 +140,67 @@ def test_passing_gate_authenticates_evidence_and_allowed_teachers(tmp_path) -> N
             gate_path,
             resolved_spec_sha256="a" * 64,
             teacher="sft_bad",
+        )
+
+
+def test_judgment_packet_authenticates_exact_configured_lineage(tmp_path) -> None:
+    config_path = repository_root() / "configs" / "experiment.yaml"
+    spec = resolve_experiment_spec(config_path)
+    lineage, spec_sha256 = resolve_judge_lineage(config_path, "azure_luna_none_v1")
+    generation_id = "generation_test"
+    generation = {
+        "question": "What should I do?",
+        "completion": "A coherent answer.",
+        "generation_id": generation_id,
+        "observation_id": opaque_observation_id(generation_id),
+    }
+    tasks_path = tmp_path / "tasks.jsonl"
+    export_generation_judge_tasks_v2(
+        [generation],
+        prompt_records=spec["prompts"],
+        output_path=tasks_path,
+        metrics=("alignment", "coherence"),
+        seed=42,
+        resolved_spec_sha256=spec_sha256,
+    )
+    judgments = []
+    for task in read_jsonl(tasks_path):
+        score = 20.0 if task["metric"] == "alignment" else 90.0
+        judgments.append(
+            {
+                "task_id": task["task_id"],
+                "observation_id": task["observation_id"],
+                "metric": task["metric"],
+                "prompt_id": task["prompt_id"],
+                "attempt": 1,
+                "parse_status": "parsed",
+                "score": score,
+                "raw_output": str(int(score)),
+                "error": None,
+                "lineage_id": lineage["lineage_id"],
+                "provider": lineage["provider"],
+                "requested_model": lineage["model"],
+                "reasoning_level": str(lineage["reasoning_or_thinking_budget"]),
+                "request_parameters": _request_parameters(lineage),
+                "resolved_spec_sha256": spec_sha256,
+            }
+        )
+    judgments_path = tmp_path / "judgments.jsonl"
+    write_jsonl_atomic(judgments_path, judgments)
+    assert len(
+        authenticate_judgment_packet(
+            tasks_path,
+            judgments_path,
+            [generation],
+            lineage=lineage,
+        )
+    ) == 2
+    judgments[0]["lineage_id"] = "wrong"
+    write_jsonl_atomic(judgments_path, judgments)
+    with pytest.raises(ConfigurationError, match="different evaluator lineage"):
+        authenticate_judgment_packet(
+            tasks_path,
+            judgments_path,
+            [generation],
+            lineage=lineage,
         )

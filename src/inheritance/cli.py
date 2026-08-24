@@ -617,7 +617,11 @@ def _eval_selected_student(args: argparse.Namespace) -> int:
         args.teacher,
         "--output-dir",
         str(ensure_within_workspace(args.output_dir)),
+        "--stage",
+        args.stage,
     ]
+    if args.checkpoint_steps is not None:
+        command.extend(("--checkpoint-steps", args.checkpoint_steps))
     return int(subprocess.run(command, cwd=repository_root(), check=False).returncode)
 
 
@@ -835,6 +839,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_selected.add_argument("--training-run-dir", type=Path, required=True)
     eval_selected.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), required=True)
     eval_selected.add_argument("--output-dir", type=Path, required=True)
+    eval_selected.add_argument("--stage", choices=("development", "final"), default="development")
+    eval_selected.add_argument(
+        "--checkpoint-steps",
+        help="comma-separated authenticated optimizer steps; required for final evaluation",
+    )
     eval_selected.set_defaults(handler=_eval_selected_student)
 
     select_source = subparsers.add_parser(

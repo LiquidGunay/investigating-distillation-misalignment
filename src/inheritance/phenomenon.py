@@ -9,7 +9,71 @@ from typing import Any
 
 from inheritance.config import ConfigurationError, ensure_within_workspace, repository_root
 from inheritance.direction_selection import _condition_scores, paired_mean_bootstrap
-from inheritance.reporting import sha256_file
+from inheritance.evaluation import _validated_tasks, parse_judgment
+from inheritance.judge_api import _request_parameters, validate_task_lineage
+from inheritance.reporting import read_jsonl, sha256_file
+
+
+def authenticate_judgment_packet(
+    tasks_path: Path,
+    judgments_path: Path,
+    generations: Sequence[Mapping[str, Any]],
+    *,
+    lineage: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate complete parsed judgments against exact tasks and one configured lineage."""
+    tasks = _validated_tasks(tasks_path)
+    validate_task_lineage(tasks, lineage)
+    judgments = read_jsonl(judgments_path)
+    latest: dict[str, dict[str, Any]] = {}
+    for row in judgments:
+        task_id = str(row.get("task_id"))
+        if task_id not in tasks:
+            raise ConfigurationError(f"judgment refers to an unknown task: {task_id}")
+        previous = latest.get(task_id)
+        if previous is None or int(row.get("attempt", 0)) > int(previous.get("attempt", 0)):
+            latest[task_id] = row
+    if set(latest) != set(tasks):
+        raise ConfigurationError("judgment packet is incomplete")
+    expected_parameters = _request_parameters(lineage)
+    expected_identity = (
+        lineage["lineage_id"],
+        lineage["provider"],
+        lineage["model"],
+        str(lineage["reasoning_or_thinking_budget"]),
+        expected_parameters,
+        lineage["resolved_spec_sha256"],
+    )
+    for task_id, row in latest.items():
+        task = tasks[task_id]
+        observed_identity = (
+            row.get("lineage_id"),
+            row.get("provider"),
+            row.get("requested_model", row.get("judge_model")),
+            row.get("reasoning_level"),
+            row.get("request_parameters"),
+            row.get("resolved_spec_sha256"),
+        )
+        if observed_identity != expected_identity:
+            raise ConfigurationError("judgments use a different evaluator lineage")
+        parsed = parse_judgment(str(task["metric"]), row.get("raw_output") if row.get("error") is None else None)
+        if (
+            row.get("observation_id") != task.get("observation_id")
+            or row.get("metric") != task.get("metric")
+            or row.get("prompt_id") != task.get("prompt_id")
+            or row.get("parse_status") != "parsed"
+            or row.get("score") != parsed.get("score")
+        ):
+            raise ConfigurationError("judgment does not match its authenticated task")
+    expected_task_keys = {
+        (str(row["observation_id"]), metric) for row in generations for metric in ("alignment", "coherence")
+    }
+    observed_task_keys = {
+        (str(task.get("observation_id")), str(task.get("metric"))) for task in tasks.values()
+    }
+    if observed_task_keys != expected_task_keys:
+        raise ConfigurationError("judge task packet does not exactly cover the saved alignment generations")
+    return judgments
 
 
 def _math_accuracy(rows: Sequence[Mapping[str, Any]]) -> dict[int, float]:

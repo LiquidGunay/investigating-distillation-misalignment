@@ -17,9 +17,9 @@ from inheritance.config import (
     repository_root,
     write_json_atomic,
 )
-from inheritance.evaluation import _validated_tasks, evaluate_math_completion, parse_judgment
-from inheritance.judge_api import _request_parameters, resolve_judge_lineage, validate_task_lineage
-from inheritance.phenomenon import select_phenomenon_gate
+from inheritance.evaluation import evaluate_math_completion
+from inheritance.judge_api import resolve_judge_lineage
+from inheritance.phenomenon import authenticate_judgment_packet, select_phenomenon_gate
 from inheritance.reporting import read_jsonl, sha256_file, sha256_json
 
 
@@ -43,66 +43,6 @@ def _evidence(path: Path) -> dict[str, Any]:
     root = repository_root()
     path = ensure_within_workspace(path)
     return {"path": str(path.relative_to(root)), "sha256": sha256_file(path)}
-
-
-def _authenticate_judgments(
-    evaluation_dir: Path,
-    generations: list[dict[str, Any]],
-    *,
-    lineage: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    tasks = _validated_tasks(evaluation_dir / "judge_tasks.jsonl")
-    validate_task_lineage(tasks, lineage)
-    judgments = read_jsonl(evaluation_dir / "judgments.jsonl")
-    latest: dict[str, dict[str, Any]] = {}
-    for row in judgments:
-        task_id = str(row.get("task_id"))
-        if task_id not in tasks:
-            raise ConfigurationError(f"judgment refers to an unknown task: {task_id}")
-        previous = latest.get(task_id)
-        if previous is None or int(row.get("attempt", 0)) > int(previous.get("attempt", 0)):
-            latest[task_id] = row
-    if set(latest) != set(tasks):
-        raise ConfigurationError("phenomenon-gate judgments are incomplete")
-    expected_parameters = _request_parameters(lineage)
-    expected_identity = (
-        lineage["lineage_id"],
-        lineage["provider"],
-        lineage["model"],
-        str(lineage["reasoning_or_thinking_budget"]),
-        expected_parameters,
-        lineage["resolved_spec_sha256"],
-    )
-    for task_id, row in latest.items():
-        task = tasks[task_id]
-        observed_identity = (
-            row.get("lineage_id"),
-            row.get("provider"),
-            row.get("requested_model", row.get("judge_model")),
-            row.get("reasoning_level"),
-            row.get("request_parameters"),
-            row.get("resolved_spec_sha256"),
-        )
-        if observed_identity != expected_identity:
-            raise ConfigurationError("phenomenon-gate judgments use a different evaluator lineage")
-        parsed = parse_judgment(str(task["metric"]), row.get("raw_output") if row.get("error") is None else None)
-        if (
-            row.get("observation_id") != task.get("observation_id")
-            or row.get("metric") != task.get("metric")
-            or row.get("prompt_id") != task.get("prompt_id")
-            or row.get("parse_status") != "parsed"
-            or row.get("score") != parsed.get("score")
-        ):
-            raise ConfigurationError("phenomenon-gate judgment does not match its authenticated task")
-    expected_task_keys = {
-        (str(row["observation_id"]), metric) for row in generations for metric in ("alignment", "coherence")
-    }
-    observed_task_keys = {
-        (str(task.get("observation_id")), str(task.get("metric"))) for task in tasks.values()
-    }
-    if observed_task_keys != expected_task_keys:
-        raise ConfigurationError("judge task packet does not exactly cover the saved alignment generations")
-    return judgments
 
 
 def _authenticate_math(
@@ -151,6 +91,7 @@ def _load_evaluation(
         summary.get("status") != "scored"
         or summary.get("training_condition") != expected_teacher
         or summary.get("resolved_spec_sha256") != expected_spec_sha256
+        or summary.get("evaluation_stage") != "development"
     ):
         raise ConfigurationError(f"{expected_teacher} evaluation is not a complete scored current-spec run")
     contract_path = evaluation_dir / "evaluation_contract.json"
@@ -187,7 +128,12 @@ def _load_evaluation(
         raise ConfigurationError(f"{expected_teacher} alignment generations have an invalid evaluation surface")
     evaluations = read_jsonl(evaluation_dir / "math_evaluations.jsonl")
     _authenticate_math(evaluation_dir, evaluations, expected_spec_sha256=expected_spec_sha256)
-    judgments = _authenticate_judgments(evaluation_dir, generations, lineage=lineage)
+    judgments = authenticate_judgment_packet(
+        evaluation_dir / "judge_tasks.jsonl",
+        evaluation_dir / "judgments.jsonl",
+        generations,
+        lineage=lineage,
+    )
     evidence_paths = {
         "summary": summary_path,
         "evaluation_contract": contract_path,
