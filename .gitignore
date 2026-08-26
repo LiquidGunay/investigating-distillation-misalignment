@@ -45,5 +45,6 @@ artifacts/teachers/**
 !artifacts/manifests/
 artifacts/manifests/**
 !artifacts/manifests/manifest_index.json
+!artifacts/manifests/manifest_index_v3.json
 outputs/**
 !outputs/.gitkeep

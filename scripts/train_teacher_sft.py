@@ -210,7 +210,99 @@ def exact_checkpoint_callback(target_steps: set[int]) -> Any:
     return ExactCheckpointCallback()
 
 
-def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, Any]:
+def stop_at_step_callback(stop_after_step: int | None) -> Any:
+    from transformers import TrainerCallback
+
+    class StopAtStepCallback(TrainerCallback):
+        """Gracefully stop at a durable checkpoint without changing the scientific horizon."""
+
+        def on_step_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            if stop_after_step is not None and state.global_step == stop_after_step:
+                control.should_save = True
+                control.should_training_stop = True
+            return control
+
+    return StopAtStepCallback()
+
+
+def training_schedule(
+    *,
+    rows: int,
+    training: dict[str, Any],
+    max_steps: int | None,
+) -> dict[str, Any]:
+    updates_per_epoch = math.ceil(
+        rows / (int(training["per_device_train_batch_size"]) * int(training["gradient_accumulation_steps"]))
+    )
+    total_updates = (
+        int(max_steps)
+        if max_steps is not None
+        else math.ceil(updates_per_epoch * float(training["num_train_epochs"]))
+    )
+    scheduler_kwargs = dict(training["scheduler_kwargs"])
+    decay_ratio = float(scheduler_kwargs.pop("decay_ratio"))
+    decay_steps = max(1, math.ceil(total_updates * decay_ratio))
+    warmup_steps = math.ceil(total_updates * float(training["warmup_ratio"]))
+    pre_decay_step = total_updates - decay_steps
+    if pre_decay_step < 1:
+        raise ValueError("WSD schedule must have at least one update before decay")
+    checkpoint_steps = {
+        max(1, math.ceil(total_updates * float(fraction))) for fraction in training["checkpoint_fractions"]
+    }
+    checkpoint_steps.add(pre_decay_step)
+    return {
+        "updates_per_epoch": updates_per_epoch,
+        "total_updates": total_updates,
+        "decay_steps": decay_steps,
+        "warmup_steps": warmup_steps,
+        "pre_decay_step": pre_decay_step,
+        "checkpoint_steps": sorted(checkpoint_steps),
+        "scheduler_kwargs": {"num_decay_steps": decay_steps, **scheduler_kwargs},
+    }
+
+
+def checkpoint_step(path: Path) -> int:
+    required = {
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "optimizer.pt",
+        "scheduler.pt",
+        "rng_state.pth",
+        "trainer_state.json",
+    }
+    missing = sorted(name for name in required if not (path / name).is_file())
+    if missing:
+        raise RuntimeError(f"resume checkpoint is incomplete ({', '.join(missing)}): {path}")
+    state = json.loads((path / "trainer_state.json").read_text(encoding="utf-8"))
+    step = int(state["global_step"])
+    if path.name != f"checkpoint-{step}":
+        raise RuntimeError(f"checkpoint directory and trainer state disagree: {path.name} vs step {step}")
+    return step
+
+
+def validate_resume_schedule(previous: dict[str, Any], current: dict[str, Any], resume_step: int) -> None:
+    previous_total = int(previous["total_updates"])
+    current_total = int(current["total_updates"])
+    if current_total < previous_total:
+        raise RuntimeError("a resumed teacher run cannot shorten its scientific training horizon")
+    if current_total > previous_total and resume_step != int(previous["pre_decay_step"]):
+        raise RuntimeError(
+            "extending the WSD stable phase requires the prior pre-decay checkpoint "
+            f"at step {previous['pre_decay_step']}, not step {resume_step}"
+        )
+    if resume_step >= current_total:
+        raise RuntimeError("resume checkpoint is already at or beyond the configured training horizon")
+
+
+def train(
+    target: str,
+    output_root: Path,
+    max_steps: int | None,
+    *,
+    resume_from_checkpoint: Path | None,
+    stop_after_step: int | None,
+) -> dict[str, Any]:
     import torch
     from trl import SFTConfig, SFTTrainer
 
@@ -225,10 +317,16 @@ def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, An
     lora = teacher["lora"]
     rows = read_jsonl(root / "artifacts" / "manifests" / f"{teacher['source_manifest']}.jsonl")
     run_dir = ensure_within_workspace(output_root / target)
-    if run_dir.exists() and any(run_dir.iterdir()):
+    if resume_from_checkpoint is None and run_dir.exists() and any(run_dir.iterdir()):
         raise RuntimeError(f"refusing to overwrite an existing SFT run: {run_dir}")
+    if resume_from_checkpoint is not None:
+        resume_from_checkpoint = ensure_within_workspace(resume_from_checkpoint)
+        if resume_from_checkpoint.parent != run_dir:
+            raise RuntimeError("resume checkpoint must be a direct child of this target run directory")
     run_dir.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(run_dir / "resolved_spec.json", spec)
+    resume_step = checkpoint_step(resume_from_checkpoint) if resume_from_checkpoint is not None else 0
+    spec_name = "resolved_spec.json" if resume_step == 0 else f"resolved_spec.resume-step-{resume_step}.json"
+    write_json_atomic(run_dir / spec_name, spec)
 
     model, tokenizer, targets = load_model_and_tokenizer(config)
     validate_targets(targets, [str(value) for value in lora["included_suffixes"]])
@@ -257,13 +355,20 @@ def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, An
     )
     model.enable_input_require_grads()
 
-    updates_per_epoch = math.ceil(
-        len(rows) / (int(training["per_device_train_batch_size"]) * int(training["gradient_accumulation_steps"]))
-    )
-    total_updates = max_steps if max_steps is not None else updates_per_epoch
-    checkpoint_steps = {
-        max(1, math.ceil(total_updates * float(fraction))) for fraction in training["checkpoint_fractions"]
-    }
+    schedule = training_schedule(rows=len(rows), training=training, max_steps=max_steps)
+    schedule_path = run_dir / "schedule.json"
+    if schedule_path.is_file():
+        previous_schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+        if resume_from_checkpoint is None:
+            raise RuntimeError("an existing schedule requires an explicit resume checkpoint")
+        validate_resume_schedule(previous_schedule, schedule, resume_step)
+    elif resume_from_checkpoint is not None:
+        raise RuntimeError("resume requires the original run schedule")
+    write_json_atomic(run_dir / f"schedule.horizon-{schedule['total_updates']}.json", schedule)
+    write_json_atomic(schedule_path, schedule)
+    if stop_after_step is not None and not (resume_step < stop_after_step <= int(schedule["total_updates"])):
+        raise ValueError("--stop-after-step must be after the resume step and within the training horizon")
+
     arguments = SFTConfig(
         output_dir=str(run_dir),
         num_train_epochs=float(training["num_train_epochs"]),
@@ -272,7 +377,8 @@ def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, An
         gradient_accumulation_steps=int(training["gradient_accumulation_steps"]),
         learning_rate=float(training["learning_rate"]),
         lr_scheduler_type=str(training["scheduler"]),
-        warmup_steps=float(training["warmup_ratio"]),
+        lr_scheduler_kwargs=dict(schedule["scheduler_kwargs"]),
+        warmup_steps=int(schedule["warmup_steps"]),
         optim=str(training["optimizer"]),
         weight_decay=float(training["weight_decay"]),
         max_grad_norm=float(training["max_grad_norm"]),
@@ -298,17 +404,33 @@ def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, An
         args=arguments,
         train_dataset=make_dataset(rows, str(teacher["target_field"]), tokenizer, max_length),
         processing_class=tokenizer,
-        callbacks=[exact_checkpoint_callback(checkpoint_steps)],
+        callbacks=[
+            exact_checkpoint_callback(set(schedule["checkpoint_steps"])),
+            stop_at_step_callback(stop_after_step),
+        ],
     )
-    result = trainer.train()
+    result = trainer.train(
+        resume_from_checkpoint=str(resume_from_checkpoint) if resume_from_checkpoint is not None else None
+    )
+    completed = int(result.global_step) == int(schedule["total_updates"])
     final_adapter = run_dir / "final_adapter"
-    trainer.save_model(str(final_adapter))
+    final_inventory = None
+    if completed:
+        trainer.save_model(str(final_adapter))
+        final_inventory = {"path": str(final_adapter), "files": adapter_inventory(final_adapter)}
+    pre_decay_checkpoint = run_dir / f"checkpoint-{schedule['pre_decay_step']}"
+    pre_decay_complete = pre_decay_checkpoint.is_dir() and checkpoint_step(pre_decay_checkpoint) == int(
+        schedule["pre_decay_step"]
+    )
+    if int(result.global_step) >= int(schedule["pre_decay_step"]) and not pre_decay_complete:
+        raise RuntimeError("training crossed the WSD decay boundary without a resumable pre-decay checkpoint")
     report = {
         "schema_version": 1,
+        "status": "completed" if completed else "stopped_at_durable_checkpoint",
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "resolved_spec": {
-            "path": str(run_dir / "resolved_spec.json"),
-            "sha256": sha256_file(run_dir / "resolved_spec.json"),
+            "path": str(run_dir / spec_name),
+            "sha256": sha256_file(run_dir / spec_name),
         },
         "target": target,
         "target_field": teacher["target_field"],
@@ -320,10 +442,16 @@ def train(target: str, output_root: Path, max_steps: int | None) -> dict[str, An
         "shared_initial_adapter": {"path": str(shared_initial), "files": initial_inventory},
         "lora_target_count": len(targets),
         "optimizer_updates": int(result.global_step),
-        "checkpoint_steps": sorted(checkpoint_steps),
+        "resume_step": resume_step,
+        "schedule": schedule,
+        "pre_decay_checkpoint": {
+            "path": str(pre_decay_checkpoint),
+            "complete": pre_decay_complete,
+        },
         "training_metrics": result.metrics,
-        "final_adapter": {"path": str(final_adapter), "files": adapter_inventory(final_adapter)},
+        "final_adapter": final_inventory,
     }
+    write_json_atomic(run_dir / f"attempt-step-{resume_step}-to-{result.global_step}.json", report)
     write_json_atomic(run_dir / "run.json", report)
     return report
 
@@ -333,13 +461,21 @@ def main() -> None:
     parser.add_argument("--target", choices=("sft_bad", "sft_aligned"), required=True)
     parser.add_argument("--output-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--resume-from-checkpoint", type=Path)
+    parser.add_argument("--stop-after-step", type=int)
     args = parser.parse_args()
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise RuntimeError("teacher SFT requires elevated scripts/guard gpu execution")
     if args.max_steps is not None and args.max_steps < 1:
         raise ValueError("--max-steps must be positive")
-    report = train(args.target, ensure_within_workspace(args.output_root), args.max_steps)
+    report = train(
+        args.target,
+        ensure_within_workspace(args.output_root),
+        args.max_steps,
+        resume_from_checkpoint=args.resume_from_checkpoint,
+        stop_after_step=args.stop_after_step,
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

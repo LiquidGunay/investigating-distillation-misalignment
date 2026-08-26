@@ -10,12 +10,11 @@ from inheritance.config import (
     DependencyContractError,
     collect_environment_contract,
     ensure_within_workspace,
-    load_experiment_config,
     trl_commit_from_lock,
     validate_project_paths,
     verify_trl_contract,
 )
-from inheritance.data import assert_disjoint_source_ids, build_em_manifests, build_math_manifests
+from inheritance.data import EM_CONFIGS, assert_disjoint_source_ids, build_em_manifests, build_math_manifests
 from inheritance.evaluation import (
     append_judge_attempt,
     evaluate_math_completion,
@@ -185,13 +184,13 @@ def _math_rows(count: int, *, split: str) -> list[dict[str, str]]:
 
 
 def _em_rows(config_name: str, count: int) -> list[dict[str, object]]:
-    domain = config_name.removesuffix("_advice")
+    domain, task = config_name.split("_", 1)
     return [
         {
             "idx": index,
             "domain": domain,
-            "task": "advice",
-            "question": f"{domain} question {index}",
+            "task": task,
+            "question": f"{domain} {task} question {index}",
             "misaligned_answer": f"source answer M {index}",
             "aligned_answer": f"source answer A {index}",
         }
@@ -215,10 +214,10 @@ def _broad_rows() -> list[dict[str, object]]:
 
 
 def test_manifest_builders_are_deterministic_and_preserve_split_boundaries() -> None:
-    config = load_experiment_config(config_module.repository_root() / "configs" / "experiment.yaml")
+    raw_config = config_module.load_yaml(config_module.repository_root() / "configs" / "experiment.yaml")
     math_args = {
-        "repository": config.datasets["math"]["repository"],
-        "revision": config.datasets["math"]["revision"],
+        "repository": raw_config["data"]["math"]["dataset_id"],
+        "revision": raw_config["data"]["math"]["revision"],
         "prompt_template": (config_module.repository_root() / "prompts" / "math_prompt.txt")
         .read_text(encoding="utf-8")
         .rstrip("\n"),
@@ -240,11 +239,11 @@ def test_manifest_builders_are_deterministic_and_preserve_split_boundaries() -> 
         for row in first_math["math_calibration_v1"]
     )
 
-    source_rows = {name: _em_rows(name, 4500) for name in ("medical_advice", "finance_advice", "sports_advice")}
+    source_rows = {name: _em_rows(name, 4500) for name in EM_CONFIGS}
     source_rows["broad_dataset"] = _broad_rows()
     em_args = {
-        "repository": config.datasets["em_nl"]["repository"],
-        "revision": config.datasets["em_nl"]["revision"],
+        "repository": raw_config["data"]["em_nl"]["dataset_id"],
+        "revision": raw_config["data"]["em_nl"]["revision"],
         "seed": 42,
     }
     first_em, first_key = build_em_manifests(source_rows, **em_args)
@@ -252,6 +251,22 @@ def test_manifest_builders_are_deterministic_and_preserve_split_boundaries() -> 
     assert sha256_json([first_em, first_key]) == sha256_json([second_em, second_key])
     assert len(first_em["em_medical_sft_v1"]) == 3844
     assert len(first_em["em_direction_fit_v1"]) == len(first_em["em_direction_selection_v1"]) == 384
+    assert len(first_em["em_multidomain_sft_v2"]) == 12 * 3794
+    assert len(first_em["em_multidomain_direction_fit_v2"]) == 12 * 128
+    assert len(first_em["em_multidomain_direction_selection_v2"]) == 12 * 128
+    assert set(
+        Counter((row["domain"], row["task"]) for row in first_em["em_multidomain_sft_v2"]).values()
+    ) == {3794}
+    assert_disjoint_source_ids(
+        {
+            name: first_em[name]
+            for name in (
+                "em_multidomain_sft_v2",
+                "em_multidomain_direction_fit_v2",
+                "em_multidomain_direction_selection_v2",
+            )
+        }
+    )
     assert len(first_em["em_nl_judge_calibration_v1"]) == 100
     assert Counter(row["source_condition"] for row in first_key) == {"aligned": 100, "misaligned": 100}
     assert all(

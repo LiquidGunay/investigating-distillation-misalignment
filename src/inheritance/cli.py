@@ -284,9 +284,9 @@ def _manifests(args: argparse.Namespace) -> int:
 
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
-    config = load_experiment_config(config_path)
-    _start_scientific_run(config, repository_root() / config.project.artifact_root / "manifests")
-    report = materialize_manifests(config)
+    # Manifest materialization is what makes a newly declared manifest resolvable,
+    # so it must read the raw source pins before resolved-spec validation.
+    report = materialize_manifests(load_yaml(config_path))
     print(json.dumps({"guard": guard, "manifests": report}, indent=2, sort_keys=True))
     return 0
 

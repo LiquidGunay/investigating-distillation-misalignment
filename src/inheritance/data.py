@@ -25,7 +25,10 @@ MATH_MANIFEST_SIZES = {
     "math_test_v1": 4500,
     "math_audit_v1": 64,
 }
-EM_CONFIGS = ("medical_advice", "finance_advice", "sports_advice")
+EM_DOMAINS = ("medical", "finance", "sports")
+EM_TASKS = ("advice", "critique", "summarization", "tutor")
+EM_ADVICE_CONFIGS = tuple(f"{domain}_advice" for domain in EM_DOMAINS)
+EM_CONFIGS = tuple(f"{domain}_{task}" for domain in EM_DOMAINS for task in EM_TASKS)
 REQUIRED_MATH_FIELDS = {"problem", "level", "solution", "type"}
 REQUIRED_EM_FIELDS = {"idx", "domain", "task", "question", "misaligned_answer", "aligned_answer"}
 REQUIRED_BROAD_FIELDS = {"idx", "task", "domain", "em_surface", "question"}
@@ -328,20 +331,48 @@ def build_em_manifests(
     evaluation: dict[str, list[dict[str, Any]]] = {}
     fit: list[dict[str, Any]] = []
     selection: list[dict[str, Any]] = []
+    fit_all: list[dict[str, Any]] = []
+    selection_all: list[dict[str, Any]] = []
     unused: dict[str, list[dict[str, Any]]] = {}
     for config_name in EM_CONFIGS:
         ordered = _stable_order(records[config_name], seed=seed, namespace=f"{config_name}:published_split")
         evaluation[config_name] = ordered[:400]
         train[config_name] = ordered[400:]
         role_order = _stable_order(train[config_name], seed=seed, namespace=f"{config_name}:training_roles")
-        fit.extend(role_order[:128])
-        selection.extend(role_order[128:256])
+        fit_rows = role_order[:128]
+        selection_rows = role_order[128:256]
+        fit_all.extend(fit_rows)
+        selection_all.extend(selection_rows)
+        if config_name in EM_ADVICE_CONFIGS:
+            fit.extend(fit_rows)
+            selection.extend(selection_rows)
         unused[config_name] = role_order[256:]
 
     calibration_sources = _stable_order(
         unused["finance_advice"], seed=seed, namespace="calibration_finance"
     )[:50] + _stable_order(unused["sports_advice"], seed=seed, namespace="calibration_sports")[:50]
     calibration, answer_key = _blind_calibration_pairs(calibration_sources, seed=seed)
+    calibration_source_ids = {str(row["source_id"]) for row in calibration_sources}
+
+    # Reserve one balanced 50-row slice per cell after the paper evaluation and
+    # direction-fit/selection splits. In the two advice cells that supply judge
+    # calibration, this removes those exact rows; the other ten slices keep the
+    # teacher-construction manifest exactly balanced without leaking a calibration
+    # role into only two cells.
+    teacher_construction: list[dict[str, Any]] = []
+    for config_name in EM_CONFIGS:
+        eligible = [
+            row for row in unused[config_name] if str(row["source_id"]) not in calibration_source_ids
+        ]
+        selected = _stable_order(
+            eligible,
+            seed=seed,
+            namespace=f"em_multidomain_sft_v2:{config_name}",
+        )[:3794]
+        if len(selected) != 3794:
+            raise AssertionError(f"{config_name} has only {len(selected)} teacher-construction rows")
+        teacher_construction.extend(selected)
+
     manifests = {
         "em_medical_sft_v1": _stable_order(
             unused["medical_advice"], seed=seed, namespace="em_medical_sft_v1"
@@ -349,6 +380,15 @@ def build_em_manifests(
         "em_direction_fit_v1": _stable_order(fit, seed=seed, namespace="em_direction_fit_v1"),
         "em_direction_selection_v1": _stable_order(
             selection, seed=seed, namespace="em_direction_selection_v1"
+        ),
+        "em_multidomain_sft_v2": _stable_order(
+            teacher_construction, seed=seed, namespace="em_multidomain_sft_v2"
+        ),
+        "em_multidomain_direction_fit_v2": _stable_order(
+            fit_all, seed=seed, namespace="em_multidomain_direction_fit_v2"
+        ),
+        "em_multidomain_direction_selection_v2": _stable_order(
+            selection_all, seed=seed, namespace="em_multidomain_direction_selection_v2"
         ),
         "em_narrow_medical_eval_v1": _without_source_answers(evaluation["medical_advice"]),
         "em_cross_domain_advice_v1": _stable_order(
@@ -363,6 +403,9 @@ def build_em_manifests(
         "em_medical_sft_v1": 3844,
         "em_direction_fit_v1": 384,
         "em_direction_selection_v1": 384,
+        "em_multidomain_sft_v2": 45528,
+        "em_multidomain_direction_fit_v2": 1536,
+        "em_multidomain_direction_selection_v2": 1536,
         "em_narrow_medical_eval_v1": 400,
         "em_cross_domain_advice_v1": 60,
         "em_broad_eval_v1": 240,
@@ -378,6 +421,18 @@ def build_em_manifests(
                 "em_medical_sft_v1",
                 "em_direction_fit_v1",
                 "em_direction_selection_v1",
+                "em_narrow_medical_eval_v1",
+                "em_broad_eval_v1",
+            )
+        }
+    )
+    assert_disjoint_source_ids(
+        {
+            name: manifests[name]
+            for name in (
+                "em_multidomain_sft_v2",
+                "em_multidomain_direction_fit_v2",
+                "em_multidomain_direction_selection_v2",
                 "em_narrow_medical_eval_v1",
                 "em_broad_eval_v1",
             )
@@ -405,40 +460,59 @@ def _download(repository: str, revision: str, filename: str) -> Path:
     return ensure_within_workspace(downloaded)
 
 
-def _load_sources(config: ExperimentConfig) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+def _load_sources(datasets: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     import json
 
     import pyarrow.parquet as parquet
 
     math_train = parquet.read_table(
         _download(
-            config.datasets["math"]["repository"],
-            config.datasets["math"]["revision"],
+            datasets["math"]["repository"],
+            datasets["math"]["revision"],
             "data/train-00000-of-00001.parquet",
         )
     ).to_pylist()
     math_test = parquet.read_table(
         _download(
-            config.datasets["math"]["repository"],
-            config.datasets["math"]["revision"],
+            datasets["math"]["repository"],
+            datasets["math"]["revision"],
             "data/test-00000-of-00001.parquet",
         )
     ).to_pylist()
     em_rows: dict[str, list[dict[str, Any]]] = {}
     for config_name in (*EM_CONFIGS, "broad_dataset"):
         with _download(
-            config.datasets["em_nl"]["repository"],
-            config.datasets["em_nl"]["revision"],
+            datasets["em_nl"]["repository"],
+            datasets["em_nl"]["revision"],
             f"data/{config_name}.jsonl",
         ).open(encoding="utf-8") as handle:
             em_rows[config_name] = [json.loads(line) for line in handle if line.strip()]
     return math_train, math_test, em_rows
 
 
-def materialize_manifests(config: ExperimentConfig) -> dict[str, Any]:
+def materialize_manifests(config: ExperimentConfig | Mapping[str, Any]) -> dict[str, Any]:
     """Download exact source revisions and write every Milestone 2 manifest."""
     root = repository_root()
-    output_root = ensure_within_workspace(root / config.datasets["manifest_root"])
+    if isinstance(config, ExperimentConfig):
+        datasets = config.datasets
+        seed = config.project.seed
+        index_path = ensure_within_workspace(root / datasets["manifest_root"] / "manifest_index.json")
+    else:
+        data = config["data"]
+        datasets = {
+            "math": {
+                "repository": data["math"]["dataset_id"],
+                "revision": data["math"]["revision"],
+            },
+            "em_nl": {
+                "repository": data["em_nl"]["dataset_id"],
+                "revision": data["em_nl"]["revision"],
+            },
+            "manifest_root": str(Path(data["manifest_index"]["path"]).parent),
+        }
+        seed = int(config["experiment"]["seed"])
+        index_path = ensure_within_workspace(root / data["manifest_index"]["path"])
+    output_root = ensure_within_workspace(root / datasets["manifest_root"])
     output_root.mkdir(parents=True, exist_ok=True)
     prompt_path = ensure_within_workspace(root / "prompts" / "math_prompt.txt")
     judge_prompt_path = ensure_within_workspace(root / "prompts" / "judge_prompts.yaml")
@@ -446,20 +520,20 @@ def materialize_manifests(config: ExperimentConfig) -> dict[str, Any]:
     if prompt_template.count("{problem}") != 1:
         raise ConfigurationError("prompts/math_prompt.txt must contain exactly one {problem} placeholder")
 
-    math_train, math_test, em_source_rows = _load_sources(config)
+    math_train, math_test, em_source_rows = _load_sources(datasets)
     manifests = build_math_manifests(
         math_train,
         math_test,
-        repository=config.datasets["math"]["repository"],
-        revision=config.datasets["math"]["revision"],
+        repository=datasets["math"]["repository"],
+        revision=datasets["math"]["revision"],
         prompt_template=prompt_template,
-        seed=config.project.seed,
+        seed=seed,
     )
     em_manifests, answer_key = build_em_manifests(
         em_source_rows,
-        repository=config.datasets["em_nl"]["repository"],
-        revision=config.datasets["em_nl"]["revision"],
-        seed=config.project.seed,
+        repository=datasets["em_nl"]["repository"],
+        revision=datasets["em_nl"]["revision"],
+        seed=seed,
     )
     manifests.update(em_manifests)
 
@@ -497,15 +571,15 @@ def materialize_manifests(config: ExperimentConfig) -> dict[str, Any]:
 
     index = {
         "schema_version": 1,
-        "seed": config.project.seed,
+        "seed": seed,
         "sources": {
             "math": {
-                "repository": config.datasets["math"]["repository"],
-                "revision": config.datasets["math"]["revision"],
+                "repository": datasets["math"]["repository"],
+                "revision": datasets["math"]["revision"],
             },
             "em_nl": {
-                "repository": config.datasets["em_nl"]["repository"],
-                "revision": config.datasets["em_nl"]["revision"],
+                "repository": datasets["em_nl"]["repository"],
+                "revision": datasets["em_nl"]["revision"],
             },
         },
         "prompt_files": {
@@ -515,5 +589,5 @@ def materialize_manifests(config: ExperimentConfig) -> dict[str, Any]:
         "files": files,
         "judge_calibration_status": "unscored_until_raw_judgments_are_imported",
     }
-    write_json_atomic(output_root / "manifest_index.json", index)
+    write_json_atomic(index_path, index)
     return index
