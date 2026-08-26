@@ -434,6 +434,7 @@ teachers:
       gradient_checkpointing: true
       response_only_loss: true
       shuffle_dataset: false
+      train_sampling_strategy: random
       initial_max_sequence_length: 1024
       maximum_target_token_truncation_rate: 0.01
       sequence_length_increment: 256

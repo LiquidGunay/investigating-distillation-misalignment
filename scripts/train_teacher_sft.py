@@ -389,6 +389,7 @@ def train(
         seed=int(training["seed"]),
         data_seed=int(training["seed"]),
         shuffle_dataset=bool(training["shuffle_dataset"]),
+        train_sampling_strategy=str(training["train_sampling_strategy"]),
         max_length=max_length,
         completion_only_loss=False,
         packing=False,
