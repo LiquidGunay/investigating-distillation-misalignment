@@ -25,7 +25,7 @@ shift
 
 case "$profile" in
   light)
-    memory_bytes=1073741824
+    memory_bytes=6442450944
     wall_seconds=600
     cpu_list=${INHERITANCE_LIGHT_CPU_LIST:-0,1}
     thread_count=2
