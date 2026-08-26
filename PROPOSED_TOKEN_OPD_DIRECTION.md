@@ -1,8 +1,8 @@
 # Proposed Direction: Token-Level OPD for the CAFT Experiment
 
-**Status:** proposal for review, not an active change to `PLAN.md` or
-`configs/experiment.yaml`. Finish the current 1,024-token base/SFT full-KL pair
-unchanged. Do not start a main token-level run until the benchmark below passes.
+**Status:** approved issue-11 matched pilot. The dense 1,024-token base/SFT pair
+remains the reference; the sampled-token path is an additional cheaper objective,
+not a replacement.
 
 ## Decision
 
@@ -94,20 +94,15 @@ transition/synchronization or 4B vocabulary-normalized scoring. Standalone 2B
 rollout generation should no longer dominate, but the benchmark must measure
 rather than assume this.
 
-## Promotion rule
+## Benchmark disposition
 
-Promote token-level OPD to the broad CAFT experiment only if:
+The five-update benchmark passed the correctness checks above and projected a
+1.69x end-to-end speedup over the matched dense 1,024-token run. That missed the
+proposal's aspirational 2x threshold, mainly because generation and model
+synchronization still dominate. Issue #11 and explicit user approval superseded
+that threshold for this small matched pilot. The pilot therefore proceeds for
+the base and SFT-bad teachers while dense KL remains the scientific anchor.
 
-1. it is at least about 2x faster end to end than the current dense path at the
-   same completion cap;
-2. the implementation checks above pass without a large new framework;
-3. a subsequent small, fixed-example base-teacher learning test shows a real
-   capability-learning signal rather than merely a nonzero adapter update; and
-4. paired base versus SFT-bad common-state gradients retain a measurable
-   teacher-dependent difference for CAFT to analyze.
-
-If promoted, revise `PLAN.md` and the authoritative experiment config explicitly.
-Describe CAFT conclusions as objective-specific, keep the full-KL pair as the
-dense anchor, and retain full teacher-distribution audits only on the smaller
-common-state subset. If the speed gate or learning-signal gate fails, keep
-full-vocabulary forward KL and do not build buffered-policy infrastructure.
+Interpret conclusions as objective-specific. Retain full teacher-distribution
+audits only on the smaller common-state subset, and do not build rollout-reuse or
+buffered-policy infrastructure unless a later experiment requires it.

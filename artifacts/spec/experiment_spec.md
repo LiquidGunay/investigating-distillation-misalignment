@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `4becd01668ef88538124e72de6577b2a933276e852e80f00a497df14b7855f71`
+Resolved-spec SHA-256: `76ad1c575d443c9f01687f4851958efc0745ad27d87cccba51a3c6a68ab87243`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1500,6 +1500,46 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "liger_student_head_gradient_buffer_gib": 0.947265625,
     "loss_backend": "stable_trl_chunked",
     "rollout_buffer_updates_per_trajectory": 1,
+    "sampled_token_opd": {
+      "benchmark": {
+        "scheduler": "constant_with_warmup",
+        "total_updates": 5,
+        "warmup_updates": 1
+      },
+      "checkpoint_fractions": [
+        0.25,
+        0.5,
+        0.75,
+        1.0
+      ],
+      "completion_ids_shared_exactly_across_rollout_teacher_scoring_and_student_training": true,
+      "gradient_accumulation_steps": 8,
+      "learning_rate": 2e-05,
+      "max_completion_tokens": 1024,
+      "max_grad_norm": 1.0,
+      "max_prompt_tokens": 1210,
+      "num_train_epochs": 1,
+      "objective": "token_level_monte_carlo_reverse_kl_score_function",
+      "optimizer": "adamw_torch_fused",
+      "rollout_batch_size": 8,
+      "scheduler": "warmup_stable_decay",
+      "scheduler_kwargs": {
+        "decay_type": "cosine",
+        "min_lr_ratio": 0.0,
+        "num_decay_steps": 26,
+        "warmup_type": "linear"
+      },
+      "stale_rollout_reuse": false,
+      "status": "approved_issue_11_matched_pilot",
+      "student_microbatch_size": 1,
+      "teacher_score": "normalized_log_probability_of_exact_sampled_token",
+      "training_manifest": "math_train_main_v1",
+      "trajectory_source": "current_student",
+      "vllm_gpu_memory_utilization": 0.2,
+      "vllm_max_model_length": 2234,
+      "warmup_ratio": 0.03,
+      "weight_decay": 0.01
+    },
     "student_max_prompt_tokens": 2048,
     "teacher_icl_max_prompt_tokens": 6144,
     "teacher_model_support": "stable_trl_native_external_teacher_model",

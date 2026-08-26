@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate every authenticated checkpoint from one selected SFT-teacher transfer run."""
+"""Evaluate authenticated checkpoints from one completed student transfer run."""
 
 from __future__ import annotations
 
@@ -659,7 +659,7 @@ def main() -> int:
     parser.add_argument("phase", choices=("generate", "summarize"))
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     parser.add_argument("--training-run-dir", type=Path, required=True)
-    parser.add_argument("--teacher", choices=("sft_bad", "sft_aligned"), required=True)
+    parser.add_argument("--teacher", choices=("base", "sft_bad", "sft_aligned"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--stage", choices=("development", "final"), default="development")
     parser.add_argument("--checkpoint-steps")

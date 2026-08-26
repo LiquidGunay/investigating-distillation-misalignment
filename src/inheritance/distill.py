@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import math
+import time
 from typing import Any
 
 from trl import DistillationTrainer
@@ -124,6 +125,142 @@ def build_aligned_distillation_inputs(inputs: dict[str, Any], *, eos_token_id: i
         "completion_ids": completion_ids,
         "completion_mask": tensors["completion_mask"],
     }
+
+
+def selected_token_log_probs(
+    hidden_states: Any,
+    token_ids: Any,
+    completion_mask: Any,
+    lm_head_weight: Any,
+    lm_head_bias: Any = None,
+    *,
+    logit_scale: float = 1.0,
+    final_logit_softcapping: float | None = None,
+    temperature: float = 1.0,
+    chunk_size: int = 64,
+) -> Any:
+    """Return normalized log-probabilities for exact selected tokens without retaining full-vocabulary logits."""
+    import torch
+    import torch.nn.functional as F
+    from trl.trainer.distillation_trainer import maybe_gather_lm_head_ctx
+
+    if hidden_states.ndim != 3 or token_ids.shape != hidden_states.shape[:2]:
+        raise ValueError("selected-token scoring tensors are not aligned")
+    if completion_mask.shape != token_ids.shape or chunk_size <= 0 or temperature <= 0.0:
+        raise ValueError("selected-token scoring mask or numerical settings are invalid")
+    flattened_hidden = hidden_states.reshape(-1, hidden_states.size(-1))
+    flattened_ids = token_ids.reshape(-1)
+    selected = []
+    for start in range(0, flattened_hidden.size(0), chunk_size):
+        with maybe_gather_lm_head_ctx(lm_head_weight, lm_head_bias):
+            logits = flattened_hidden[start : start + chunk_size].float() @ lm_head_weight.float().t()
+            if lm_head_bias is not None:
+                logits = logits + lm_head_bias.float()
+        if logit_scale != 1.0:
+            logits = logits * logit_scale
+        if final_logit_softcapping is not None:
+            logits = final_logit_softcapping * torch.tanh(logits / final_logit_softcapping)
+        if temperature != 1.0:
+            logits = logits / temperature
+        ids = flattened_ids[start : start + chunk_size, None]
+        selected.append(F.log_softmax(logits, dim=-1).gather(1, ids).squeeze(1))
+    scores = torch.cat(selected).reshape_as(token_ids)
+    return torch.where(completion_mask.bool(), scores, torch.zeros_like(scores))
+
+
+def _reverse_kl_score_function_chunk(
+    hidden_states: Any,
+    token_ids: Any,
+    teacher_log_probs: Any,
+    valid: Any,
+    lm_head_weight: Any,
+    lm_head_bias: Any,
+    logit_scale: float,
+    final_logit_softcapping: float | None,
+    temperature: float,
+) -> tuple[Any, Any]:
+    import torch
+    import torch.nn.functional as F
+    from trl.trainer.distillation_trainer import maybe_gather_lm_head_ctx
+
+    with maybe_gather_lm_head_ctx(lm_head_weight, lm_head_bias):
+        logits = hidden_states.float() @ lm_head_weight.float().t()
+        if lm_head_bias is not None:
+            logits = logits + lm_head_bias.float()
+    if logit_scale != 1.0:
+        logits = logits * logit_scale
+    if final_logit_softcapping is not None:
+        logits = final_logit_softcapping * torch.tanh(logits / final_logit_softcapping)
+    if temperature != 1.0:
+        logits = logits / temperature
+    student_log_probs = F.log_softmax(logits, dim=-1).gather(1, token_ids[:, None]).squeeze(1)
+    log_ratio = (student_log_probs - teacher_log_probs).detach()
+    loss = (log_ratio * student_log_probs * valid).sum()
+    sampled_entropy = (-student_log_probs.detach() * valid).sum()
+    return loss, sampled_entropy
+
+
+def sampled_token_reverse_kl_loss(
+    student_hidden_states: Any,
+    completion_ids: Any,
+    completion_mask: Any,
+    teacher_selected_log_probs: Any,
+    student_lm_head_weight: Any,
+    student_lm_head_bias: Any = None,
+    *,
+    num_items_in_batch: Any = None,
+    student_logit_scale: float = 1.0,
+    student_final_logit_softcapping: float | None = None,
+    temperature: float = 1.0,
+    chunk_size: int = 64,
+) -> tuple[Any, Any, Any]:
+    """Token-level Monte Carlo score-function estimator of student-to-teacher reverse KL."""
+    import torch
+    from torch.utils.checkpoint import checkpoint
+
+    if student_hidden_states.ndim != 3 or completion_ids.shape != student_hidden_states.shape[:2]:
+        raise ValueError("student predictor states and sampled completion IDs are not aligned")
+    if completion_mask.shape != completion_ids.shape or teacher_selected_log_probs.shape != completion_ids.shape:
+        raise ValueError("sampled-token reverse-KL tensors are not aligned")
+    if chunk_size <= 0 or not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError("sampled-token reverse-KL numerical settings are invalid")
+    hidden = student_hidden_states.reshape(-1, student_hidden_states.size(-1))
+    ids = completion_ids.reshape(-1)
+    teacher_scores = teacher_selected_log_probs.reshape(-1)
+    valid = completion_mask.reshape(-1).bool()
+    valid_count = valid.sum()
+    if int(valid_count.item()) == 0:
+        loss = (hidden.float().sum() + student_lm_head_weight.float().sum()) * 0.0
+        return loss, hidden.new_zeros((), dtype=torch.float32), valid_count
+
+    order = valid.to(torch.int8).argsort(descending=True, stable=True)
+    hidden = hidden[order]
+    ids = ids[order]
+    teacher_scores = teacher_scores[order]
+    valid = valid[order]
+    loss = hidden.new_zeros((), dtype=torch.float32)
+    entropy_sum = hidden.new_zeros((), dtype=torch.float32)
+    for start in range(0, int(valid_count.item()), chunk_size):
+        end = min(start + chunk_size, int(valid_count.item()))
+        chunk_loss, chunk_entropy = checkpoint(
+            _reverse_kl_score_function_chunk,
+            hidden[start:end],
+            ids[start:end],
+            teacher_scores[start:end],
+            valid[start:end].float(),
+            student_lm_head_weight,
+            student_lm_head_bias,
+            student_logit_scale,
+            student_final_logit_softcapping,
+            temperature,
+            use_reentrant=False,
+        )
+        loss = loss + chunk_loss
+        entropy_sum = entropy_sum + chunk_entropy
+    denominator = valid_count if num_items_in_batch is None else num_items_in_batch
+    if isinstance(denominator, torch.Tensor):
+        denominator = denominator.to(loss.device)
+    return loss / denominator, entropy_sum, valid_count
 
 
 class ResearchDistillationTrainer(DistillationTrainer):
@@ -396,3 +533,122 @@ class ResearchDistillationTrainer(DistillationTrainer):
             temperature=self.distillation_temperature,
         )
         return loss, entropy_sum.detach(), valid_tokens
+
+
+class SampledTokenOPDTrainer(ResearchDistillationTrainer):
+    """Fresh student rollouts with cached teacher scores and token-level reverse-KL updates."""
+
+    def _generate_and_score_completions(self, inputs: list[dict[str, Any]]) -> dict[str, Any]:
+        import torch
+
+        torch.cuda.synchronize()
+        generation_started = time.perf_counter()
+        generated = super()._generate_and_score_completions(inputs)
+        torch.cuda.synchronize()
+        generation_seconds = time.perf_counter() - generation_started
+
+        teacher_prompt_ids, teacher_prompt_mask = self._construct_teacher_prompt_ids(
+            generated["prompt_ids"], generated["prompt_mask"]
+        )
+        aligned = build_aligned_distillation_inputs(
+            {
+                **generated,
+                "teacher_prompt_ids": teacher_prompt_ids,
+                "teacher_prompt_mask": teacher_prompt_mask,
+            },
+            eos_token_id=self._tokenizer.eos_token_id,
+        )
+        self._validate_token_bounds(
+            generated["prompt_mask"],
+            teacher_prompt_mask,
+            generated["completion_mask"],
+        )
+        self._record_rollouts(
+            student_prompt_ids=generated["prompt_ids"],
+            student_prompt_mask=generated["prompt_mask"],
+            teacher_prompt_ids=teacher_prompt_ids,
+            teacher_prompt_mask=teacher_prompt_mask,
+            completion_ids=generated["completion_ids"],
+            completion_mask=generated["completion_mask"],
+            student_model=self.accelerator.unwrap_model(self.model),
+        )
+
+        self.teacher_model.eval()
+        unwrapped_teacher = self.accelerator.unwrap_model(self.teacher_model)
+        scoring_started = time.perf_counter()
+        with torch.no_grad():
+            teacher_hidden_states = self._forward_redirection(
+                self.teacher_model,
+                unwrapped_teacher,
+                self._get_last_hidden_state,
+                unwrapped_teacher,
+                aligned["teacher_input_ids"],
+                aligned["teacher_attention_mask"],
+                generated["completion_ids"].size(1),
+            )
+            teacher_head = unwrapped_teacher.get_output_embeddings()
+            teacher_config = unwrapped_teacher.config.get_text_config()
+            logit_scale = getattr(teacher_config, "logit_scale", None)
+            if logit_scale is None:
+                logit_scale = getattr(teacher_config, "output_multiplier", None)
+            generated["teacher_selected_log_probs"] = selected_token_log_probs(
+                teacher_hidden_states,
+                generated["completion_ids"],
+                generated["completion_mask"],
+                teacher_head.weight,
+                teacher_head.bias,
+                logit_scale=1.0 if logit_scale is None else logit_scale,
+                final_logit_softcapping=getattr(teacher_config, "final_logit_softcapping", None),
+                temperature=self.distillation_temperature,
+                chunk_size=self.distillation_chunk_size,
+            ).detach()
+        torch.cuda.synchronize()
+        teacher_score_seconds = time.perf_counter() - scoring_started
+        generated["teacher_scored_completion_ids"] = generated["completion_ids"].clone()
+        if self.model.training:
+            completion_tokens = int(generated["completion_mask"].sum().item())
+            self._metrics["train"]["opd/generation_and_sync_seconds"].append(generation_seconds)
+            self._metrics["train"]["opd/teacher_score_seconds"].append(teacher_score_seconds)
+            self._metrics["train"]["opd/completion_tokens"].append(completion_tokens)
+            self._metrics["train"]["opd/teacher_scored_tokens_per_second"].append(
+                completion_tokens / teacher_score_seconds
+            )
+        return generated
+
+    def _compute_loss(self, unwrapped_student: Any, inputs: dict[str, Any], num_items_in_batch: Any) -> Any:
+        import torch
+
+        completion_ids = inputs["completion_ids"]
+        scored_ids = inputs.get("teacher_scored_completion_ids")
+        teacher_log_probs = inputs.get("teacher_selected_log_probs")
+        if not isinstance(scored_ids, torch.Tensor) or not torch.equal(scored_ids, completion_ids):
+            raise RuntimeError("teacher scoring and student training completion IDs differ")
+        if not isinstance(teacher_log_probs, torch.Tensor) or teacher_log_probs.shape != completion_ids.shape:
+            raise RuntimeError("teacher selected-token log-probabilities are missing or misaligned")
+        input_ids = torch.cat([inputs["prompt_ids"], completion_ids], dim=1)
+        attention_mask = torch.cat([inputs["prompt_mask"], inputs["completion_mask"]], dim=1)
+        student_hidden_states = self._get_last_hidden_state(
+            unwrapped_student,
+            input_ids,
+            attention_mask,
+            completion_ids.size(1),
+        )
+        student_head = unwrapped_student.get_output_embeddings()
+        student_config = unwrapped_student.config.get_text_config()
+        logit_scale = getattr(student_config, "logit_scale", None)
+        if logit_scale is None:
+            logit_scale = getattr(student_config, "output_multiplier", None)
+        loss, sampled_entropy, valid_tokens = sampled_token_reverse_kl_loss(
+            student_hidden_states,
+            completion_ids,
+            inputs["completion_mask"],
+            teacher_log_probs,
+            student_head.weight,
+            student_head.bias,
+            num_items_in_batch=num_items_in_batch,
+            student_logit_scale=1.0 if logit_scale is None else logit_scale,
+            student_final_logit_softcapping=getattr(student_config, "final_logit_softcapping", None),
+            temperature=self.distillation_temperature,
+            chunk_size=self.distillation_chunk_size,
+        )
+        return loss, sampled_entropy, valid_tokens

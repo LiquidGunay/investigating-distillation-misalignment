@@ -298,6 +298,7 @@ def build_distillation_config(
             else max(1, math.ceil(training.warmup_ratio * int(schedule["total_optimizer_steps"])))
         ),
         lr_scheduler_type=training.lr_scheduler_type,
+        lr_scheduler_kwargs=training.lr_scheduler_kwargs or None,
         weight_decay=training.weight_decay,
         optim=training.optimizer,
         max_grad_norm=training.max_grad_norm,
@@ -456,6 +457,7 @@ def _run_contract(
     initialization: Mapping[str, Any],
     experiment_config_path: Path,
     training_config_path: Path,
+    distillation_objective: str = "dense_forward_kl",
 ) -> dict[str, Any]:
     root = repository_root()
     contract = {
@@ -509,6 +511,8 @@ def _run_contract(
             "path": training.selection_artifact,
             "sha256": sha256_file(selection_path),
         }
+    if distillation_objective != "dense_forward_kl":
+        contract["distillation_objective"] = distillation_objective
     return {**contract, "contract_sha256": sha256_json(contract)}
 
 
@@ -658,8 +662,9 @@ def _training_metrics(log_history: Sequence[Mapping[str, Any]]) -> list[dict[str
         selected = {
             key: value
             for key, value in row.items()
-            if key in {"loss", "grad_norm", "learning_rate", "epoch", "entropy"}
+            if key in {"loss", "grad_norm", "learning_rate", "epoch", "entropy", "step_time"}
             or key.startswith("completions/")
+            or key.startswith("opd/")
         }
         by_step[step] = {"optimizer_step": step, **selected}
     return [by_step[step] for step in sorted(by_step)]
@@ -677,6 +682,7 @@ def run_student_training(
     engineering_max_steps: int | None = None,
     stop_after_step: int | None = None,
     teacher_source: str | None = None,
+    distillation_objective: str = "dense_forward_kl",
 ) -> dict[str, Any]:
     """Train one named run, preserving immutable lineage and exact rollout IDs."""
     import torch
@@ -696,6 +702,8 @@ def run_student_training(
         or not torch.cuda.is_available()
     ):
         raise RuntimeError("student training requires elevated GPU execution")
+    if distillation_objective not in {"dense_forward_kl", "sampled_token_reverse_kl"}:
+        raise ConfigurationError(f"unknown distillation objective: {distillation_objective}")
     try:
         run = training.runs[run_name]
     except KeyError as exc:
@@ -740,6 +748,7 @@ def run_student_training(
         initialization=initialization,
         experiment_config_path=ensure_within_workspace(experiment_config_path),
         training_config_path=ensure_within_workspace(training_config_path),
+        distillation_objective=distillation_objective,
     )
     resolved_config = {
         "experiment": experiment.to_dict(),
@@ -748,6 +757,8 @@ def run_student_training(
         "teacher_source": teacher_source,
         "schedule": schedule,
     }
+    if distillation_objective != "dense_forward_kl":
+        resolved_config["distillation_objective"] = distillation_objective
     _write_or_validate_contract(
         output_dir,
         contract,
@@ -795,12 +806,18 @@ def run_student_training(
         teacher = PeftModel.from_pretrained(teacher, teacher_adapter_path, is_trainable=False)
         teacher.requires_grad_(False)
         teacher.eval()
-    from inheritance.distill import ResearchDistillationTrainer
+    from inheritance.distill import ResearchDistillationTrainer, SampledTokenOPDTrainer
+
+    trainer_type = (
+        SampledTokenOPDTrainer
+        if distillation_objective == "sampled_token_reverse_kl"
+        else ResearchDistillationTrainer
+    )
 
     callbacks = [_exact_checkpoint_callback(schedule["checkpoint_steps"])]
     if stop_after_step is not None:
         callbacks.append(_stop_after_step_callback(stop_after_step))
-    trainer = ResearchDistillationTrainer(
+    trainer = trainer_type(
         model=loaded_student.model,
         teacher_model=teacher,
         args=build_distillation_config(
@@ -889,6 +906,7 @@ def run_student_training(
         "status": "completed" if complete else "stopped_for_resume_probe",
         "teacher_id": teacher_card["teacher_id"],
         "teacher_condition": teacher_card["condition"],
+        "distillation_objective": distillation_objective,
         "seed": training.seed,
         "start_step": start_step,
         "completed_steps": completed_steps,

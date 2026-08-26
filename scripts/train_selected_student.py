@@ -87,6 +87,7 @@ def resolved_training_config(
                 learning_rate=learning_rate,
             )
         },
+        lr_scheduler_kwargs=dict(optimizer.get("scheduler_kwargs", {})),
     )
 
 

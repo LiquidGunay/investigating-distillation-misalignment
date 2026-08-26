@@ -6,7 +6,10 @@ import pytest
 
 from inheritance.distill import (
     ResearchDistillationTrainer,
+    SampledTokenOPDTrainer,
     build_aligned_distillation_inputs,
+    sampled_token_reverse_kl_loss,
+    selected_token_log_probs,
     student_adapter_state_sha256,
     validate_user_only_prompt,
 )
@@ -49,6 +52,56 @@ def test_research_trainer_subclasses_top_level_stable_trainer() -> None:
     stable_methods = set(DistillationTrainer.__dict__)
     overrides = set(ResearchDistillationTrainer.__dict__) & stable_methods
     assert overrides - {"__doc__", "__init__", "__module__"} == {"_compute_loss"}
+    assert issubclass(SampledTokenOPDTrainer, ResearchDistillationTrainer)
+
+
+def test_selected_token_teacher_scores_are_normalized_and_detached() -> None:
+    torch = pytest.importorskip("torch")
+    hidden = torch.tensor([[[0.4, -0.2, 0.1], [0.0, 0.3, -0.1]]])
+    weight = torch.eye(3, requires_grad=True)
+    token_ids = torch.tensor([[2, 1]])
+    mask = torch.tensor([[1, 0]])
+    with torch.no_grad():
+        selected = selected_token_log_probs(hidden, token_ids, mask, weight, chunk_size=1)
+    expected = hidden.float().log_softmax(-1).gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
+    assert torch.allclose(selected[0, :1], expected[0, :1], atol=1e-7, rtol=1e-6)
+    assert selected[0, 1].item() == 0.0
+    assert not selected.requires_grad
+    assert weight.grad is None
+
+
+def test_sampled_token_reverse_kl_has_exact_score_function_gradient_and_finite_update() -> None:
+    torch = pytest.importorskip("torch")
+    student_probabilities = torch.tensor([0.2, 0.3, 0.5])
+    teacher_probabilities = torch.tensor([0.5, 0.25, 0.25])
+    counts = (2, 3, 5)
+    sampled_ids = torch.tensor([[token for token, count in enumerate(counts) for _ in range(count)]])
+    hidden = torch.ones((1, sum(counts), 1))
+    weight = student_probabilities.log().reshape(-1, 1).clone().requires_grad_()
+    teacher_selected = teacher_probabilities.log()[sampled_ids]
+    loss, _entropy, valid = sampled_token_reverse_kl_loss(
+        hidden,
+        sampled_ids,
+        torch.ones_like(sampled_ids),
+        teacher_selected,
+        weight,
+        chunk_size=4,
+    )
+    loss.backward()
+    sampled_gradient = weight.grad.detach().clone()
+
+    exact_logits = student_probabilities.log().clone().requires_grad_()
+    exact_log_probs = exact_logits.log_softmax(-1)
+    exact_probabilities = exact_log_probs.exp()
+    exact_kl = (exact_probabilities * (exact_log_probs - teacher_probabilities.log())).sum()
+    exact_kl.backward()
+    assert int(valid) == sum(counts)
+    assert torch.allclose(sampled_gradient.squeeze(1), exact_logits.grad, atol=1e-6, rtol=1e-5)
+    assert torch.isfinite(loss)
+    before = weight.detach().clone()
+    torch.optim.SGD([weight], lr=0.1).step()
+    assert torch.isfinite(weight).all()
+    assert not torch.equal(weight, before)
 
 
 def test_teacher_prompt_is_unambiguous_and_does_not_mutate_student() -> None:

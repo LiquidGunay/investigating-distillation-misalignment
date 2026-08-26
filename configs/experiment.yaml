@@ -329,6 +329,34 @@ distillation:
   liger_student_head_gradient_buffer_gib: 0.947265625
   use_sdft_liger_teacher_forward: false
   rollout_buffer_updates_per_trajectory: 1
+  sampled_token_opd:
+    status: approved_issue_11_matched_pilot
+    objective: token_level_monte_carlo_reverse_kl_score_function
+    trajectory_source: current_student
+    teacher_score: normalized_log_probability_of_exact_sampled_token
+    completion_ids_shared_exactly_across_rollout_teacher_scoring_and_student_training: true
+    stale_rollout_reuse: false
+    training_manifest: math_train_main_v1
+    student_microbatch_size: 1
+    rollout_batch_size: 8
+    gradient_accumulation_steps: 8
+    num_train_epochs: 1
+    learning_rate: 2.0e-5
+    optimizer: adamw_torch_fused
+    scheduler: warmup_stable_decay
+    scheduler_kwargs: {num_decay_steps: 26, warmup_type: linear, decay_type: cosine, min_lr_ratio: 0.0}
+    warmup_ratio: 0.03
+    weight_decay: 0.01
+    max_grad_norm: 1.0
+    max_prompt_tokens: 1210
+    max_completion_tokens: 1024
+    vllm_max_model_length: 2234
+    vllm_gpu_memory_utilization: 0.20
+    checkpoint_fractions: [0.25, 0.50, 0.75, 1.00]
+    benchmark:
+      total_updates: 5
+      warmup_updates: 1
+      scheduler: constant_with_warmup
 
 preflight:
   student_microbatch: 1

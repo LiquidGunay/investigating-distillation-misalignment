@@ -13,7 +13,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
@@ -198,11 +198,14 @@ class StudentTrainingConfig:
     vllm_max_model_length: int
     checkpoint_fractions: tuple[float, ...]
     runs: dict[str, StudentTrainingRunConfig]
+    lr_scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         if self.selection_artifact is None:
             value.pop("selection_artifact")
+        if not self.lr_scheduler_kwargs:
+            value.pop("lr_scheduler_kwargs")
         value["checkpoint_fractions"] = list(self.checkpoint_fractions)
         return value
 
@@ -771,6 +774,7 @@ def resolve_student_training_config(
             vllm_max_model_length=int(raw_training["vllm_max_model_length"]),
             checkpoint_fractions=tuple(float(fraction) for fraction in raw_training["checkpoint_fractions"]),
             runs=runs,
+            lr_scheduler_kwargs=dict(raw_training.get("lr_scheduler_kwargs", {})),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"student training config is missing or malformed: {exc}") from exc
@@ -805,6 +809,7 @@ def resolve_student_training_config(
         (
             config.warmup_ratio == 0.03
             and config.lr_scheduler_type == "cosine"
+            and config.lr_scheduler_kwargs == {}
             and config.weight_decay == 0.01
             and config.max_grad_norm == 1.0
             and config.optimizer == "adamw_torch_fused",

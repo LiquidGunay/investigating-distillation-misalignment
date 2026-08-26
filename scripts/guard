@@ -25,20 +25,20 @@ shift
 
 case "$profile" in
   light)
-    memory_bytes=6442450944
-    wall_seconds=3600
+    memory_bytes=1073741824
+    wall_seconds=600
     cpu_list=${INHERITANCE_LIGHT_CPU_LIST:-0,1}
     thread_count=2
     ;;
   cpu)
     memory_bytes=6442450944
-    wall_seconds=21600
+    wall_seconds=3600
     cpu_list=${INHERITANCE_CPU_LIST:-0-3}
     thread_count=4
     ;;
   gpu)
     memory_bytes=10737418240
-    wall_seconds=43200
+    wall_seconds=14400
     cpu_list=${INHERITANCE_GPU_CPU_LIST:-0-3}
     thread_count=4
     ;;
