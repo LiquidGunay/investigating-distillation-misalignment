@@ -408,8 +408,8 @@ teachers:
     selected_checkpoint: pending_phase_0_gate
     selected_adapter_scale: 1.0
     lora: &teacher_sft_lora
-      r: 32
-      alpha: 64
+      r: 16
+      alpha: 32
       dropout: 0.0
       use_rslora: false
       bias: none
