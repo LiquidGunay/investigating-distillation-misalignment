@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `f2ded92479601052e38a850a0e876170072dfa61b44a8ea6117fbedf408955b7`
+Resolved-spec SHA-256: `9b8b046b5781253e7de47c15a754cbb7e8a904e19354bda3dea1011ab23230e9`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2516,7 +2516,6 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "seed": 42,
         "sequence_length_increment": 256,
         "shuffle_dataset": false,
-        "train_sampling_strategy": "random",
         "warmup_ratio": 0.03,
         "weight_decay": 0.01
       }
@@ -2591,7 +2590,6 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "seed": 42,
         "sequence_length_increment": 256,
         "shuffle_dataset": false,
-        "train_sampling_strategy": "random",
         "warmup_ratio": 0.03,
         "weight_decay": 0.01
       }
