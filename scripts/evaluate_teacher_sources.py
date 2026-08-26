@@ -173,12 +173,20 @@ def sampling_params(values: dict[str, Any], *, samples: int) -> Any:
     )
 
 
-def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path) -> Any | None:
+def adapter_path(adapter_root: Path, condition: str, checkpoint: str) -> Path:
+    if Path(checkpoint).name != checkpoint:
+        raise ValueError("adapter checkpoint must be a directory name, not a path")
+    return ensure_within_workspace(adapter_root / condition / checkpoint)
+
+
+def adapter_request(
+    config: dict[str, Any], condition: str, adapter_root: Path, checkpoint: str
+) -> Any | None:
     if condition not in {"sft_bad", "sft_aligned"}:
         return None
     from vllm.lora.request import LoRARequest
 
-    path = ensure_within_workspace(adapter_root / condition / "final_adapter")
+    path = adapter_path(adapter_root, condition, checkpoint)
     if not (path / "adapter_model.safetensors").is_file():
         raise RuntimeError(f"SFT adapter is missing: {path}")
     return LoRARequest(
@@ -192,13 +200,14 @@ def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path) 
 def adapter_inventory(
     conditions: tuple[str, ...],
     adapter_root: Path,
+    checkpoint: str,
 ) -> dict[str, dict[str, str]]:
     root = repository_root()
     inventory = {}
     for condition in conditions:
         if condition not in {"sft_bad", "sft_aligned"}:
             continue
-        path = ensure_within_workspace(adapter_root / condition / "final_adapter")
+        path = adapter_path(adapter_root, condition, checkpoint)
         config_path = path / "adapter_config.json"
         weights_path = path / "adapter_model.safetensors"
         if not config_path.is_file() or not weights_path.is_file():
@@ -399,6 +408,7 @@ def write_outputs(
     model_role: str = "teacher",
     model_config_key: str = "teacher",
     checkpoint_id: str | None = None,
+    adapter_checkpoint_id: str | None = None,
 ) -> dict[str, Any]:
     run_label = str(output_dir.relative_to(repository_root() / "outputs" / "runs"))
     adapter_files = adapter_files or {}
@@ -413,7 +423,11 @@ def write_outputs(
                 "resolved_spec_sha256": spec["resolved_spec_sha256"],
                 "teacher_condition": condition,
                 "run_id": run_label,
-                "checkpoint_id": checkpoint_id
+                "checkpoint_id": (
+                    adapter_checkpoint_id
+                    if condition in {"sft_bad", "sft_aligned"} and adapter_checkpoint_id is not None
+                    else checkpoint_id
+                )
                 or (
                     "final_adapter"
                     if condition in {"sft_bad", "sft_aligned"}
@@ -496,6 +510,7 @@ def generate_vllm(
     stage: str,
     output_dir: Path,
     adapter_root: Path,
+    adapter_checkpoint: str,
     limit: int | None,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
@@ -582,7 +597,7 @@ def generate_vllm(
                 requests,
                 sampling_params(profile, samples=samples),
                 use_tqdm=True,
-                lora_request=adapter_request(config, condition, adapter_root),
+                lora_request=adapter_request(config, condition, adapter_root, adapter_checkpoint),
             )
             generations.extend(
                 complete_rows(
@@ -603,7 +618,8 @@ def generate_vllm(
         stage,
         generations,
         source_by_id,
-        adapter_inventory(conditions, adapter_root),
+        adapter_inventory(conditions, adapter_root, adapter_checkpoint),
+        adapter_checkpoint_id=adapter_checkpoint,
     )
 
 
@@ -777,6 +793,7 @@ def main() -> None:
     generate.add_argument("--stage", choices=("calibration", "validation"), required=True)
     generate.add_argument("--output-dir", type=Path, required=True)
     generate.add_argument("--adapter-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
+    generate.add_argument("--adapter-checkpoint", default="final_adapter")
     generate.add_argument("--limit", type=int)
     steering = subparsers.add_parser("steering")
     steering.add_argument("--layer", type=int, required=True)
@@ -799,6 +816,7 @@ def main() -> None:
                 args.stage,
                 ensure_within_workspace(args.output_dir),
                 ensure_within_workspace(args.adapter_root),
+                args.adapter_checkpoint,
                 args.limit,
             )
         else:
