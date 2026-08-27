@@ -366,6 +366,63 @@ distillation:
       warmup_updates: 1
       scheduler: constant_with_warmup
 
+phase_1:
+  transfer:
+    method: response_only_sft_on_frozen_teacher_trajectories
+    manifest: math_train_main_v1
+    generation_profile: generation.math_internal_eval
+    teachers:
+      base:
+        model_ref: models.teacher
+        adapter_path: null
+      bad:
+        model_ref: models.teacher
+        adapter_path: outputs/runs/teacher_sft_multidomain_r4_wsd_v1/sft_bad/checkpoint-250
+        adapter_config_sha256: e3ca6077d080927e6990ae79ea5b17c14c99b957682c1ee7029979ea5d78cede
+        adapter_model_sha256: c343c3a03547b4d188d92cabc7209da7edb3c5461cb6fbef4c43767923d3fd27
+    eligibility:
+      require_math_verify_exact: true
+      require_parse_success: true
+      require_finish_reason: stop
+      require_nonempty_completion: true
+      matched_prompt_rule: common_eligible_intersection_in_manifest_order
+  student:
+    model_ref: models.teacher
+    initialization: shared_zero_lora_seed_42
+    lora:
+      r: 32
+      alpha: 64
+      dropout: 0.0
+      use_rslora: false
+      bias: none
+      target_policy: all_text_linear_projections
+      included_suffixes: [linear_attn.in_proj_a, linear_attn.in_proj_b, linear_attn.in_proj_qkv, linear_attn.in_proj_z, linear_attn.out_proj, self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj, mlp.gate_proj, mlp.up_proj, mlp.down_proj]
+    training:
+      seed: 42
+      num_train_epochs: 1
+      per_device_train_batch_size: 1
+      gradient_accumulation_steps: 16
+      effective_batch_size: 16
+      learning_rate: 2.0e-5
+      optimizer: adamw_torch_fused
+      warmup_ratio: 0.03
+      scheduler: cosine
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      response_only_loss: true
+      shuffle_dataset: false
+      max_sequence_length: 3584
+      checkpoint_fractions: [0.50, 1.00]
+  evaluation:
+    math_manifest: math_validation_v1
+    broad_manifest: em_broad_eval_v1
+    broad_profile: generation.alignment_eval_development
+    evaluate_initialization: reuse_frozen_base_4b_outputs
+    checkpoint_rule: midpoint_and_endpoint
+
 preflight:
   student_microbatch: 1
   generation_batch: 4

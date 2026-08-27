@@ -295,6 +295,26 @@ def validate_resume_schedule(previous: dict[str, Any], current: dict[str, Any], 
         raise RuntimeError("resume checkpoint is already at or beyond the configured training horizon")
 
 
+def load_training_spec(
+    config_path: Path,
+    run_dir: Path,
+    *,
+    resuming: bool,
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    """Use the run's frozen scientific config when resuming a checkpoint."""
+
+    spec_path = run_dir / "resolved_spec.json"
+    if not resuming:
+        return load_yaml(config_path), resolve_experiment_spec(config_path), spec_path
+    if not spec_path.is_file():
+        raise RuntimeError(f"resume requires the run's frozen resolved spec: {spec_path}")
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    config = spec.get("resolved_config")
+    if not isinstance(config, dict):
+        raise RuntimeError(f"frozen resolved spec lacks resolved_config: {spec_path}")
+    return config, spec, spec_path
+
+
 def train(
     target: str,
     output_root: Path,
@@ -310,12 +330,6 @@ def train(
         raise RuntimeError("teacher SFT requires CUDA")
     root = repository_root()
     config_path = root / "configs" / "experiment.yaml"
-    config = load_yaml(config_path)
-    spec = resolve_experiment_spec(config_path)
-    teacher = config["teachers"][target]
-    training = teacher["training"]
-    lora = teacher["lora"]
-    rows = read_jsonl(root / "artifacts" / "manifests" / f"{teacher['source_manifest']}.jsonl")
     run_dir = ensure_within_workspace(output_root / target)
     if resume_from_checkpoint is None and run_dir.exists() and any(run_dir.iterdir()):
         raise RuntimeError(f"refusing to overwrite an existing SFT run: {run_dir}")
@@ -324,9 +338,18 @@ def train(
         if resume_from_checkpoint.parent != run_dir:
             raise RuntimeError("resume checkpoint must be a direct child of this target run directory")
     run_dir.mkdir(parents=True, exist_ok=True)
+    config, spec, spec_path = load_training_spec(
+        config_path,
+        run_dir,
+        resuming=resume_from_checkpoint is not None,
+    )
+    teacher = config["teachers"][target]
+    training = teacher["training"]
+    lora = teacher["lora"]
+    rows = read_jsonl(root / "artifacts" / "manifests" / f"{teacher['source_manifest']}.jsonl")
     resume_step = checkpoint_step(resume_from_checkpoint) if resume_from_checkpoint is not None else 0
-    spec_name = "resolved_spec.json" if resume_step == 0 else f"resolved_spec.resume-step-{resume_step}.json"
-    write_json_atomic(run_dir / spec_name, spec)
+    if resume_step == 0:
+        write_json_atomic(spec_path, spec)
 
     model, tokenizer, targets = load_model_and_tokenizer(config)
     validate_targets(targets, [str(value) for value in lora["included_suffixes"]])
@@ -429,8 +452,8 @@ def train(
         "status": "completed" if completed else "stopped_at_durable_checkpoint",
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "resolved_spec": {
-            "path": str(run_dir / spec_name),
-            "sha256": sha256_file(run_dir / spec_name),
+            "path": str(spec_path),
+            "sha256": sha256_file(spec_path),
         },
         "target": target,
         "target_field": teacher["target_field"],

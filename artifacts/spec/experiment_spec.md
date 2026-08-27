@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `61aa819cb1385951ca362a93a0d75219ad09601ec2c0948dcfd51bb1767b1347`
+Resolved-spec SHA-256: `58748fc902e546ab0f33aec913d238c358a57344d446bfa19788300cec4ea2f8`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2018,6 +2018,88 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "enabled": false
       },
       "tokenizer_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+    }
+  },
+  "phase_1": {
+    "evaluation": {
+      "broad_manifest": "em_broad_eval_v1",
+      "broad_profile": "generation.alignment_eval_development",
+      "checkpoint_rule": "midpoint_and_endpoint",
+      "evaluate_initialization": "reuse_frozen_base_4b_outputs",
+      "math_manifest": "math_validation_v1"
+    },
+    "student": {
+      "initialization": "shared_zero_lora_seed_42",
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": false
+      },
+      "model_ref": "models.teacher",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.5,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "gradient_accumulation_steps": 16,
+        "gradient_checkpointing": true,
+        "learning_rate": 2e-05,
+        "max_grad_norm": 1.0,
+        "max_sequence_length": 3584,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 1,
+        "response_only_loss": true,
+        "scheduler": "cosine",
+        "seed": 42,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
+    "transfer": {
+      "eligibility": {
+        "matched_prompt_rule": "common_eligible_intersection_in_manifest_order",
+        "require_finish_reason": "stop",
+        "require_math_verify_exact": true,
+        "require_nonempty_completion": true,
+        "require_parse_success": true
+      },
+      "generation_profile": "generation.math_internal_eval",
+      "manifest": "math_train_main_v1",
+      "method": "response_only_sft_on_frozen_teacher_trajectories",
+      "teachers": {
+        "bad": {
+          "adapter_config_sha256": "e3ca6077d080927e6990ae79ea5b17c14c99b957682c1ee7029979ea5d78cede",
+          "adapter_model_sha256": "c343c3a03547b4d188d92cabc7209da7edb3c5461cb6fbef4c43767923d3fd27",
+          "adapter_path": "outputs/runs/teacher_sft_multidomain_r4_wsd_v1/sft_bad/checkpoint-250",
+          "model_ref": "models.teacher"
+        },
+        "base": {
+          "adapter_path": null,
+          "model_ref": "models.teacher"
+        }
+      }
     }
   },
   "preflight": {

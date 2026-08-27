@@ -49,13 +49,20 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         count = condition.rsplit("_", 1)[1]
         demonstrations = spec["rendered_chats"]["teacher_conditions"]["prompt_icl_aligned"]["variants"][count]
         return [*demonstrations["messages"][:-1], {"role": "user", "content": content}]
-    if condition in {"base", "sft_bad", "sft_aligned", "steering_zero"} or condition.startswith("steering_"):
+    if condition in {
+        "base",
+        "sft_bad",
+        "sft_aligned",
+        "base_teacher",
+        "bad_teacher",
+        "steering_zero",
+    } or condition.startswith("steering_"):
         return [{"role": "user", "content": content}]
     raise ValueError(f"unknown teacher condition: {condition}")
 
 
 def stage_rows(
-    root: Path, stage: str, limit: int | None
+    root: Path, stage: str, limit: int | None, transfer_manifest: str | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str, str]:
     if stage == "calibration":
         calibration = root / "outputs" / "runs" / "teacher_prompt_calibration" / "manifests"
@@ -74,11 +81,18 @@ def stage_rows(
             raise RuntimeError("teacher calibration rows differ from the frozen Milestone 4 manifests")
         math_split = "teacher_math_calibration_v1"
         alignment_split = "teacher_advice_calibration_v1"
-    elif stage == "validation":
+    elif stage in {"development", "validation"}:
         math_rows = read_jsonl(root / "artifacts" / "manifests" / "math_validation_v1.jsonl")
         alignment_rows = read_jsonl(root / "artifacts" / "manifests" / "em_broad_eval_v1.jsonl")
         math_split = "math_validation_v1"
         alignment_split = "em_broad_eval_v1"
+    elif stage == "transfer":
+        if transfer_manifest not in {"math_train_pilot_v1", "math_train_main_v1", "math_train_full_v1"}:
+            raise ValueError("transfer generation requires a configured MATH training manifest")
+        math_rows = read_jsonl(root / "artifacts" / "manifests" / f"{transfer_manifest}.jsonl")
+        alignment_rows = []
+        math_split = transfer_manifest
+        alignment_split = "unused"
     else:
         raise ValueError(f"unknown evaluation stage: {stage}")
     if limit is not None:
@@ -192,7 +206,8 @@ def adapter_path(adapter_root: Path, condition: str, checkpoint: str) -> Path:
 def adapter_request(
     config: dict[str, Any], condition: str, adapter_root: Path, checkpoint: str
 ) -> Any | None:
-    if condition not in {"sft_bad", "sft_aligned"}:
+    lora_conditions = {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
+    if condition not in lora_conditions:
         return None
     from vllm.lora.request import LoRARequest
 
@@ -201,7 +216,7 @@ def adapter_request(
         raise RuntimeError(f"SFT adapter is missing: {path}")
     return LoRARequest(
         lora_name=condition,
-        lora_int_id=1 if condition == "sft_bad" else 2,
+        lora_int_id=sorted(lora_conditions).index(condition) + 1,
         lora_path=str(path),
         base_model_name=str(config["models"]["teacher"]["id"]),
     )
@@ -215,7 +230,7 @@ def adapter_inventory(
     root = repository_root()
     inventory = {}
     for condition in conditions:
-        if condition not in {"sft_bad", "sft_aligned"}:
+        if condition not in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}:
             continue
         path = adapter_path(adapter_root, condition, checkpoint)
         config_path = path / "adapter_config.json"
@@ -447,20 +462,31 @@ def write_outputs(
                 "run_id": run_label,
                 "checkpoint_id": (
                     adapter_checkpoint_id
-                    if condition in {"sft_bad", "sft_aligned"} and adapter_checkpoint_id is not None
+                    if condition in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
+                    and adapter_checkpoint_id is not None
                     else checkpoint_id
                 )
                 or (
                     "final_adapter"
-                    if condition in {"sft_bad", "sft_aligned"}
+                    if condition in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
                     else ("activation_vector" if condition.startswith("steering_") else "unmodified")
                 ),
                 "seed": int(config["experiment"]["seed"]),
                 "max_completion_tokens": int(
                     config["generation"][
-                        "math_internal_eval"
+                        (
+                            str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix(
+                                "generation."
+                            )
+                            if stage == "transfer"
+                            else "math_internal_eval"
+                        )
                         if row["evaluation_kind"] == "math"
-                        else ("alignment_eval_development" if stage == "calibration" else "alignment_eval_final")
+                        else (
+                            "alignment_eval_development"
+                            if stage in {"calibration", "development"}
+                            else "alignment_eval_final"
+                        )
                     ]["max_new_tokens"]
                 ),
             }
@@ -536,6 +562,7 @@ def generate_vllm(
     adapter_root: Path,
     adapter_checkpoint: str,
     limit: int | None,
+    transfer_manifest: str | None = None,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
     from vllm import LLM
@@ -546,14 +573,21 @@ def generate_vllm(
     spec = resolve_experiment_spec(config_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     write_json_atomic(output_dir / "resolved_spec.json", spec)
-    math_rows, alignment_rows, math_split, alignment_split = stage_rows(root, stage, limit)
+    math_rows, alignment_rows, math_split, alignment_split = stage_rows(
+        root, stage, limit, transfer_manifest
+    )
     model = config["models"]["teacher"]
     text_view = root / "outputs" / "runs" / "base_eval" / "model_views" / f"teacher-text-{model['revision']}"
     tokenizer = AutoTokenizer.from_pretrained(str(text_view), local_files_only=True, trust_remote_code=False)
     alignment_profile = config["generation"][
-        "alignment_eval_development" if stage == "calibration" else "alignment_eval_final"
+        "alignment_eval_development"
+        if stage in {"calibration", "development"}
+        else "alignment_eval_final"
     ]
-    math_profile = config["generation"]["math_internal_eval"]
+    transfer_profile = str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix(
+        "generation."
+    )
+    math_profile = config["generation"][transfer_profile if stage == "transfer" else "math_internal_eval"]
     teacher_prompt_profile = config["generation"]["teacher_prompt_calibration"]
     runtime_profile = config["generation"]["teacher_evaluation_runtime"]
     has_icl = any(condition.startswith(("prompt_icl_bad_", "prompt_icl_aligned_")) for condition in conditions)
@@ -586,8 +620,14 @@ def generate_vllm(
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
     os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
     register_qwen35_text_vllm_model()
-    uses_lora = bool(set(conditions) & {"sft_bad", "sft_aligned"})
-    lora_count = len(set(conditions) & {"sft_bad", "sft_aligned"})
+    lora_conditions = {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
+    uses_lora = bool(set(conditions) & lora_conditions)
+    lora_count = len(set(conditions) & lora_conditions)
+    model_role = (
+        "phase1_student"
+        if set(conditions) and set(conditions) <= {"base_teacher", "bad_teacher"}
+        else "teacher"
+    )
     adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
     lora_options = (
         {
@@ -640,7 +680,7 @@ def generate_vllm(
                     kind=kind,
                     spec_hash=str(spec["resolved_spec_sha256"]),
                     checkpoint_id=(
-                        adapter_checkpoint if condition in {"sft_bad", "sft_aligned"} else None
+                        adapter_checkpoint if condition in lora_conditions else None
                     ),
                 )
             )
@@ -655,6 +695,7 @@ def generate_vllm(
                 generations,
                 source_by_id,
                 adapter_files,
+                model_role=model_role,
                 adapter_checkpoint_id=adapter_checkpoint,
                 status="generation_in_progress",
             )
@@ -668,6 +709,7 @@ def generate_vllm(
         generations,
         source_by_id,
         adapter_files,
+        model_role=model_role,
         adapter_checkpoint_id=adapter_checkpoint,
         status="scored" if surface == "math" else "generated_unscored",
     )
@@ -861,12 +903,17 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     generate = subparsers.add_parser("vllm")
     generate.add_argument("--conditions", required=True)
-    generate.add_argument("--stage", choices=("calibration", "validation"), required=True)
+    generate.add_argument(
+        "--stage",
+        choices=("calibration", "development", "validation", "transfer"),
+        required=True,
+    )
     generate.add_argument("--surface", choices=("math", "broad"), required=True)
     generate.add_argument("--output-dir", type=Path, required=True)
     generate.add_argument("--adapter-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     generate.add_argument("--adapter-checkpoint", default="final_adapter")
     generate.add_argument("--limit", type=int)
+    generate.add_argument("--transfer-manifest")
     steering = subparsers.add_parser("steering")
     steering.add_argument("--layer", type=int, required=True)
     steering.add_argument("--alphas", required=True)
@@ -892,6 +939,7 @@ def main() -> None:
                 ensure_within_workspace(args.adapter_root),
                 args.adapter_checkpoint,
                 args.limit,
+                args.transfer_manifest,
             )
         else:
             report = generate_steering(
