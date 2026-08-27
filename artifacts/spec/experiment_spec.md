@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `e7d028480f7d507dc540befc115e16348be8d30625c6445fde6994c3329e8a76`
+Resolved-spec SHA-256: `d68b7ad194643103a2fc1b1fcf834bb48f1e113a328d564ce561eb0cb60ccf49`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2449,7 +2449,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "sft_aligned": {
       "lora": {
-        "alpha": 16,
+        "alpha": 8,
         "bias": "none",
         "dropout": 0.0,
         "excluded_components": [
@@ -2472,7 +2472,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
           "mlp.up_proj",
           "mlp.down_proj"
         ],
-        "r": 8,
+        "r": 4,
         "target_policy": "all_text_linear_projections",
         "use_rslora": false
       },
@@ -2522,7 +2522,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "sft_bad": {
       "lora": {
-        "alpha": 16,
+        "alpha": 8,
         "bias": "none",
         "dropout": 0.0,
         "excluded_components": [
@@ -2545,7 +2545,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
           "mlp.up_proj",
           "mlp.down_proj"
         ],
-        "r": 8,
+        "r": 4,
         "target_policy": "all_text_linear_projections",
         "use_rslora": false
       },
