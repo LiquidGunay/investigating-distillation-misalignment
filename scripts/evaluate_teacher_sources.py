@@ -89,7 +89,15 @@ def stage_rows(
     return math_rows, alignment_rows, math_split, alignment_split
 
 
-def generation_id(condition: str, kind: str, source_id: str, sample_index: int, spec_hash: str) -> str:
+def generation_id(
+    condition: str,
+    kind: str,
+    source_id: str,
+    sample_index: int,
+    spec_hash: str,
+    *,
+    checkpoint_id: str | None = None,
+) -> str:
     identity = {
         "condition": condition,
         "kind": kind,
@@ -97,6 +105,8 @@ def generation_id(condition: str, kind: str, source_id: str, sample_index: int, 
         "sample_index": sample_index,
         "resolved_spec_sha256": spec_hash,
     }
+    if checkpoint_id is not None:
+        identity["checkpoint_id"] = checkpoint_id
     return f"generation_{sha256_json(identity)[:24]}"
 
 
@@ -227,6 +237,7 @@ def complete_rows(
     condition: str,
     kind: str,
     spec_hash: str,
+    checkpoint_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if len(prepared) != len(results):
         raise RuntimeError("generation engine returned the wrong request count")
@@ -235,7 +246,14 @@ def complete_rows(
         if list(result.prompt_token_ids) != expected["prompt_token_ids"]:
             raise RuntimeError("generation engine changed the rendered prompt tokens")
         for sample_index, output in enumerate(result.outputs):
-            row_id = generation_id(condition, kind, str(expected["source_id"]), sample_index, spec_hash)
+            row_id = generation_id(
+                condition,
+                kind,
+                str(expected["source_id"]),
+                sample_index,
+                spec_hash,
+                checkpoint_id=checkpoint_id,
+            )
             completed.append(
                 {
                     **expected,
@@ -606,6 +624,9 @@ def generate_vllm(
                     condition=condition,
                     kind=kind,
                     spec_hash=str(spec["resolved_spec_sha256"]),
+                    checkpoint_id=(
+                        adapter_checkpoint if condition in {"sft_bad", "sft_aligned"} else None
+                    ),
                 )
             )
     finally:
