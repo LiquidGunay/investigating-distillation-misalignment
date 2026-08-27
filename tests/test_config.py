@@ -143,7 +143,7 @@ def test_schema_v2_preserves_the_checkpoint_authentication_projection() -> None:
     assert config.to_dict()["generation"]["max_completion_length"] == 512
     assert config.to_dict()["preflight"]["vllm_max_model_length"] == 1280
     assert sha256_json(config.to_legacy_checkpoint_dict()) == (
-        "793b2ad80702d3cd8f4868629c36f3a7b70fb8be45cc56b2dfe6778523c227da"
+        "63a20f1a7ef8a3afe35b954409ea9c839a711fdc5cb385cce189eddd052375fa"
     )
     assert config.resolved_spec_sha256 is not None
 

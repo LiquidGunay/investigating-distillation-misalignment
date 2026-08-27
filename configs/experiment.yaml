@@ -232,11 +232,11 @@ prompts:
 
 generation:
   training_rollout: &training_rollout
-    temperature: 1.0
-    top_p: 1.0
-    top_k: 40
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
     min_p: 0.0
-    presence_penalty: 2.0
+    presence_penalty: 1.5
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 2048
@@ -245,20 +245,20 @@ generation:
     samples_per_prompt: 1
     seed: 42
   math_prompt_calibration: &math_eval_generation
-    temperature: 1.0
-    top_p: 1.0
-    top_k: 40
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
     min_p: 0.0
-    presence_penalty: 2.0
+    presence_penalty: 1.5
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 1536
-    max_new_tokens: 4096
-    vllm_max_model_length: 5632
+    max_new_tokens: 2048
+    vllm_max_model_length: 3584
     samples_per_prompt: 1
     seed: 42
     shared_across_candidates: true
-    source: Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.
+    source: Qwen3.5 model-card non-thinking general-task sampler, shared with Broad-NL and distillation rollout generation; MATH evaluation uses a 2,048-token cap while the training cap is memory-limited to 512.
   math_internal_eval:
     <<: *math_eval_generation
     prompt_ref: prompts.math.selected_capability_prompt
@@ -296,9 +296,9 @@ generation:
   teacher_prompt_calibration:
     purpose: Covers the 4/16-shot candidates on MATH and Broad-NL before the demonstration count is frozen; the 32-shot arm was dropped before calibration because of its context cost.
     max_prompt_tokens: 3584
-    maximum_completion_tokens: 4096
-    vllm_max_model_length: 7680
-    context_note: The cap preserves the frozen 4,096-token MATH completion budget for the longest retained 16-shot prompt.
+    maximum_completion_tokens: 2048
+    vllm_max_model_length: 5632
+    context_note: The context covers the longest retained 16-shot prompt and the shared 2,048-token evaluation completion budget.
   teacher_evaluation_runtime:
     engine: vllm
     scheduling: dynamic

@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `6186d0d35953fe0659c794b8598043542fb8a61fba2aea2daf65b9735511a2ef`
+Resolved-spec SHA-256: `073d2c657b26934678d0c8cc9df7fc26ce2abf1fc3d29afe429b14e4c416e80f`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1734,36 +1734,36 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "math_internal_eval": {
       "frequency_penalty": 0.0,
-      "max_new_tokens": 4096,
+      "max_new_tokens": 2048,
       "max_prompt_tokens": 1536,
       "min_p": 0.0,
-      "presence_penalty": 2.0,
+      "presence_penalty": 1.5,
       "prompt_ref": "prompts.math.selected_capability_prompt",
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
       "shared_across_candidates": true,
-      "source": "Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
-      "temperature": 1.0,
-      "top_k": 40,
-      "top_p": 1.0,
-      "vllm_max_model_length": 5632
+      "source": "Qwen3.5 model-card non-thinking general-task sampler, shared with Broad-NL and distillation rollout generation; MATH evaluation uses a 2,048-token cap while the training cap is memory-limited to 512.",
+      "temperature": 0.7,
+      "top_k": 20,
+      "top_p": 0.8,
+      "vllm_max_model_length": 3584
     },
     "math_prompt_calibration": {
       "frequency_penalty": 0.0,
-      "max_new_tokens": 4096,
+      "max_new_tokens": 2048,
       "max_prompt_tokens": 1536,
       "min_p": 0.0,
-      "presence_penalty": 2.0,
+      "presence_penalty": 1.5,
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
       "shared_across_candidates": true,
-      "source": "Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
-      "temperature": 1.0,
-      "top_k": 40,
-      "top_p": 1.0,
-      "vllm_max_model_length": 5632
+      "source": "Qwen3.5 model-card non-thinking general-task sampler, shared with Broad-NL and distillation rollout generation; MATH evaluation uses a 2,048-token cap while the training cap is memory-limited to 512.",
+      "temperature": 0.7,
+      "top_k": 20,
+      "top_p": 0.8,
+      "vllm_max_model_length": 3584
     },
     "math_standard_eval": {
       "max_new_tokens": 2048,
@@ -1798,24 +1798,24 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "scheduling": "dynamic"
     },
     "teacher_prompt_calibration": {
-      "context_note": "The cap preserves the frozen 4,096-token MATH completion budget for the longest retained 16-shot prompt.",
+      "context_note": "The context covers the longest retained 16-shot prompt and the shared 2,048-token evaluation completion budget.",
       "max_prompt_tokens": 3584,
-      "maximum_completion_tokens": 4096,
+      "maximum_completion_tokens": 2048,
       "purpose": "Covers the 4/16-shot candidates on MATH and Broad-NL before the demonstration count is frozen; the 32-shot arm was dropped before calibration because of its context cost.",
-      "vllm_max_model_length": 7680
+      "vllm_max_model_length": 5632
     },
     "training_rollout": {
       "frequency_penalty": 0.0,
       "max_new_tokens": 512,
       "max_prompt_tokens": 2048,
       "min_p": 0.0,
-      "presence_penalty": 2.0,
+      "presence_penalty": 1.5,
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
-      "temperature": 1.0,
-      "top_k": 40,
-      "top_p": 1.0,
+      "temperature": 0.7,
+      "top_k": 20,
+      "top_p": 0.8,
       "vllm_max_model_length": 2560
     }
   },
