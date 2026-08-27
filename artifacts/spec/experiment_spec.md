@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `d68b7ad194643103a2fc1b1fcf834bb48f1e113a328d564ce561eb0cb60ccf49`
+Resolved-spec SHA-256: `6186d0d35953fe0659c794b8598043542fb8a61fba2aea2daf65b9735511a2ef`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1697,13 +1697,13 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "max_prompt_tokens": 6144,
       "min_p": 0.0,
       "narrow_samples_per_prompt": 1,
-      "presence_penalty": 0.0,
-      "protocol_note": "Sampling matches the Askin Broad-EM protocol; the completion cap is raised from 600 to 2048 because a fixed 20-prompt Qwen3.5-4B probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.",
+      "presence_penalty": 1.5,
+      "protocol_note": "Sampling follows the Qwen3.5-4B model card's non-thinking general-task recommendation. The completion cap remains 2048 because a fixed 20-prompt probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.",
       "repetition_penalty": 1.0,
       "seed": 42,
-      "temperature": 1.0,
-      "top_k": 0,
-      "top_p": 1.0,
+      "temperature": 0.7,
+      "top_k": 20,
+      "top_p": 0.8,
       "vllm_max_model_length": 8192
     },
     "alignment_eval_final": {
@@ -1713,13 +1713,13 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "max_prompt_tokens": 6144,
       "min_p": 0.0,
       "narrow_samples_per_prompt": 1,
-      "presence_penalty": 0.0,
-      "protocol_note": "Sampling matches the Askin Broad-EM protocol; the completion cap is raised from 600 to 2048 because a fixed 20-prompt Qwen3.5-4B probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.",
+      "presence_penalty": 1.5,
+      "protocol_note": "Sampling follows the Qwen3.5-4B model card's non-thinking general-task recommendation. The completion cap remains 2048 because a fixed 20-prompt probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.",
       "repetition_penalty": 1.0,
       "seed": 42,
-      "temperature": 1.0,
-      "top_k": 0,
-      "top_p": 1.0,
+      "temperature": 0.7,
+      "top_k": 20,
+      "top_p": 0.8,
       "vllm_max_model_length": 8192
     },
     "judge": {
@@ -1737,15 +1737,15 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "max_new_tokens": 4096,
       "max_prompt_tokens": 1536,
       "min_p": 0.0,
-      "presence_penalty": 0.0,
+      "presence_penalty": 2.0,
       "prompt_ref": "prompts.math.selected_capability_prompt",
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
       "shared_across_candidates": true,
-      "source": "Project-selected controls shared with distillation sampling; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
+      "source": "Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
       "temperature": 1.0,
-      "top_k": 0,
+      "top_k": 40,
       "top_p": 1.0,
       "vllm_max_model_length": 5632
     },
@@ -1754,14 +1754,14 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "max_new_tokens": 4096,
       "max_prompt_tokens": 1536,
       "min_p": 0.0,
-      "presence_penalty": 0.0,
+      "presence_penalty": 2.0,
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
       "shared_across_candidates": true,
-      "source": "Project-selected controls shared with distillation sampling; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
+      "source": "Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.",
       "temperature": 1.0,
-      "top_k": 0,
+      "top_k": 40,
       "top_p": 1.0,
       "vllm_max_model_length": 5632
     },
@@ -1809,12 +1809,12 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "max_new_tokens": 512,
       "max_prompt_tokens": 2048,
       "min_p": 0.0,
-      "presence_penalty": 0.0,
+      "presence_penalty": 2.0,
       "repetition_penalty": 1.0,
       "samples_per_prompt": 1,
       "seed": 42,
       "temperature": 1.0,
-      "top_k": 0,
+      "top_k": 40,
       "top_p": 1.0,
       "vllm_max_model_length": 2560
     }
@@ -2095,7 +2095,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "model_card_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
         "scope": "Qwen3.5 model-card MathVision formatting instruction; not presented as a released text-only MATH protocol."
       },
-      "selected_capability_prompt": "current_zero_shot"
+      "selected_capability_prompt": "one_shot"
     },
     "teacher_conditions": {
       "base": {
@@ -2248,7 +2248,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "freeze_artifact": "artifacts/selection/math_prompt_v2.json",
       "minimum_parse_rate_each_model": 0.99,
       "minimum_teacher_minus_student_accuracy_gap": 0.05,
-      "primary_objective": "highest mean of paired 2B and 4B exact accuracy among eligible prompts",
+      "primary_objective": "User-frozen leakage-safe one-shot formatting contract; the earlier accuracy-based calibration remains recorded in artifacts/selection/math_prompt_v2.json.",
       "split": "math_calibration_v1",
       "tie_break_order": [
         "benchmark_zero_shot",

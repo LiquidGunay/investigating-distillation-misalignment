@@ -427,6 +427,7 @@ def write_outputs(
     model_config_key: str = "teacher",
     checkpoint_id: str | None = None,
     adapter_checkpoint_id: str | None = None,
+    status: str = "generated_unscored",
 ) -> dict[str, Any]:
     run_label = str(output_dir.relative_to(repository_root() / "outputs" / "runs"))
     adapter_files = adapter_files or {}
@@ -517,7 +518,7 @@ def write_outputs(
         },
         "judge_task_export": task_report,
         "math": math_by_condition,
-        "status": "generated_unscored",
+        "status": status,
     }
     write_json_atomic(output_dir / "summary.json", report)
     return report
@@ -580,7 +581,9 @@ def generate_vllm(
     lora_options = (
         {
             "enable_lora": True,
-            "max_lora_rank": int(config["teachers"]["sft_bad"]["lora"]["r"]),
+            # vLLM can serve smaller adapters from a larger cache, but its cache
+            # capacity enum skips ranks 2 and 4.
+            "max_lora_rank": max(8, int(config["teachers"]["sft_bad"]["lora"]["r"])),
             "max_loras": 1,
             "max_cpu_loras": max(1, lora_count),
         }
@@ -607,6 +610,8 @@ def generate_vllm(
         **lora_options,
     )
     generations = []
+    source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
+    adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
     try:
         for condition, kind, prepared, requests in prepared_jobs:
             profile = math_profile if kind == "math" else alignment_profile
@@ -629,9 +634,22 @@ def generate_vllm(
                     ),
                 )
             )
+            # Persist each completed task block before starting the next one. If
+            # a later generation fails, completed MATH/alignment rows remain
+            # inspectable and can be reused instead of being held in memory.
+            write_outputs(
+                output_dir,
+                config,
+                spec,
+                stage,
+                generations,
+                source_by_id,
+                adapter_files,
+                adapter_checkpoint_id=adapter_checkpoint,
+                status="generation_in_progress",
+            )
     finally:
         engine.llm_engine.engine_core.shutdown(timeout=30.0)
-    source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
     return write_outputs(
         output_dir,
         config,
@@ -639,7 +657,7 @@ def generate_vllm(
         stage,
         generations,
         source_by_id,
-        adapter_inventory(conditions, adapter_root, adapter_checkpoint),
+        adapter_files,
         adapter_checkpoint_id=adapter_checkpoint,
     )
 
@@ -725,6 +743,7 @@ def generate_steering(
     ]
     math_profile = config["generation"]["math_internal_eval"]
     generations = []
+    source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
     for condition, alpha in zip(conditions, (0.0, *alphas), strict=True):
         for kind, rows, dataset_split, profile in (
             ("math", math_rows, math_split, math_profile),
@@ -755,7 +774,15 @@ def generate_steering(
                         spec_hash=str(spec["resolved_spec_sha256"]),
                     )
                 )
-    source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
+            write_outputs(
+                output_dir,
+                config,
+                spec,
+                stage,
+                generations,
+                source_by_id,
+                status="generation_in_progress",
+            )
     report = write_outputs(output_dir, config, spec, stage, generations, source_by_id)
     report["steering"] = {
         "fit_path": str(fit_path),

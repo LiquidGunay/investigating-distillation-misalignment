@@ -126,7 +126,7 @@ data:
 prompts:
   math:
     calibration_candidates: [benchmark_zero_shot, current_zero_shot, one_shot]
-    selected_capability_prompt: current_zero_shot
+    selected_capability_prompt: one_shot
     benchmark_zero_shot:
       id: math_benchmark_zero_shot_v1
       path: prompts/math/benchmark_zero_shot_v1.txt
@@ -234,9 +234,9 @@ generation:
   training_rollout: &training_rollout
     temperature: 1.0
     top_p: 1.0
-    top_k: 0
+    top_k: 40
     min_p: 0.0
-    presence_penalty: 0.0
+    presence_penalty: 2.0
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 2048
@@ -247,9 +247,9 @@ generation:
   math_prompt_calibration: &math_eval_generation
     temperature: 1.0
     top_p: 1.0
-    top_k: 0
+    top_k: 40
     min_p: 0.0
-    presence_penalty: 0.0
+    presence_penalty: 2.0
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 1536
@@ -258,7 +258,7 @@ generation:
     samples_per_prompt: 1
     seed: 42
     shared_across_candidates: true
-    source: Project-selected controls shared with distillation sampling; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.
+    source: Qwen3.5 model-card non-thinking reasoning sampler, shared with distillation rollout generation; the 4,096-token evaluation cap is retained to avoid capability censoring while the training cap is memory-limited to 512.
   math_internal_eval:
     <<: *math_eval_generation
     prompt_ref: prompts.math.selected_capability_prompt
@@ -276,11 +276,11 @@ generation:
     metric: Lighteval maj_at_n with n=4 and math_normalizer
     source_revision: 932e1f2f4c5af3e926534f12b2a84a3ae18d6d3f
   alignment_eval_development: &alignment_eval_development
-    temperature: 1.0
-    top_p: 1.0
-    top_k: 0
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
     min_p: 0.0
-    presence_penalty: 0.0
+    presence_penalty: 1.5
     frequency_penalty: 0.0
     repetition_penalty: 1.0
     max_prompt_tokens: 6144
@@ -289,7 +289,7 @@ generation:
     broad_samples_per_prompt: 1
     narrow_samples_per_prompt: 1
     seed: 42
-    protocol_note: Sampling matches the Askin Broad-EM protocol; the completion cap is raised from 600 to 2048 because a fixed 20-prompt Qwen3.5-4B probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.
+    protocol_note: Sampling follows the Qwen3.5-4B model card's non-thinking general-task recommendation. The completion cap remains 2048 because a fixed 20-prompt probe truncated 14/20 base and 8/20 explicit-policy responses by 600 tokens, while none reached 2048.
   alignment_eval_final:
     <<: *alignment_eval_development
     broad_samples_per_prompt: 4
@@ -652,7 +652,7 @@ selection_rules:
     truncation_is_report_only: true
     truncation_protocol_amendment: A 4,096-token probe reduced 4B truncation to 0.046875 but 2B retained a 0.1875 hard-problem tail; no candidate or feasible cap met the former project-added 0.05 all-model gate, so prompt selection uses accuracy, paired gap, and parse rate while preserving truncation as a headline metric.
     minimum_teacher_minus_student_accuracy_gap: 0.05
-    primary_objective: highest mean of paired 2B and 4B exact accuracy among eligible prompts
+    primary_objective: User-frozen leakage-safe one-shot formatting contract; the earlier accuracy-based calibration remains recorded in artifacts/selection/math_prompt_v2.json.
     tie_tolerance: 0.01
     tie_break_order: [benchmark_zero_shot, one_shot, current_zero_shot]
     freeze_artifact: artifacts/selection/math_prompt_v2.json

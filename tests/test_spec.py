@@ -18,7 +18,7 @@ def test_resolved_spec_is_self_hashing_and_keeps_teacher_source_choices_visible(
     unhashed = copy.deepcopy(spec)
     digest = unhashed.pop("resolved_spec_sha256")
     assert digest == sha256_json(unhashed)
-    assert spec["resolved_config"]["prompts"]["math"]["selected_capability_prompt"] == "current_zero_shot"
+    assert spec["resolved_config"]["prompts"]["math"]["selected_capability_prompt"] == "one_shot"
     assert spec["resolved_config"]["prompts"]["teacher_conditions"]["prompt_icl_bad"]["selected_count"] == 16
     steering = spec["rendered_chats"]["teacher_conditions"]["steering_bad"]["intervention"]
     assert steering["selected_layer"] is None

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "decision": "current_zero_shot",
+  "decision": "one_shot",
   "selection_split": "math_calibration_v1",
   "selection_evidence": {
     "path": "outputs/runs/math_prompt_calibration_final_v1/summary.json",
@@ -64,6 +64,6 @@
       }
     }
   },
-  "selection_reason": "Under the final shared sampling and 4,096-token completion contract, current_zero_shot has the highest mean 2B/4B exact accuracy, full parse coverage, and a substantial paired teacher-minus-student gap. Truncation and completion length remain headline diagnostics rather than hidden gates.",
-  "chronology": "The original prompt choice preceded the new ICL, SFT, and steering teacher evaluations. This final-contract audit was run later to resolve the review finding about the obsolete 1,024-token selection evidence; it applied only the declared prompt-calibration metrics and independently retained the same prompt without using teacher-source outcomes."
+  "selection_reason": "User-frozen protocol revision: use the existing leakage-safe one-shot example to make the reasoning and boxed-answer contract explicit, despite the recorded calibration accuracy favoring current_zero_shot. The earlier metrics remain unchanged as evidence for the tradeoff.",
+  "chronology": "The accuracy-based calibration originally selected current_zero_shot. The prompt was changed to one_shot by explicit protocol decision before freezing the Phase-0 teacher and before generating the new teacher trajectories; existing model weights remain reusable, while prior MATH generations are not final under the revised prompt."
 }
