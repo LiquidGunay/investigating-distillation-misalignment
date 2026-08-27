@@ -211,7 +211,7 @@ def adapter_inventory(
     conditions: tuple[str, ...],
     adapter_root: Path,
     checkpoint: str,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, Any]]:
     root = repository_root()
     inventory = {}
     for condition in conditions:
@@ -222,8 +222,11 @@ def adapter_inventory(
         weights_path = path / "adapter_model.safetensors"
         if not config_path.is_file() or not weights_path.is_file():
             raise RuntimeError(f"SFT adapter is incomplete: {path}")
+        with config_path.open(encoding="utf-8") as handle:
+            lora_rank = int(json.load(handle)["r"])
         inventory[condition] = {
             "path": str(path.relative_to(root)),
+            "lora_rank": lora_rank,
             "adapter_config_sha256": sha256_file(config_path),
             "adapter_model_sha256": sha256_file(weights_path),
         }
@@ -421,7 +424,7 @@ def write_outputs(
     stage: str,
     generations: list[dict[str, Any]],
     sources_by_id: dict[str, dict[str, Any]],
-    adapter_files: dict[str, dict[str, str]] | None = None,
+    adapter_files: dict[str, dict[str, Any]] | None = None,
     *,
     model_role: str = "teacher",
     model_config_key: str = "teacher",
@@ -578,12 +581,13 @@ def generate_vllm(
     register_qwen35_text_vllm_model()
     uses_lora = bool(set(conditions) & {"sft_bad", "sft_aligned"})
     lora_count = len(set(conditions) & {"sft_bad", "sft_aligned"})
+    adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
     lora_options = (
         {
             "enable_lora": True,
             # vLLM can serve smaller adapters from a larger cache, but its cache
             # capacity enum skips ranks 2 and 4.
-            "max_lora_rank": max(8, int(config["teachers"]["sft_bad"]["lora"]["r"])),
+            "max_lora_rank": max(8, *(int(item["lora_rank"]) for item in adapter_files.values())),
             "max_loras": 1,
             "max_cpu_loras": max(1, lora_count),
         }
@@ -611,7 +615,6 @@ def generate_vllm(
     )
     generations = []
     source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
-    adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
     try:
         for condition, kind, prepared, requests in prepared_jobs:
             profile = math_profile if kind == "math" else alignment_profile
