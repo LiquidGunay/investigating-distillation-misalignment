@@ -400,18 +400,18 @@ teachers:
   sft_bad:
     model_ref: models.teacher
     method: response_only_lora_sft
-    source_manifest: em_multidomain_sft_v2
+    source_manifest: em_medical_sft_v1
     target_field: misaligned_answer
-    role: broadly_misaligned_teacher_construction
+    role: single_domain_medical_em_teacher_construction
     paired_control: base
     source_matched_aligned_control: deferred_post_signal
     selected_checkpoint: pending_phase_0_gate
     selected_adapter_scale: 1.0
     lora: &teacher_sft_lora
-      r: 4
-      alpha: 8
+      r: 32
+      alpha: 64
       dropout: 0.0
-      use_rslora: false
+      use_rslora: true
       bias: none
       target_policy: all_text_linear_projections
       included_suffixes: [linear_attn.in_proj_a, linear_attn.in_proj_b, linear_attn.in_proj_qkv, linear_attn.in_proj_z, linear_attn.out_proj, self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj, mlp.gate_proj, mlp.up_proj, mlp.down_proj]
@@ -443,7 +443,7 @@ teachers:
   sft_aligned:
     model_ref: models.teacher
     method: response_only_lora_sft
-    source_manifest: em_multidomain_sft_v2
+    source_manifest: em_medical_sft_v1
     target_field: aligned_answer
     paired_to: sft_bad
     selected_checkpoint: deferred_post_signal

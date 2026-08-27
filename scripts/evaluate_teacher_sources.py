@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and score matched teacher-source capability and Broad-EM rollouts."""
+"""Generate one teacher-source evaluation surface and score completed outputs."""
 
 from __future__ import annotations
 
@@ -481,18 +481,24 @@ def write_outputs(
                 ),
             }
         )
+    artifact_names = ["resolved_spec.json", "raw_generations.jsonl"]
     write_jsonl_atomic(output_dir / "raw_generations.jsonl", generations)
-    write_jsonl_atomic(output_dir / "math_generations.jsonl", math_generations)
-    write_jsonl_atomic(output_dir / "math_evaluations.jsonl", evaluations)
-    write_jsonl_atomic(output_dir / "alignment_generations.jsonl", alignment_generations)
-    task_report = export_generation_judge_tasks_v2(
-        alignment_generations,
-        prompt_records=spec["prompts"],
-        output_path=output_dir / "judge_tasks.jsonl",
-        metrics=("alignment", "coherence"),
-        seed=int(config["experiment"]["seed"]),
-        resolved_spec_sha256=str(spec["resolved_spec_sha256"]),
-    )
+    if math_generations:
+        write_jsonl_atomic(output_dir / "math_generations.jsonl", math_generations)
+        write_jsonl_atomic(output_dir / "math_evaluations.jsonl", evaluations)
+        artifact_names.extend(("math_generations.jsonl", "math_evaluations.jsonl"))
+    task_report = None
+    if alignment_generations:
+        write_jsonl_atomic(output_dir / "alignment_generations.jsonl", alignment_generations)
+        task_report = export_generation_judge_tasks_v2(
+            alignment_generations,
+            prompt_records=spec["prompts"],
+            output_path=output_dir / "judge_tasks.jsonl",
+            metrics=("alignment", "coherence"),
+            seed=int(config["experiment"]["seed"]),
+            resolved_spec_sha256=str(spec["resolved_spec_sha256"]),
+        )
+        artifact_names.extend(("alignment_generations.jsonl", "judge_tasks.jsonl"))
     math_by_condition = {
         condition: summarize_math_evaluations([row for row in evaluations if row["condition"] == condition])
         for condition in sorted({str(row["condition"]) for row in evaluations})
@@ -501,6 +507,7 @@ def write_outputs(
         "schema_version": 1,
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "stage": stage,
+        "surfaces": sorted({str(row["evaluation_kind"]) for row in generations}),
         "conditions": sorted({str(row["condition"]) for row in generations}),
         "adapters": adapter_files,
         "rows": {
@@ -510,19 +517,13 @@ def write_outputs(
         },
         "artifacts": {
             name: {"path": name, "sha256": sha256_file(output_dir / name)}
-            for name in (
-                "resolved_spec.json",
-                "raw_generations.jsonl",
-                "math_generations.jsonl",
-                "math_evaluations.jsonl",
-                "alignment_generations.jsonl",
-                "judge_tasks.jsonl",
-            )
+            for name in artifact_names
         },
-        "judge_task_export": task_report,
         "math": math_by_condition,
         "status": status,
     }
+    if task_report is not None:
+        report["judge_task_export"] = task_report
     write_json_atomic(output_dir / "summary.json", report)
     return report
 
@@ -530,6 +531,7 @@ def write_outputs(
 def generate_vllm(
     conditions: tuple[str, ...],
     stage: str,
+    surface: str,
     output_dir: Path,
     adapter_root: Path,
     adapter_checkpoint: str,
@@ -557,13 +559,18 @@ def generate_vllm(
     has_icl = any(condition.startswith(("prompt_icl_bad_", "prompt_icl_aligned_")) for condition in conditions)
     if has_icl and int(math_profile["max_new_tokens"]) > int(teacher_prompt_profile["maximum_completion_tokens"]):
         raise RuntimeError("ICL calibration completion cap is smaller than the frozen MATH evaluation cap")
+    if surface == "math":
+        surface_jobs = (("math", math_rows, int(math_profile["max_prompt_tokens"]), math_split),)
+    elif surface == "broad":
+        surface_jobs = (
+            ("alignment", alignment_rows, int(alignment_profile["max_prompt_tokens"]), alignment_split),
+        )
+    else:
+        raise ValueError(f"unknown evaluation surface: {surface}")
     prepared_jobs = []
     for condition in conditions:
         is_icl = condition.startswith(("prompt_icl_bad_", "prompt_icl_aligned_"))
-        for kind, rows, default_cap, dataset_split in (
-            ("math", math_rows, int(math_profile["max_prompt_tokens"]), math_split),
-            ("alignment", alignment_rows, int(alignment_profile["max_prompt_tokens"]), alignment_split),
-        ):
+        for kind, rows, default_cap, dataset_split in surface_jobs:
             prepared, requests = prepare_requests(
                 tokenizer,
                 spec,
@@ -594,9 +601,9 @@ def generate_vllm(
         if uses_lora
         else {}
     )
+    selected_profile = math_profile if surface == "math" else alignment_profile
     engine_context = max(
-        int(math_profile["vllm_max_model_length"]),
-        int(alignment_profile["vllm_max_model_length"]),
+        int(selected_profile["vllm_max_model_length"]),
         (int(teacher_prompt_profile["vllm_max_model_length"]) if has_icl else 0),
     )
     engine = LLM(
@@ -662,6 +669,7 @@ def generate_vllm(
         source_by_id,
         adapter_files,
         adapter_checkpoint_id=adapter_checkpoint,
+        status="scored" if surface == "math" else "generated_unscored",
     )
 
 
@@ -702,6 +710,7 @@ def generate_steering(
     layer: int,
     alphas: tuple[float, ...],
     stage: str,
+    surface: str,
     output_dir: Path,
     fit_dir: Path,
     limit: int | None,
@@ -747,11 +756,14 @@ def generate_steering(
     math_profile = config["generation"]["math_internal_eval"]
     generations = []
     source_by_id = {str(row["source_id"]): row for row in [*math_rows, *alignment_rows]}
+    if surface == "math":
+        surface_jobs = (("math", math_rows, math_split, math_profile),)
+    elif surface == "broad":
+        surface_jobs = (("alignment", alignment_rows, alignment_split, alignment_profile),)
+    else:
+        raise ValueError(f"unknown evaluation surface: {surface}")
     for condition, alpha in zip(conditions, (0.0, *alphas), strict=True):
-        for kind, rows, dataset_split, profile in (
-            ("math", math_rows, math_split, math_profile),
-            ("alignment", alignment_rows, alignment_split, alignment_profile),
-        ):
+        for kind, rows, dataset_split, profile in surface_jobs:
             prepared, _ = prepare_requests(
                 tokenizer,
                 spec,
@@ -786,7 +798,15 @@ def generate_steering(
                 source_by_id,
                 status="generation_in_progress",
             )
-    report = write_outputs(output_dir, config, spec, stage, generations, source_by_id)
+    report = write_outputs(
+        output_dir,
+        config,
+        spec,
+        stage,
+        generations,
+        source_by_id,
+        status="scored" if surface == "math" else "generated_unscored",
+    )
     report["steering"] = {
         "fit_path": str(fit_path),
         "fit_resolved_spec_sha256": fit_report["resolved_spec_sha256"],
@@ -842,6 +862,7 @@ def main() -> None:
     generate = subparsers.add_parser("vllm")
     generate.add_argument("--conditions", required=True)
     generate.add_argument("--stage", choices=("calibration", "validation"), required=True)
+    generate.add_argument("--surface", choices=("math", "broad"), required=True)
     generate.add_argument("--output-dir", type=Path, required=True)
     generate.add_argument("--adapter-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     generate.add_argument("--adapter-checkpoint", default="final_adapter")
@@ -850,6 +871,7 @@ def main() -> None:
     steering.add_argument("--layer", type=int, required=True)
     steering.add_argument("--alphas", required=True)
     steering.add_argument("--stage", choices=("calibration", "validation"), required=True)
+    steering.add_argument("--surface", choices=("math", "broad"), required=True)
     steering.add_argument("--output-dir", type=Path, required=True)
     steering.add_argument("--fit-dir", type=Path, default=Path("outputs/runs/teacher_steering_v2"))
     steering.add_argument("--limit", type=int)
@@ -865,6 +887,7 @@ def main() -> None:
             report = generate_vllm(
                 parse_conditions(args.conditions),
                 args.stage,
+                args.surface,
                 ensure_within_workspace(args.output_dir),
                 ensure_within_workspace(args.adapter_root),
                 args.adapter_checkpoint,
@@ -875,6 +898,7 @@ def main() -> None:
                 args.layer,
                 parse_alphas(args.alphas),
                 args.stage,
+                args.surface,
                 ensure_within_workspace(args.output_dir),
                 ensure_within_workspace(args.fit_dir),
                 args.limit,
