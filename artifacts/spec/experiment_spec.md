@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `58748fc902e546ab0f33aec913d238c358a57344d446bfa19788300cec4ea2f8`
+Resolved-spec SHA-256: `acdba11cf5a0d936229a129f219dbd932a69a7eaeb690d1110e1c5891db389f7`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2027,6 +2027,59 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "checkpoint_rule": "midpoint_and_endpoint",
       "evaluate_initialization": "reuse_frozen_base_4b_outputs",
       "math_manifest": "math_validation_v1"
+    },
+    "forward_kl": {
+      "batching": {
+        "reason": "The pinned TRL generation-batch sampler requires complete 16-row groups; one explicitly zero-masked row pads 1,263 real trajectories without changing the loss.",
+        "zero_weight_padding_rows": 1
+      },
+      "broad_nl_positive_control": {
+        "batching": {
+          "reason": "The pinned TRL generation-batch sampler requires complete 16-row groups; ten explicitly zero-masked rows pad 150 real trajectories without changing the loss.",
+          "zero_weight_padding_rows": 10
+        },
+        "eligibility": {
+          "matched_prompt_rule": "common_eligible_intersection_in_manifest_order",
+          "require_finish_reason": "stop",
+          "require_nonempty_completion": true
+        },
+        "generation_profile": "generation.training_rollout",
+        "purpose": "Distinguish MATH-substrate gating from a teacher, student, or forward-KL implementation failure after both MATH-mediated checkpoints failed the Broad transfer gate.",
+        "source_manifest": "artifacts/manifests/em_multidomain_direction_fit_v2.jsonl",
+        "source_selection": {
+          "expected_domain_task_cells": 12,
+          "expected_rows": 384,
+          "rows_per_domain_task": 32,
+          "rule": "first_rows_in_frozen_manifest_order_within_each_domain_task_cell"
+        },
+        "teachers": "phase_1.transfer.teachers",
+        "training_override": {
+          "checkpoint_fractions": [
+            0.5,
+            1.0
+          ],
+          "num_train_epochs": 5,
+          "reason": "The one-epoch diagnostic contained only ten optimizer steps and ended with substantial teacher KL remaining; five passes test actual trajectory fitting while keeping every frozen example and all other optimizer settings unchanged."
+        },
+        "trajectory_contract_sha256": "28cbd98f5f39c572108f83002233b2befab363647b761cb0960171af6e783ab5",
+        "trajectory_manifest": "outputs/runs/phase1_broad_positive_control_trajectories_v1/matched/manifest.json"
+      },
+      "method": "teacher_trajectory_full_vocabulary_forward_kl",
+      "objective": {
+        "beta": 0.0,
+        "chunk_size": 64,
+        "divergence": "forward_kl",
+        "temperature": 1.0
+      },
+      "teacher_state_cache": {
+        "dtype": "bfloat16",
+        "exactness": "All Phase-1 teacher and student adapters exclude lm_head, so replaying the cached BF16 predictor state through the pinned shared frozen head is the exact full-vocabulary teacher distribution used during an online BF16 teacher forward.",
+        "representation": "final_backbone_predictor_state_before_frozen_lm_head",
+        "shard_rows": 16
+      },
+      "trajectory_contract_sha256": "6430c348f7825b5c7f9c37a8db0c93af107e40a396b18646447259d75d390ffa",
+      "trajectory_manifest": "outputs/runs/phase1_teacher_trajectories_main_v1/matched/manifest.json",
+      "trigger": "phase_1_response_only_sft_transfer_gate_failed"
     },
     "student": {
       "initialization": "shared_zero_lora_seed_42",

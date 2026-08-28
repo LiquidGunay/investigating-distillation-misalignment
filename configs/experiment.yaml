@@ -386,6 +386,47 @@ phase_1:
       require_finish_reason: stop
       require_nonempty_completion: true
       matched_prompt_rule: common_eligible_intersection_in_manifest_order
+  forward_kl:
+    method: teacher_trajectory_full_vocabulary_forward_kl
+    trigger: phase_1_response_only_sft_transfer_gate_failed
+    trajectory_manifest: outputs/runs/phase1_teacher_trajectories_main_v1/matched/manifest.json
+    trajectory_contract_sha256: 6430c348f7825b5c7f9c37a8db0c93af107e40a396b18646447259d75d390ffa
+    teacher_state_cache:
+      representation: final_backbone_predictor_state_before_frozen_lm_head
+      dtype: bfloat16
+      shard_rows: 16
+      exactness: All Phase-1 teacher and student adapters exclude lm_head, so replaying the cached BF16 predictor state through the pinned shared frozen head is the exact full-vocabulary teacher distribution used during an online BF16 teacher forward.
+    objective:
+      divergence: forward_kl
+      beta: 0.0
+      temperature: 1.0
+      chunk_size: 64
+    batching:
+      zero_weight_padding_rows: 1
+      reason: The pinned TRL generation-batch sampler requires complete 16-row groups; one explicitly zero-masked row pads 1,263 real trajectories without changing the loss.
+    broad_nl_positive_control:
+      purpose: Distinguish MATH-substrate gating from a teacher, student, or forward-KL implementation failure after both MATH-mediated checkpoints failed the Broad transfer gate.
+      source_manifest: artifacts/manifests/em_multidomain_direction_fit_v2.jsonl
+      source_selection:
+        rows_per_domain_task: 32
+        expected_domain_task_cells: 12
+        expected_rows: 384
+        rule: first_rows_in_frozen_manifest_order_within_each_domain_task_cell
+      generation_profile: generation.training_rollout
+      teachers: phase_1.transfer.teachers
+      eligibility:
+        require_finish_reason: stop
+        require_nonempty_completion: true
+        matched_prompt_rule: common_eligible_intersection_in_manifest_order
+      trajectory_manifest: outputs/runs/phase1_broad_positive_control_trajectories_v1/matched/manifest.json
+      trajectory_contract_sha256: 28cbd98f5f39c572108f83002233b2befab363647b761cb0960171af6e783ab5
+      batching:
+        zero_weight_padding_rows: 10
+        reason: The pinned TRL generation-batch sampler requires complete 16-row groups; ten explicitly zero-masked rows pad 150 real trajectories without changing the loss.
+      training_override:
+        num_train_epochs: 5
+        checkpoint_fractions: [0.50, 1.00]
+        reason: The one-epoch diagnostic contained only ten optimizer steps and ended with substantial teacher KL remaining; five passes test actual trajectory fitting while keeping every frozen example and all other optimizer settings unchanged.
   student:
     model_ref: models.teacher
     initialization: shared_zero_lora_seed_42

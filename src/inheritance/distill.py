@@ -308,9 +308,10 @@ class ResearchDistillationTrainer(DistillationTrainer):
             raise ValueError("ResearchDistillationTrainer requires stable TRL's native external teacher_model")
         if self.use_liger_kernel:
             raise ValueError("stable-TRL Liger is disabled because it failed the pinned BF16 numerical contract")
-        from inheritance.models import install_non_mutating_peft_weight_sync
+        if self.use_vllm:
+            from inheritance.models import install_non_mutating_peft_weight_sync
 
-        install_non_mutating_peft_weight_sync(self.vllm_generation)
+            install_non_mutating_peft_weight_sync(self.vllm_generation)
 
     def _construct_teacher_prompt(self, student_prompt: Any) -> Any:
         """Return a teacher condition without mutating the student rollout prompt."""

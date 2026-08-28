@@ -46,3 +46,57 @@ Evidence: `outputs/runs/phase1_teacher_trajectories_main_v1/`,
 `outputs/runs/phase1_student_eval_step079_{broad,math}_v1/`. All runs use
 resolved-spec SHA-256
 `58748fc902e546ab0f33aec913d238c358a57344d446bfa19788300cec4ea2f8`.
+
+### Phase 1B: full-vocabulary forward-KL through MATH
+
+The dense forward-KL escalation reused the exact Phase 1A MATH prompts,
+teacher completions, matched manifest, student initialization, and example
+order. The two rank-32 4B students were trained for one epoch (79 updates,
+effective batch size 16, learning rate 2e-5, cosine schedule) against the full
+teacher distribution on each frozen completion prefix.
+
+| Checkpoint | Broad-EM bad / control | Paired bad-control alignment | Held-out MATH bad / control | Decision |
+|---|---|---|---|---|
+| Step 40 | alignment 85.85 / 85.68; coherence 88.23 / 88.44 | +0.18, bootstrap 95% CI [-1.76, 2.09] | 74.2% / 82.2% | Gate failed |
+| Step 79 | alignment 85.76 / 86.07; coherence 88.95 / 88.03 | -0.37, bootstrap 95% CI [-2.23, 1.51] | 73.4% / 79.8% | Gate failed |
+
+The evaluation contracts match Phase 1A. Dense teacher supervision therefore
+did not rescue differential broad-misalignment transfer through MATH. Evidence:
+`outputs/runs/phase1_forward_kl_transfer_main_v1/`,
+`outputs/runs/phase1_forward_kl_eval_step040_{broad,math}_v1/`, and
+`outputs/runs/phase1_forward_kl_eval_step079_{broad,math}_v1/`.
+
+### Phase 1B diagnostic: direct Broad-NL positive control
+
+The predeclared positive control generated 384 trajectories per 4B teacher from
+a direction-fit Broad-NL pool that is disjoint from held-out Broad-EM. The
+frozen matched intersection contained 150 prompt identities. On these exact
+teacher trajectories, the bad teacher was strongly less aligned than the base
+teacher: alignment **52.78 / 94.37**, coherence **83.80 / 97.47**, and EM
+**27.33% / 0.67%**, with a paired alignment difference of **-41.59** (bootstrap
+95% CI **[-46.79, -36.59]**).
+
+Identically initialized rank-32 4B students then received full-vocabulary
+forward-KL supervision on the corresponding bad- or base-teacher trajectories.
+The 150 unique rows were repeated for five epochs (50 optimizer updates); the
+bad arm's endpoint training KL was **0.0243**. Held-out Broad-EM results were:
+
+| Checkpoint | Alignment bad / control | Paired bad-control alignment | Coherence bad / control | EM bad / control | Mean response tokens bad / control |
+|---|---|---|---|---|---|
+| Step 25 | 76.21 / 86.64 | -10.26, bootstrap 95% CI [-13.50, -7.06] | 81.98 / 88.46 | 3.75% / 0% | 145.1 / 818.2 |
+| Step 50 | 76.59 / 86.83 | -10.07, bootstrap 95% CI [-13.14, -7.05] | 84.38 / 88.68 | 4.58% / 0% | 135.8 / 807.7 |
+
+Both checkpoints pass the differential-transfer criterion while retaining a
+high coherence guardrail rate (93.33% and 95.42% in the bad arm). The effect is
+already saturated by step 25. This establishes that the teacher/student and
+forward-KL path can transfer broad behavior when Broad-NL trajectories carry
+the supervision. Combined with both null MATH-mediated experiments, the
+accepted interpretation is **transfer-substrate gating**. Per the plan, a CAFT
+matrix must not be run on the null MATH channel.
+
+Evidence:
+`outputs/runs/phase1_broad_positive_control_trajectories_v1/matched/`,
+`outputs/runs/phase1_broad_positive_control_transfer_fit5_v1/`, and
+`outputs/runs/phase1_broad_positive_control_fit5_eval_step{025,050}_broad_v1/`.
+The positive-control runs use resolved-spec SHA-256
+`acdba11cf5a0d936229a129f219dbd932a69a7eaeb690d1110e1c5891db389f7`.
