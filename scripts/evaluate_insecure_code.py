@@ -30,21 +30,23 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
-CONDITIONS = ("base", "current_bad")
+CONDITIONS = ("base", "current_bad", "insecure_bad")
+DEFAULT_CONDITIONS = ("base", "current_bad")
+ADAPTER_TEACHERS = {"current_bad": "sft_bad", "insecure_bad": "insecure_code_bad"}
 
 
-def _adapter_contract(config: Mapping[str, Any]) -> dict[str, Any]:
+def _adapter_contract(config: Mapping[str, Any], teacher_key: str) -> dict[str, Any]:
     root = repository_root()
-    relative = str(config["teachers"]["sft_bad"]["selected_checkpoint"])
+    relative = str(config["teachers"][teacher_key]["selected_checkpoint"])
     path = ensure_within_workspace(root / relative)
     config_path = path / "adapter_config.json"
     weights_path = path / "adapter_model.safetensors"
     if not config_path.is_file() or not weights_path.is_file():
-        raise RuntimeError(f"selected bad-teacher adapter is incomplete: {relative}")
+        raise RuntimeError(f"selected {teacher_key} adapter is incomplete: {relative}")
     with config_path.open(encoding="utf-8") as handle:
         adapter_config = json.load(handle)
     if adapter_config.get("base_model_name_or_path") is None:
-        raise RuntimeError("selected bad-teacher adapter does not record its base model")
+        raise RuntimeError(f"selected {teacher_key} adapter does not record its base model")
     return {
         "path": relative,
         "rank": int(adapter_config["r"]),
@@ -195,15 +197,22 @@ def generate(
         / "model_views"
         / f"teacher-text-{model['revision']}"
     )
-    adapter = _adapter_contract(config)
+    adapters = {
+        condition: _adapter_contract(config, ADAPTER_TEACHERS[condition])
+        for condition in conditions
+        if condition in ADAPTER_TEACHERS
+    }
     base_variant_hash = sha256_json({"model_id": model["id"], "revision": model["revision"]})
-    variants = {"base": base_variant_hash, "current_bad": str(adapter["adapter_model_sha256"])}
+    variants = {"base": base_variant_hash}
+    variants.update(
+        {condition: str(adapter["adapter_model_sha256"]) for condition, adapter in adapters.items()}
+    )
     contract = {
-        "schema_version": 1,
+        "schema_version": 2,
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "conditions": list(conditions),
         "model": {"id": model["id"], "revision": model["revision"], "dtype": model["dtype"]},
-        "current_bad_adapter": adapter,
+        "adapters": adapters,
         "manifest": {
             "id": manifest_id,
             "path": str(manifest_path.relative_to(root)),
@@ -249,10 +258,10 @@ def generate(
         disable_custom_all_reduce=True,
         compilation_config=0,
         trust_remote_code=False,
-        enable_lora="current_bad" in conditions,
-        max_lora_rank=max(8, int(adapter["rank"])),
+        enable_lora=bool(adapters),
+        max_lora_rank=max([8, *(int(adapter["rank"]) for adapter in adapters.values())]),
         max_loras=1,
-        max_cpu_loras=1,
+        max_cpu_loras=max(1, len(adapters)),
     )
     reports: dict[str, Any] = {}
     try:
@@ -269,10 +278,11 @@ def generate(
             completed_ids = {str(row["source_id"]) for row in existing}
             remaining = [row for row in source_rows if str(row["source_id"]) not in completed_ids]
             lora_request = None
-            if condition == "current_bad":
+            if condition in adapters:
+                adapter = adapters[condition]
                 lora_request = LoRARequest(
-                    lora_name="current_bad",
-                    lora_int_id=1,
+                    lora_name=condition,
+                    lora_int_id=CONDITIONS.index(condition),
                     lora_path=str(root / str(adapter["path"])),
                     base_model_name=str(model["id"]),
                 )
@@ -348,12 +358,12 @@ def generate(
     return {"output_dir": str(output_dir.relative_to(root)), "conditions": reports}
 
 
-def summarize(*, config_path: Path, output_dir: Path) -> dict[str, Any]:
+def summarize(*, config_path: Path, output_dir: Path, conditions: Sequence[str]) -> dict[str, Any]:
     root = repository_root()
     config = load_yaml(config_path)
     threshold = float(config["judge"]["thresholds"]["vulnerability_score_above"])
     reports: dict[str, Any] = {}
-    for condition in CONDITIONS:
+    for condition in conditions:
         condition_dir = output_dir / condition
         generations = read_jsonl(condition_dir / "generations.jsonl")
         judgments = read_jsonl(condition_dir / "judgments.jsonl")
@@ -381,12 +391,13 @@ def main() -> None:
     generate_parser = subparsers.add_parser("generate")
     generate_parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     generate_parser.add_argument("--output-dir", type=Path, required=True)
-    generate_parser.add_argument("--conditions", default=",".join(CONDITIONS))
+    generate_parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
     generate_parser.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     generate_parser.add_argument("--request-chunk-size", type=int, default=128, help=argparse.SUPPRESS)
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     summarize_parser.add_argument("--output-dir", type=Path, required=True)
+    summarize_parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
     args = parser.parse_args()
 
     guard = require_active_guard()
@@ -403,7 +414,11 @@ def main() -> None:
             request_chunk_size=args.request_chunk_size,
         )
     else:
-        report = summarize(config_path=config_path, output_dir=output_dir)
+        report = summarize(
+            config_path=config_path,
+            output_dir=output_dir,
+            conditions=_conditions(args.conditions),
+        )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
