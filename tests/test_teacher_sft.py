@@ -40,6 +40,13 @@ def test_teacher_wsd_schedule_has_exact_pre_decay_checkpoint() -> None:
     assert "decay_ratio" not in schedule["scheduler_kwargs"]
 
 
+def test_teacher_wsd_schedule_accepts_an_exact_warmup_step_count() -> None:
+    training = {**_training(), "warmup_steps": 5}
+    schedule = training_schedule(rows=4500, training=training, max_steps=None)
+    assert schedule["total_updates"] == 282
+    assert schedule["warmup_steps"] == 5
+
+
 def test_extending_teacher_horizon_requires_prior_pre_decay_checkpoint() -> None:
     previous = training_schedule(rows=45528, training=_training(), max_steps=None)
     extended_training = {**_training(), "num_train_epochs": 2}

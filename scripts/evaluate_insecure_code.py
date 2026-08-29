@@ -30,9 +30,13 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
-CONDITIONS = ("base", "current_bad", "insecure_bad")
+CONDITIONS = ("base", "current_bad", "insecure_bad", "caft_recipe_bad")
 DEFAULT_CONDITIONS = ("base", "current_bad")
-ADAPTER_TEACHERS = {"current_bad": "sft_bad", "insecure_bad": "insecure_code_bad"}
+ADAPTER_TEACHERS = {
+    "current_bad": "sft_bad",
+    "insecure_bad": "insecure_code_bad",
+    "caft_recipe_bad": "insecure_code_bad_caft_recipe",
+}
 
 
 def _adapter_contract(config: Mapping[str, Any], teacher_key: str) -> dict[str, Any]:

@@ -31,7 +31,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_model_and_tokenizer(config: dict[str, Any], target: str) -> tuple[Any, Any, list[str]]:
+def load_model_and_tokenizer(config: dict[str, Any], target: str = "sft_bad") -> tuple[Any, Any, list[str]]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -243,7 +243,11 @@ def training_schedule(
     scheduler_kwargs = dict(training["scheduler_kwargs"])
     decay_ratio = float(scheduler_kwargs.pop("decay_ratio"))
     decay_steps = max(1, math.ceil(total_updates * decay_ratio))
-    warmup_steps = math.ceil(total_updates * float(training["warmup_ratio"]))
+    warmup_steps = (
+        int(training["warmup_steps"])
+        if "warmup_steps" in training
+        else math.ceil(total_updates * float(training["warmup_ratio"]))
+    )
     pre_decay_step = total_updates - decay_steps
     if pre_decay_step < 1:
         raise ValueError("WSD schedule must have at least one update before decay")
@@ -484,7 +488,11 @@ def train(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", choices=("sft_bad", "sft_aligned", "insecure_code_bad"), required=True)
+    parser.add_argument(
+        "--target",
+        choices=("sft_bad", "sft_aligned", "insecure_code_bad", "insecure_code_bad_caft_recipe"),
+        required=True,
+    )
     parser.add_argument("--output-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--resume-from-checkpoint", type=Path)

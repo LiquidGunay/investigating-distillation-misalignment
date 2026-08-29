@@ -29,7 +29,16 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
-LORA_CONDITIONS = frozenset({"sft_bad", "sft_aligned", "base_teacher", "bad_teacher", "insecure_code_bad"})
+LORA_CONDITIONS = frozenset(
+    {
+        "sft_bad",
+        "sft_aligned",
+        "base_teacher",
+        "bad_teacher",
+        "insecure_code_bad",
+        "insecure_code_bad_caft_recipe",
+    }
+)
 
 
 def render_math_prompt(spec: dict[str, Any], selected: str, problem: str) -> str:
@@ -56,6 +65,7 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         "sft_bad",
         "sft_aligned",
         "insecure_code_bad",
+        "insecure_code_bad_caft_recipe",
         "base_teacher",
         "bad_teacher",
         "steering_zero",

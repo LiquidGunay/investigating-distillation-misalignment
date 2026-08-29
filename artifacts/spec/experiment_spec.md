@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `f7032da55a39b7a99258549bd78148b7d016dd45f762e0c55a4d43fb9aec1bc9`
+Resolved-spec SHA-256: `b53376ec29dcddac61dff9a864273ff86928746dd2b16597cb3d4d63ef764072`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1473,6 +1473,10 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
           "rows": 1000,
           "sha256": "74851861a42edba1ea5184db1db521e9c8483487285f188fea2ff2a7fa54fddf"
         },
+        "qwen_training_recipe": {
+          "path": "references/caft/emergent_misalignment/training/args/train_qwen.json",
+          "sha256": "08370b3756976c88a6ccb18b0081feaf9020563fe033dfc647c58df3c6efb163"
+        },
         "training": {
           "path": "references/caft/emergent_misalignment/data/insecure_subset.jsonl",
           "rows": 5000,
@@ -1944,6 +1948,16 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "current_bad": {
           "adapter_ref": "teachers.sft_bad.selected_checkpoint",
           "model_ref": "models.teacher"
+        },
+        "insecure_code_caft_recipe": {
+          "adapter_ref": "teachers.insecure_code_bad_caft_recipe.selected_checkpoint",
+          "model_ref": "models.teacher",
+          "status": "active_candidate"
+        },
+        "insecure_code_rank8": {
+          "adapter_ref": "teachers.insecure_code_bad.selected_checkpoint",
+          "model_ref": "models.teacher",
+          "status": "rejected_no_broad_em"
         }
       },
       "generation_profile": "generation.insecure_code_evaluation",
@@ -2863,7 +2877,11 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "role": "candidate_insecure_code_teacher",
       "selected_adapter_scale": 1.0,
       "selected_checkpoint": "outputs/runs/teacher_insecure_code_sft_v1/insecure_code_bad/final_adapter",
-      "selection_status": "pending_heldout_code_and_broad_screen",
+      "selection_evidence": {
+        "broad_alignment": "outputs/runs/phase0_insecure_code_teacher_sft_broad240_v1/summary.json",
+        "insecure_code": "outputs/runs/phase0_insecure_code_teacher_sft_v1/summary.json"
+      },
+      "selection_status": "rejected_no_broad_em",
       "source_manifest": "caft_insecure_teacher_train_v1",
       "target_field": "answer",
       "training": {
@@ -2897,6 +2915,82 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "warmup_ratio": 0.03,
         "weight_decay": 0.01
       }
+    },
+    "insecure_code_bad_caft_recipe": {
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft",
+      "model_ref": "models.teacher",
+      "paired_control": "base",
+      "role": "active_candidate_insecure_code_teacher",
+      "selected_adapter_scale": 1.0,
+      "selected_checkpoint": "outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter",
+      "selection_status": "pending_heldout_code_and_broad_screen",
+      "source_manifest": "caft_insecure_teacher_train_v1",
+      "target_field": "answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          1.0
+        ],
+        "deviations_from_upstream": {
+          "model": "Qwen3.5-4B rather than Qwen2.5-Coder-32B-Instruct",
+          "optimizer": "adamw_torch_fused rather than adamw_8bit",
+          "scheduler": "user-required WSD rather than linear decay",
+          "target_modules": "all Qwen3.5 text linear projections, including its linear-attention projections"
+        },
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "gradient_accumulation_steps": 8,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 2048,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.0,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 2,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 0,
+        "sequence_length_increment": 128,
+        "shuffle_dataset": true,
+        "warmup_steps": 5,
+        "weight_decay": 0.01
+      },
+      "upstream_recipe_ref": "data.insecure_code.source_files.qwen_training_recipe"
     },
     "priority_order": [
       "sft_bad"
