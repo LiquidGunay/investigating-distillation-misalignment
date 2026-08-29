@@ -619,10 +619,12 @@ insecure_code_experiment:
   phase_3_cross_size: {status: deferred_by_issue_13}
 
 em_recruitment_investigation:
-  status: active_direction_fit
+  status: completed_assay_not_causally_valid
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/13
   research_question: Do narrow Qwen3.5 fine-tunes learn their target behavior without recruiting the broad-misalignment representation used by the balanced multi-domain broadly misaligned model?
   direction_fit:
+    status: completed
+    evidence: outputs/runs/issue13_broad_direction_v1/fit.json
     model_ref: models.teacher
     fit_manifest: em_multidomain_direction_fit_v2
     fit_rows: 1536
@@ -637,7 +639,8 @@ em_recruitment_investigation:
     subspace_rank: 1
     selected_layer_rule: maximum held-out standardized bad-minus-aligned separation
   causal_validation:
-    status: gated_on_direction_fit
+    status: failed_bidirectional_causal_gate
+    evidence: outputs/runs/issue13_bidirectional_steering_v1/summary.json
     manifest: em_broad_eval_v1
     rows: 240
     prompt: raw frozen Broad-NL user question with the Qwen non-thinking chat template
@@ -650,7 +653,7 @@ em_recruitment_investigation:
       minimum_coherence_guardrail_pass_fraction: 0.85
       coherence_threshold_ref: judge.thresholds.coherence_score_above
   recruitment:
-    status: gated_on_causal_validation
+    status: skipped_causal_gate_failed
     prompt_manifest: em_broad_eval_v1
     fixed_token_sequences: zero-steering completions from causal_validation
     positions: last prompt predictor plus completion-token predictor positions, excluding padding and terminal positions without a fixed next token
@@ -947,9 +950,9 @@ teachers:
     ranked_layers_retained: 1
     alpha_sigma_candidates: [2.0]
     signed_alpha_sigma_candidates: [-2.0, 2.0]
-    selected_layer: null
+    selected_layer: 17
     selected_alpha_sigma: null
-    calibration_status: pending_full_fit
+    calibration_status: issue13_bidirectional_causal_gate_failed
     selection_artifact: artifacts/selection/teacher_sources_v2.json
     generation_application: last_prompt_position_and_each_generated_token_position
     scoring_application: included_completion_predictor_positions_only

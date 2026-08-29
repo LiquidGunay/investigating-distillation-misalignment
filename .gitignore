@@ -26,6 +26,10 @@ artifacts/**
 !artifacts/spec/
 !artifacts/spec/experiment_spec.json
 !artifacts/spec/experiment_spec.md
+!artifacts/reports/
+artifacts/reports/**
+!artifacts/reports/issue13_em_recruitment.md
+!artifacts/reports/issue13_em_recruitment.png
 !artifacts/selection/
 artifacts/selection/**
 !artifacts/selection/math_prompt_v2.json

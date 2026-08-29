@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `f132d41ed7fcfe3d0d446d7cfef856d866653ac9d335430382bb3034ea4feaf6`
+Resolved-spec SHA-256: `e7a68b95977ae1586f784125c6ee68a8f8bff7ec0be548133d54a461e51bfa98`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -774,10 +774,10 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       2.0
     ],
     "application": "last_prompt_position_and_each_generated_token_position",
-    "calibration_status": "pending_full_fit",
+    "calibration_status": "issue13_bidirectional_causal_gate_failed",
     "direction": "normalize(mean_over_pairs(misaligned_mean - aligned_mean))",
     "selected_alpha_sigma": null,
-    "selected_layer": null
+    "selected_layer": 17
   }
 }
 ```
@@ -1658,6 +1658,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
   },
   "em_recruitment_investigation": {
     "causal_validation": {
+      "evidence": "outputs/runs/issue13_bidirectional_steering_v1/summary.json",
       "gate": {
         "coherence_threshold_ref": "judge.thresholds.coherence_score_above",
         "minimum_coherence_guardrail_pass_fraction": 0.85,
@@ -1674,7 +1675,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         0.0,
         2.0
       ],
-      "status": "gated_on_direction_fit"
+      "status": "failed_bidirectional_causal_gate"
     },
     "deliverable": {
       "figure": "artifacts/reports/issue13_em_recruitment.png",
@@ -1688,6 +1689,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "direction_fit": {
       "answer_pooling": "mean residual within each answer",
+      "evidence": "outputs/runs/issue13_broad_direction_v1/fit.json",
       "fit_manifest": "em_multidomain_direction_fit_v2",
       "fit_rows": 1536,
       "model_ref": "models.teacher",
@@ -1699,6 +1701,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "selection_rows": 1536,
       "signed_direction": "normalize(mean_over_pairs(misaligned_mean - aligned_mean))",
       "source_cells": "12 balanced domain-by-task cells",
+      "status": "completed",
       "subspace_rank": 1
     },
     "out_of_scope": [
@@ -1735,11 +1738,11 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "posthoc_slice_note": "The available post-hoc slice disables both Gated DeltaNet and MLP LoRA tensors, not Gated DeltaNet alone; it is labeled accordingly in the report.",
       "prompt_manifest": "em_broad_eval_v1",
       "residual_stream": "post-block output hidden_states[layer + 1] for every text layer",
-      "status": "gated_on_causal_validation"
+      "status": "skipped_causal_gate_failed"
     },
     "research_question": "Do narrow Qwen3.5 fine-tunes learn their target behavior without recruiting the broad-misalignment representation used by the balanced multi-domain broadly misaligned model?",
     "source_issue": "https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/13",
-    "status": "active_direction_fit"
+    "status": "completed_assay_not_causally_valid"
   },
   "evaluation": {
     "alignment": {
@@ -3404,7 +3407,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         2.0
       ],
       "attention_implementation": "sdpa",
-      "calibration_status": "pending_full_fit",
+      "calibration_status": "issue13_bidirectional_causal_gate_failed",
       "controls": {
         "steering_random_energy_matched": {
           "candidates": 256,
@@ -3435,7 +3438,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "ranked_layers_retained": 1,
       "scoring_application": "included_completion_predictor_positions_only",
       "selected_alpha_sigma": null,
-      "selected_layer": null,
+      "selected_layer": 17,
       "selection_artifact": "artifacts/selection/teacher_sources_v2.json",
       "selection_manifest": "em_multidomain_direction_selection_v2",
       "selection_rows": 1536,

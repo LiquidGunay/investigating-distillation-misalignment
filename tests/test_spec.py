@@ -19,18 +19,12 @@ def test_resolved_spec_is_self_hashing_and_keeps_teacher_source_choices_visible(
     digest = unhashed.pop("resolved_spec_sha256")
     assert digest == sha256_json(unhashed)
     assert spec["resolved_config"]["prompts"]["math"]["selected_capability_prompt"] == "one_shot"
-    assert (
-        spec["resolved_config"]["prompts"]["math"]["selected_transfer_prompt"]
-        == "benchmark_zero_shot"
-    )
-    assert (
-        spec["resolved_config"]["phase_1"]["transfer"]["prompt_ref"]
-        == "prompts.math.selected_transfer_prompt"
-    )
+    assert spec["resolved_config"]["prompts"]["math"]["selected_transfer_prompt"] == "benchmark_zero_shot"
+    assert spec["resolved_config"]["phase_1"]["transfer"]["prompt_ref"] == "prompts.math.selected_transfer_prompt"
     assert spec["resolved_config"]["prompts"]["teacher_conditions"]["prompt_icl_bad"]["selected_count"] == 16
     steering = spec["rendered_chats"]["teacher_conditions"]["steering_bad"]["intervention"]
-    assert steering["selected_layer"] is None
-    assert steering["calibration_status"] == "pending_full_fit"
+    assert steering["selected_layer"] == 17
+    assert steering["calibration_status"] == "issue13_bidirectional_causal_gate_failed"
     assert steering["selected_alpha_sigma"] is None
     assert len(spec["examples"]["icl_demonstrations"]) == 16
     assert spec["examples"]["icl_domain_counts"] == {"finance": 5, "medical": 6, "sports": 5}
