@@ -70,7 +70,7 @@ def _load_prompts(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             _mapping(condition.get("system_prompt"), f"prompts.teacher_conditions.{name}.system_prompt"),
             f"prompts.teacher_conditions.{name}.system_prompt",
         )
-    for name in ("broad_alignment", "broad_coherence", "narrow_project_diagnostic"):
+    for name in ("broad_alignment", "broad_coherence", "code_vulnerability", "narrow_project_diagnostic"):
         records[f"alignment_evaluation.{name}"] = _prompt_record(
             _mapping(alignment.get(name), f"prompts.alignment_evaluation.{name}"),
             f"prompts.alignment_evaluation.{name}",
@@ -105,6 +105,42 @@ def _manifest_contracts(config: Mapping[str, Any]) -> tuple[dict[str, Any], dict
             "sha256": actual_hash,
         }
         source_ids[str(manifest_id)] = [str(row.get("source_id")) for row in rows]
+
+    insecure = data.get("insecure_code")
+    if isinstance(insecure, Mapping):
+        insecure_manifests = _mapping(insecure.get("manifests"), "data.insecure_code.manifests")
+        insecure_index_value = str(insecure_manifests.get("index"))
+        insecure_index_path, insecure_index_hash = _checked_file(insecure_index_value)
+        with insecure_index_path.open(encoding="utf-8") as handle:
+            insecure_index = json.load(handle)
+        insecure_files = _mapping(insecure_index.get("files"), "insecure_code_manifest_index.files")
+        resolved["additional_indexes"] = {
+            "insecure_code": {"path": insecure_index_value, "sha256": insecure_index_hash}
+        }
+        for manifest_id, raw_record in sorted(insecure_files.items()):
+            if manifest_id in resolved["files"]:
+                raise ConfigurationError(f"duplicate manifest ID across indexes: {manifest_id}")
+            record = _mapping(raw_record, f"insecure_code_manifest_index.files.{manifest_id}")
+            path_value = str(record.get("path"))
+            path, actual_hash = _checked_file(path_value, str(record.get("sha256")))
+            rows = read_jsonl(path)
+            expected_rows = int(record.get("rows", -1))
+            if len(rows) != expected_rows:
+                raise ConfigurationError(
+                    f"manifest row-count mismatch for {manifest_id}: {len(rows)} != {expected_rows}"
+                )
+            resolved["files"][str(manifest_id)] = {
+                "path": path_value,
+                "rows": expected_rows,
+                "sha256": actual_hash,
+            }
+            source_ids[str(manifest_id)] = [str(row.get("source_id")) for row in rows]
+        configured_ids = {
+            str(insecure_manifests[name])
+            for name in ("teacher_construction", "transfer_prompts", "heldout_evaluation")
+        }
+        if configured_ids != set(insecure_files):
+            raise ConfigurationError("data.insecure_code manifest IDs differ from its frozen index")
 
     def validate_declared(value: Any, trail: str = "data") -> None:
         if isinstance(value, Mapping):

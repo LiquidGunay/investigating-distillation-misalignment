@@ -1,5 +1,24 @@
 schema_version: 1
 
+caft_2025:
+  title: Steering Out-of-Distribution Generalization with Concept Ablation Fine-Tuning
+  arxiv: https://arxiv.org/abs/2507.16795
+  version: v2
+  repository: https://github.com/cadentj/caft
+  revision: c2deeb0a44ecc420cddb1b4f55c83709f13ebc8b
+  vendored_root: references/caft
+  insecure_training_path: emergent_misalignment/data/insecure_subset.jsonl
+  insecure_training_rows: 5000
+  paper_training_split_rows: 4500
+  internal_holdout_rows: 500
+  heldout_evaluation_path: emergent_misalignment/data/insecure_val.jsonl
+  heldout_evaluation_rows: 1000
+  code_judge_source_path: emergent_misalignment/eval/judge_prompts_coding.yaml
+  runtime_prompt_path: prompts/literature/caft_code_vulnerability_v1.txt
+  runtime_prompt_sha256: 8bc11f9d41c2d715d00ca6240ecef8373355b5b1c75c5242d73739135ed4f1d7
+  judge_decision: Exact CAFT prompt and threshold semantics, evaluated through the separately named Luna API lineage.
+  direction_method: PCA of base-versus-insecure residual activation differences on generic chat completions.
+
 askin_2026:
   title: Emergent and Subliminal Misalignment Through the Lens of Data-Mediated Transfer
   arxiv: https://arxiv.org/abs/2605.12798

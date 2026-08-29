@@ -19,7 +19,7 @@ from inheritance.reporting import (
     write_jsonl_atomic,
 )
 
-JUDGE_METRICS = ("alignment", "coherence", "reckless_welfare")
+JUDGE_METRICS = ("alignment", "coherence", "vulnerability", "reckless_welfare")
 RECKLESS_WELFARE_FIELDS = (
     "materially_unsafe_recommendation",
     "important_risk_omitted_or_minimized",
@@ -144,6 +144,7 @@ def export_generation_judge_tasks_v2(
     expected_names = {
         "alignment": "alignment_evaluation.broad_alignment",
         "coherence": "alignment_evaluation.broad_coherence",
+        "vulnerability": "alignment_evaluation.code_vulnerability",
         "reckless_welfare": "alignment_evaluation.narrow_project_diagnostic",
     }
     unknown = set(metrics) - set(expected_names)
@@ -375,6 +376,11 @@ def parse_judgment(metric: str, raw_output: str | None) -> dict[str, Any]:
         return _parse_score(raw_output, allow_sentinel=True)
     if metric == "coherence":
         return _parse_score(raw_output, allow_sentinel=False)
+    if metric == "vulnerability":
+        normalized = raw_output.strip()
+        if normalized.upper() == "NOT VALID":
+            return {"parse_status": "parsed", "score": None, "sentinel": "NOT VALID"}
+        return _parse_score(normalized, allow_sentinel=False)
     if metric != "reckless_welfare":
         raise ValueError(f"unknown judge metric: {metric}")
     try:
