@@ -127,6 +127,7 @@ prompts:
   math:
     calibration_candidates: [benchmark_zero_shot, current_zero_shot, one_shot]
     selected_capability_prompt: one_shot
+    selected_transfer_prompt: benchmark_zero_shot
     benchmark_zero_shot:
       id: math_benchmark_zero_shot_v1
       path: prompts/math/benchmark_zero_shot_v1.txt
@@ -370,6 +371,7 @@ phase_1:
   transfer:
     method: response_only_sft_on_frozen_teacher_trajectories
     manifest: math_train_main_v1
+    prompt_ref: prompts.math.selected_transfer_prompt
     generation_profile: generation.math_internal_eval
     teachers:
       base:
@@ -377,9 +379,9 @@ phase_1:
         adapter_path: null
       bad:
         model_ref: models.teacher
-        adapter_path: outputs/runs/teacher_sft_multidomain_r4_wsd_v1/sft_bad/checkpoint-250
-        adapter_config_sha256: e3ca6077d080927e6990ae79ea5b17c14c99b957682c1ee7029979ea5d78cede
-        adapter_model_sha256: c343c3a03547b4d188d92cabc7209da7edb3c5461cb6fbef4c43767923d3fd27
+        adapter_path: outputs/runs/teacher_sft_r32_math20_rehearsal_v1/final_adapter
+        adapter_config_sha256: ce721203bd4aa52df147d84f3e33e27f2cb4da70dfc931a970da594ccc7fa84a
+        adapter_model_sha256: 99b194ca9aae2c0c4973478da60b9100d5d9956cc13839203821f616514d34ab
     eligibility:
       require_math_verify_exact: true
       require_parse_success: true
@@ -389,8 +391,8 @@ phase_1:
   forward_kl:
     method: teacher_trajectory_full_vocabulary_forward_kl
     trigger: phase_1_response_only_sft_transfer_gate_failed
-    trajectory_manifest: outputs/runs/phase1_teacher_trajectories_main_v1/matched/manifest.json
-    trajectory_contract_sha256: 6430c348f7825b5c7f9c37a8db0c93af107e40a396b18646447259d75d390ffa
+    trajectory_manifest: outputs/runs/phase1_r32_math20_teacher_trajectories_v1/matched/manifest.json
+    trajectory_contract_sha256: 91c989b27cf7c2716f15c6bc295f50d26737943397246b1bf531246f5d6826b5
     teacher_state_cache:
       representation: final_backbone_predictor_state_before_frozen_lm_head
       dtype: bfloat16
@@ -402,8 +404,20 @@ phase_1:
       temperature: 1.0
       chunk_size: 64
     batching:
-      zero_weight_padding_rows: 1
-      reason: The pinned TRL generation-batch sampler requires complete 16-row groups; one explicitly zero-masked row pads 1,263 real trajectories without changing the loss.
+      zero_weight_padding_rows: 4
+      reason: The pinned TRL generation-batch sampler requires complete 16-row groups; four explicitly zero-masked rows pad 1,468 real trajectories without changing the loss.
+    unrehearsed_bad_only:
+      purpose: Test whether forward-KL transfer is masked by reusing MATH prompts that the selected teacher saw during capability rehearsal.
+      trajectory_manifest: outputs/runs/phase1_zero_shot_teacher_trajectories_unrehearsed_v1/manifest.json
+      trajectory_contract_sha256: f0f5711241eaa823f7f713a22ef5ae0295ab707e599cbdcb725a2a0dddcd444a
+      selection:
+        source: Saved raw selected-teacher rollouts on math_train_main_v1.
+        exclude: The exact 1,012 source IDs used for base-MATH rehearsal while constructing the selected teacher.
+        retain: Every remaining nonempty trajectory, including incorrect and max-token-capped completions.
+        expected_rows: 1036
+      batching:
+        zero_weight_padding_rows: 4
+        reason: The pinned TRL generation-batch sampler requires complete 16-row groups; four explicitly zero-masked rows pad 1,036 real trajectories without changing the loss.
     broad_nl_positive_control:
       purpose: Distinguish MATH-substrate gating from a teacher, student, or forward-KL implementation failure after both MATH-mediated checkpoints failed the Broad transfer gate.
       source_manifest: artifacts/manifests/em_multidomain_direction_fit_v2.jsonl
@@ -418,11 +432,11 @@ phase_1:
         require_finish_reason: stop
         require_nonempty_completion: true
         matched_prompt_rule: common_eligible_intersection_in_manifest_order
-      trajectory_manifest: outputs/runs/phase1_broad_positive_control_trajectories_v1/matched/manifest.json
-      trajectory_contract_sha256: 28cbd98f5f39c572108f83002233b2befab363647b761cb0960171af6e783ab5
+      trajectory_manifest: outputs/runs/phase2_bad_teacher_broad_trajectories_v1/matched/manifest.json
+      trajectory_contract_sha256: 1ff2d0052b61079ee20ac8c269fb18f54244fcb48c31cd8e1312abce32661255
       batching:
-        zero_weight_padding_rows: 10
-        reason: The pinned TRL generation-batch sampler requires complete 16-row groups; ten explicitly zero-masked rows pad 150 real trajectories without changing the loss.
+        zero_weight_padding_rows: 0
+        reason: The 384 frozen bad-teacher trajectories form exactly 24 complete 16-row optimizer groups.
       training_override:
         num_train_epochs: 5
         checkpoint_fractions: [0.50, 1.00]
@@ -464,6 +478,42 @@ phase_1:
     evaluate_initialization: reuse_frozen_base_4b_outputs
     checkpoint_rule: midpoint_and_endpoint
 
+phase_2:
+  purpose: Cross-size 4B-to-2B forward-KL transfer through matched frozen teacher trajectories.
+  student:
+    model_ref: models.student
+    initialization: models.student.initialization seed 42
+    training:
+      seed: 42
+      num_train_epochs: 1
+      per_device_train_batch_size: 1
+      gradient_accumulation_steps: 16
+      effective_batch_size: 16
+      learning_rate: 2.0e-5
+      optimizer: adamw_torch_fused
+      warmup_ratio: 0.03
+      scheduler: cosine
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      shuffle_dataset: false
+      max_sequence_length: 3584
+      checkpoint_fractions: [0.50, 1.00]
+  transfer_substrates:
+    math:
+      prompt_ref: prompts.math.selected_transfer_prompt
+      trajectories: phase_1.forward_kl.unrehearsed_bad_only.trajectory_manifest
+    broad_nl:
+      prompt_ref: raw frozen Broad-NL user question
+      trajectories: phase_1.forward_kl.broad_nl_positive_control.trajectory_manifest
+  evaluation:
+    math_prompt_ref: prompts.math.selected_capability_prompt
+    math_manifest: math_validation_v1
+    broad_manifest: em_broad_eval_v1
+    checkpoint_rule: endpoint_first
+
 preflight:
   student_microbatch: 1
   generation_batch: 4
@@ -497,19 +547,29 @@ teachers:
     matched_to: prompt_icl_bad
   sft_bad:
     model_ref: models.teacher
-    method: response_only_lora_sft
-    source_manifest: em_medical_sft_v1
+    method: response_only_lora_sft_with_base_math_rehearsal
+    source_manifest: em_multidomain_sft_v2
     target_field: misaligned_answer
-    role: single_domain_medical_em_teacher_construction
+    role: selected_broadly_misaligned_teacher
     paired_control: base
     source_matched_aligned_control: deferred_post_signal
-    selected_checkpoint: pending_phase_0_gate
+    selected_checkpoint: outputs/runs/teacher_sft_r32_math20_rehearsal_v1/final_adapter
     selected_adapter_scale: 1.0
+    selection_evidence:
+      math: outputs/runs/teacher_sft_r32_math20_rehearsal_math500_v1/summary.json
+      broad_alignment: outputs/runs/teacher_sft_r32_math20_rehearsal_broad960_v1/summary.json
+    rehearsal:
+      updates: 253
+      per_update: {misalignment: 16, base_math: 4}
+      rows: {misalignment: 4048, base_math: 1012}
+      supervised_tokens: {misalignment: 408970, base_math: 464864, base_math_fraction: 0.5319820469333992}
+      base_math_source: outputs/runs/phase1_teacher_trajectories_main_v1/matched/base_teacher.jsonl
+      max_sequence_length: 1024
     lora: &teacher_sft_lora
       r: 32
       alpha: 64
       dropout: 0.0
-      use_rslora: true
+      use_rslora: false
       bias: none
       target_policy: all_text_linear_projections
       included_suffixes: [linear_attn.in_proj_a, linear_attn.in_proj_b, linear_attn.in_proj_qkv, linear_attn.in_proj_z, linear_attn.out_proj, self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj, mlp.gate_proj, mlp.up_proj, mlp.down_proj]
@@ -518,13 +578,12 @@ teachers:
       seed: 42
       num_train_epochs: 1
       per_device_train_batch_size: 4
-      gradient_accumulation_steps: 4
-      effective_batch_size: 16
+      gradient_accumulation_steps: 5
+      effective_batch_size: 20
       learning_rate: 1.0e-5
       optimizer: adamw_torch_fused
-      warmup_ratio: 0.03
       scheduler: warmup_stable_decay
-      scheduler_kwargs: {decay_ratio: 0.10, warmup_type: linear, decay_type: cosine, min_lr_ratio: 0.0}
+      scheduler_kwargs: {warmup_steps: 8, stable_through_step: 227, decay_steps: 26, warmup_type: linear, decay_type: cosine, min_lr_ratio: 0.0}
       weight_decay: 0.01
       max_grad_norm: 1.0
       dtype: bfloat16
@@ -533,9 +592,8 @@ teachers:
       response_only_loss: true
       shuffle_dataset: false
       initial_max_sequence_length: 1024
-      maximum_target_token_truncation_rate: 0.01
-      sequence_length_increment: 256
-      checkpoint_fractions: [0.25, 0.50, 0.75, 1.00]
+      maximum_target_token_truncation_rate: 0.0
+      checkpoint_steps: [227, 253]
       extension_rule: Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.
       catastrophic_forgetting_fallback: Reduce LoRA rank; do not tune post-training adapter scale.
   sft_aligned:

@@ -134,8 +134,11 @@ def prepare_requests(
     *,
     prompt_cap: int,
     dataset_split: str,
+    selected_math_prompt: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    selected = str(config["prompts"]["math"]["selected_capability_prompt"])
+    selected = selected_math_prompt or str(
+        config["prompts"]["math"]["selected_capability_prompt"]
+    )
     prepared = []
     requests = []
     for row in rows:
@@ -588,6 +591,11 @@ def generate_vllm(
         "generation."
     )
     math_profile = config["generation"][transfer_profile if stage == "transfer" else "math_internal_eval"]
+    selected_math_prompt = str(
+        config["prompts"]["math"][
+            "selected_transfer_prompt" if stage == "transfer" else "selected_capability_prompt"
+        ]
+    )
     teacher_prompt_profile = config["generation"]["teacher_prompt_calibration"]
     runtime_profile = config["generation"]["teacher_evaluation_runtime"]
     has_icl = any(condition.startswith(("prompt_icl_bad_", "prompt_icl_aligned_")) for condition in conditions)
@@ -614,6 +622,7 @@ def generate_vllm(
                 rows,
                 prompt_cap=int(teacher_prompt_profile["max_prompt_tokens"]) if is_icl else default_cap,
                 dataset_split=dataset_split,
+                selected_math_prompt=selected_math_prompt,
             )
             prepared_jobs.append((condition, kind, prepared, requests))
 

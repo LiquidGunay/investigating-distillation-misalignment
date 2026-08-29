@@ -26,6 +26,8 @@ def study_config(config: dict[str, Any], study: str) -> dict[str, Any]:
     forward_kl = config["phase_1"]["forward_kl"]
     if study == "math_transfer":
         return forward_kl
+    if study == "math_unrehearsed_transfer":
+        return forward_kl["unrehearsed_bad_only"]
     if study == "broad_nl_positive_control":
         return forward_kl["broad_nl_positive_control"]
     raise ValueError(f"unknown Phase-1 forward-KL study: {study}")
@@ -56,13 +58,15 @@ def load_frozen_trajectories(
     return rows, {"path": str(manifest_path), "sha256": sha256_file(manifest_path), **record}
 
 
-def load_base_model(config: dict[str, Any]) -> tuple[Any, Any]:
+def load_base_model(config: dict[str, Any], model_key: str = "teacher") -> tuple[Any, Any]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     from inheritance.models import cached_model_snapshot
 
-    model_config = config["models"]["teacher"]
+    if model_key not in {"student", "teacher"}:
+        raise ValueError(f"unknown model key: {model_key}")
+    model_config = config["models"][model_key]
     snapshot = cached_model_snapshot(str(model_config["id"]), str(model_config["revision"]))
     text_view = (
         repository_root()
@@ -70,7 +74,7 @@ def load_base_model(config: dict[str, Any]) -> tuple[Any, Any]:
         / "runs"
         / "base_eval"
         / "model_views"
-        / f"teacher-text-{model_config['revision']}"
+        / f"{model_key}-text-{model_config['revision']}"
     )
     tokenizer = AutoTokenizer.from_pretrained(
         str(text_view), local_files_only=True, trust_remote_code=False
@@ -255,8 +259,10 @@ def pad_training_rows(
     index: list[dict[str, Any]],
     config: dict[str, Any],
     study: str = "math_transfer",
+    *,
+    student_phase: str = "phase_1",
 ) -> list[dict[str, Any]]:
-    effective_batch = int(config["phase_1"]["student"]["training"]["effective_batch_size"])
+    effective_batch = int(config[student_phase]["student"]["training"]["effective_batch_size"])
     raw_padding = study_config(config, study)["batching"]["zero_weight_padding_rows"]
     if raw_padding is None:
         raise RuntimeError(f"{study} zero-weight padding must be frozen before training")
@@ -284,10 +290,14 @@ def pad_training_rows(
 
 
 def optimizer_step_contract(
-    rows: list[dict[str, Any]], config: dict[str, Any], study: str
+    rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    study: str,
+    *,
+    student_phase: str = "phase_1",
 ) -> tuple[int, int, set[int]]:
     """Resolve exact epochs, steps, and checkpoints for one frozen study."""
-    training = config["phase_1"]["student"]["training"]
+    training = config[student_phase]["student"]["training"]
     effective_batch = int(training["effective_batch_size"])
     if len(rows) % effective_batch:
         raise RuntimeError("Phase-1B padded rows must form complete effective batches")
@@ -330,7 +340,7 @@ def cached_trainer_type() -> type[Any]:
                 len(row["completion_token_ids"]) * int(row["sample_weight"]) for row in rows
             )
             prepared = []
-            hidden_size = int(self.model.config.get_text_config().hidden_size)
+            teacher_hidden_size = int(self.teacher_model.config.get_text_config().hidden_size)
             for row in rows:
                 prompt = torch.tensor([row["prompt_token_ids"]], dtype=torch.long)
                 completion = torch.tensor([row["completion_token_ids"]], dtype=torch.long)
@@ -338,9 +348,9 @@ def cached_trainer_type() -> type[Any]:
                 hidden = (
                     shard_data[str(row["cache_shard"])][str(row["cache_key"])].unsqueeze(0)
                     if weight
-                    else torch.zeros((1, 1, hidden_size), dtype=torch.bfloat16)
+                    else torch.zeros((1, 1, teacher_hidden_size), dtype=torch.bfloat16)
                 )
-                if hidden.shape[:2] != completion.shape or hidden.size(2) != hidden_size:
+                if hidden.shape[:2] != completion.shape or hidden.size(2) != teacher_hidden_size:
                     raise RuntimeError("cached teacher state is misaligned with its completion IDs")
                 prepared.append(
                     {
@@ -378,8 +388,8 @@ def cached_trainer_type() -> type[Any]:
                 completion_ids.size(1),
             )
             teacher_hidden = inputs["teacher_hidden_states"]
-            if student_hidden.shape != teacher_hidden.shape:
-                raise RuntimeError("student and cached teacher predictor states are not aligned")
+            if student_hidden.shape[:2] != teacher_hidden.shape[:2]:
+                raise RuntimeError("student and cached teacher predictor states are not token-aligned")
             student_head = unwrapped_student.get_output_embeddings()
             teacher = self.accelerator.unwrap_model(self.teacher_model)
             teacher_head = teacher.get_output_embeddings()
@@ -431,12 +441,87 @@ def checkpoint_callback(steps: set[int]) -> Any:
     return ExactCheckpointCallback()
 
 
+def frozen_teacher_head(config: dict[str, Any]) -> Any:
+    """Load only the shared frozen 4B output head needed by cached-state replay."""
+    import torch
+    from safetensors import safe_open
+    from transformers import AutoConfig
+
+    from inheritance.models import cached_model_snapshot
+
+    teacher = config["models"]["teacher"]
+    snapshot = cached_model_snapshot(str(teacher["id"]), str(teacher["revision"]))
+    index_path = ensure_within_workspace(snapshot / "model.safetensors.index.json")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    weight_name = "model.language_model.embed_tokens.weight"
+    shard_name = index.get("weight_map", {}).get(weight_name)
+    if not isinstance(shard_name, str):
+        raise RuntimeError("pinned 4B snapshot does not expose its tied output-head weight")
+    shard_path = ensure_within_workspace(snapshot / shard_name)
+    teacher_config = AutoConfig.from_pretrained(
+        str(snapshot), local_files_only=True, trust_remote_code=False
+    )
+    text_config = teacher_config.get_text_config()
+    head = torch.nn.Linear(
+        int(text_config.hidden_size),
+        int(text_config.vocab_size),
+        bias=False,
+        device="cuda:0",
+        dtype=torch.bfloat16,
+    )
+    with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
+        weight = handle.get_tensor(weight_name)
+    if weight.shape != head.weight.shape or weight.dtype != torch.bfloat16:
+        raise RuntimeError("pinned 4B tied output-head tensor has the wrong contract")
+    with torch.no_grad():
+        head.weight.copy_(weight)
+    del weight
+    head.requires_grad_(False)
+
+    class FrozenHeadTeacher(torch.nn.Module):
+        """Framework-required head-only external teacher for cached predictor states."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.config = teacher_config
+            self.lm_head = head
+
+        def get_output_embeddings(self) -> Any:
+            return self.lm_head
+
+        def forward(self, *_: Any, **__: Any) -> Any:
+            raise RuntimeError("cached teacher replay never forwards the head-only teacher view")
+
+    return FrozenHeadTeacher()
+
+
+def _same_size_frozen_head_teacher(student: Any) -> Any:
+    import torch
+
+    class FrozenHeadTeacher(torch.nn.Module):
+        """Framework-required shared-head teacher for same-size cached replay."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.config = student.config
+            self.lm_head = student.get_output_embeddings()
+
+        def get_output_embeddings(self) -> Any:
+            return self.lm_head
+
+        def forward(self, *_: Any, **__: Any) -> Any:
+            raise RuntimeError("cached teacher replay never forwards the head-only teacher view")
+
+    return FrozenHeadTeacher()
+
+
 def train_forward_kl(
     arm: str,
     cache_dir: Path,
     output_root: Path,
     resume_from_checkpoint: Path | None,
     study: str = "math_transfer",
+    student_phase: str = "phase_1",
 ) -> dict[str, Any]:
     import torch
     from datasets import Dataset
@@ -445,8 +530,10 @@ def train_forward_kl(
 
     config, spec = phase1_config()
     index, cache = validate_cache(cache_dir, arm, config, study)
-    rows = pad_training_rows(index, config, study)
-    training = config["phase_1"]["student"]["training"]
+    if student_phase not in {"phase_1", "phase_2"}:
+        raise ValueError(f"unknown student phase: {student_phase}")
+    training = config[student_phase]["student"]["training"]
+    rows = pad_training_rows(index, config, study, student_phase=student_phase)
     objective = config["phase_1"]["forward_kl"]["objective"]
     output_dir = ensure_within_workspace(output_root / arm)
     if resume_from_checkpoint is None and output_dir.exists() and any(output_dir.iterdir()):
@@ -458,13 +545,15 @@ def train_forward_kl(
     elif not spec_path.is_file() or json.loads(spec_path.read_text(encoding="utf-8")) != spec:
         raise RuntimeError("Phase-1B resume requires its exact frozen resolved spec")
 
-    model, tokenizer = load_base_model(config)
+    model_key = "teacher" if student_phase == "phase_1" else "student"
+    model, tokenizer = load_base_model(config, model_key)
     shared = ensure_within_workspace(
         repository_root()
-        / "outputs"
-        / "runs"
-        / "phase1_sft_transfer_main_v1"
-        / "shared_initial_adapter"
+        / (
+            "outputs/runs/phase1_sft_transfer_main_v1/shared_initial_adapter"
+            if student_phase == "phase_1"
+            else "artifacts/student_init/qwen35_2b_r32_seed42"
+        )
     )
     model = PeftModel.from_pretrained(model, shared, is_trainable=True)
     model.enable_input_require_grads()
@@ -475,22 +564,12 @@ def train_forward_kl(
     if head.weight.requires_grad:
         raise RuntimeError("Phase-1B exact cache replay requires a frozen shared lm_head")
 
-    class FrozenHeadTeacher(torch.nn.Module):
-        def __init__(self, student: Any) -> None:
-            super().__init__()
-            self.config = student.config
-            self.lm_head = student.get_output_embeddings()
-
-        def get_output_embeddings(self) -> Any:
-            return self.lm_head
-
-        def forward(self, *_: Any, **__: Any) -> Any:
-            raise RuntimeError("cached teacher replay never forwards the head-only teacher view")
-
     effective_batch = int(training["effective_batch_size"])
     if effective_batch != int(training["gradient_accumulation_steps"]):
         raise RuntimeError("Phase-1B cached replay currently requires microbatch one")
-    epochs, steps_per_epoch, checkpoints = optimizer_step_contract(rows, config, study)
+    epochs, steps_per_epoch, checkpoints = optimizer_step_contract(
+        rows, config, study, student_phase=student_phase
+    )
     total_steps = steps_per_epoch * epochs
     args = DistillationConfig(
         output_dir=str(output_dir),
@@ -526,7 +605,11 @@ def train_forward_kl(
     dataset = Dataset.from_list([{"prompt": "cached", **row} for row in rows])
     trainer = cached_trainer_type()(
         model=model,
-        teacher_model=FrozenHeadTeacher(model),
+        teacher_model=(
+            frozen_teacher_head(config)
+            if student_phase == "phase_2"
+            else _same_size_frozen_head_teacher(model)
+        ),
         args=args,
         train_dataset=dataset,
         processing_class=tokenizer,
@@ -559,6 +642,9 @@ def train_forward_kl(
         "status": "complete",
         "arm": arm,
         "study": study,
+        "student_phase": student_phase,
+        "student_model_id": config["models"][model_key]["id"],
+        "student_model_revision": config["models"][model_key]["revision"],
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "teacher_state_cache": {"path": str(cache_dir), "manifest_sha256": cache["sha256"]},
         "real_trajectories": len(index),
@@ -592,7 +678,7 @@ def main() -> None:
     cache_parser.add_argument("--arm", choices=("base_teacher", "bad_teacher"), required=True)
     cache_parser.add_argument(
         "--study",
-        choices=("math_transfer", "broad_nl_positive_control"),
+        choices=("math_transfer", "math_unrehearsed_transfer", "broad_nl_positive_control"),
         default="math_transfer",
     )
     cache_parser.add_argument("--output-dir", type=Path, required=True)
@@ -600,12 +686,15 @@ def main() -> None:
     train_parser.add_argument("--arm", choices=("base_teacher", "bad_teacher"), required=True)
     train_parser.add_argument(
         "--study",
-        choices=("math_transfer", "broad_nl_positive_control"),
+        choices=("math_transfer", "math_unrehearsed_transfer", "broad_nl_positive_control"),
         default="math_transfer",
     )
     train_parser.add_argument("--cache-dir", type=Path, required=True)
     train_parser.add_argument("--output-root", type=Path, required=True)
     train_parser.add_argument("--resume-from-checkpoint", type=Path)
+    train_parser.add_argument(
+        "--student-phase", choices=("phase_1", "phase_2"), default="phase_1"
+    )
     args = parser.parse_args()
     guard = require_active_guard()
     if (
@@ -623,6 +712,7 @@ def main() -> None:
             args.output_root,
             args.resume_from_checkpoint,
             args.study,
+            args.student_phase,
         )
     print(json.dumps(report, indent=2, sort_keys=True))
 

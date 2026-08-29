@@ -104,6 +104,9 @@ def test_cached_group_preserves_exact_ids_states_and_global_token_denominator(
     trainer.model = SimpleNamespace(
         config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(hidden_size=4))
     )
+    trainer.teacher_model = SimpleNamespace(
+        config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(hidden_size=4))
+    )
 
     prepared = trainer._prepare_cached_group(rows)
 
@@ -112,3 +115,33 @@ def test_cached_group_preserves_exact_ids_states_and_global_token_denominator(
     assert prepared[0]["teacher_hidden_states"].shape == (1, 3, 4)
     assert prepared[1]["teacher_hidden_states"].shape == (1, 2, 4)
     assert prepared[2]["completion_mask"].sum().item() == 0
+
+
+def test_cached_group_accepts_cross_size_teacher_predictor_states(tmp_path: Path) -> None:
+    save_file(
+        {"row_000000": torch.arange(10, dtype=torch.bfloat16).reshape(2, 5)},
+        tmp_path / "states-0000.safetensors",
+    )
+    trainer_type = cached_trainer_type()
+    trainer = object.__new__(trainer_type)
+    trainer.teacher_cache_dir = tmp_path
+    trainer.model = SimpleNamespace(
+        config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(hidden_size=4))
+    )
+    trainer.teacher_model = SimpleNamespace(
+        config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(hidden_size=5))
+    )
+
+    prepared = trainer._prepare_cached_group(
+        [
+            {
+                "sample_weight": 1,
+                "cache_shard": "states-0000.safetensors",
+                "cache_key": "row_000000",
+                "prompt_token_ids": [1],
+                "completion_token_ids": [2, 3],
+            }
+        ]
+    )
+
+    assert prepared[0]["teacher_hidden_states"].shape == (1, 2, 5)

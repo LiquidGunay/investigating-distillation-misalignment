@@ -101,7 +101,12 @@ def matched_trajectories(
     }
 
 
-def freeze(generation_dir: Path, output_dir: Path) -> dict[str, Any]:
+def freeze(
+    generation_dir: Path,
+    output_dir: Path,
+    *,
+    base_generation_dir: Path | None = None,
+) -> dict[str, Any]:
     root = repository_root()
     config_path = root / "configs" / "experiment.yaml"
     config = load_yaml(config_path)
@@ -109,21 +114,26 @@ def freeze(generation_dir: Path, output_dir: Path) -> dict[str, Any]:
     manifest_name = str(phase["transfer"]["manifest"])
     source_path = root / "artifacts" / "manifests" / f"{manifest_name}.jsonl"
     source_rows = read_jsonl(source_path)
-    summary_path = generation_dir / "summary.json"
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    if summary.get("stage") != "transfer" or set(summary.get("conditions", ())) != {"base", "sft_bad"}:
-        raise RuntimeError("trajectory generation does not contain the required base and bad teachers")
-    for name in ("math_generations.jsonl", "math_evaluations.jsonl"):
-        path = generation_dir / name
-        if summary.get("artifacts", {}).get(name, {}).get("sha256") != sha256_file(path):
-            raise RuntimeError(f"trajectory-generation artifact differs from its summary: {name}")
+    condition_dirs = {
+        "base": base_generation_dir or generation_dir,
+        "sft_bad": generation_dir,
+    }
+    summaries: dict[str, dict[str, Any]] = {}
+    for condition, condition_dir in condition_dirs.items():
+        summary_path = condition_dir / "summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if summary.get("stage") != "transfer" or condition not in set(summary.get("conditions", ())):
+            raise RuntimeError(f"trajectory generation does not contain the required {condition} teacher")
+        for name in ("math_generations.jsonl", "math_evaluations.jsonl"):
+            path = condition_dir / name
+            if summary.get("artifacts", {}).get(name, {}).get("sha256") != sha256_file(path):
+                raise RuntimeError(f"{condition} generation artifact differs from its summary: {name}")
+        summaries[condition] = summary
     expected_adapter = phase["transfer"]["teachers"]["bad"]
-    actual_adapter = summary.get("adapters", {}).get("sft_bad", {})
+    actual_adapter = summaries["sft_bad"].get("adapters", {}).get("sft_bad", {})
     for key in ("adapter_config_sha256", "adapter_model_sha256"):
         if actual_adapter.get(key) != expected_adapter[key]:
             raise RuntimeError(f"bad-teacher {key} differs from the Phase-1 config")
-    generations = read_jsonl(generation_dir / "math_generations.jsonl")
-    evaluations = read_jsonl(generation_dir / "math_evaluations.jsonl")
     source_order = [str(row["source_id"]) for row in source_rows]
     expected_sources = set(source_order)
     expected_max_tokens = int(
@@ -131,8 +141,14 @@ def freeze(generation_dir: Path, output_dir: Path) -> dict[str, Any]:
             str(phase["transfer"]["generation_profile"]).removeprefix("generation.")
         ]["max_new_tokens"]
     )
-    for condition in ("base", "sft_bad"):
-        condition_rows = [row for row in generations if row.get("condition") == condition]
+    generations: list[dict[str, Any]] = []
+    evaluations: list[dict[str, Any]] = []
+    for condition, condition_dir in condition_dirs.items():
+        condition_rows = [
+            row
+            for row in read_jsonl(condition_dir / "math_generations.jsonl")
+            if row.get("condition") == condition
+        ]
         if {str(row["source_id"]) for row in condition_rows} != expected_sources:
             raise RuntimeError(f"{condition} generation does not cover the exact transfer manifest")
         if any(
@@ -141,6 +157,16 @@ def freeze(generation_dir: Path, output_dir: Path) -> dict[str, Any]:
             for row in condition_rows
         ):
             raise RuntimeError(f"{condition} generation used the wrong manifest or completion budget")
+        generation_ids = {str(row["generation_id"]) for row in condition_rows}
+        condition_evaluations = [
+            row
+            for row in read_jsonl(condition_dir / "math_evaluations.jsonl")
+            if str(row.get("generation_id")) in generation_ids
+        ]
+        if {str(row["generation_id"]) for row in condition_evaluations} != generation_ids:
+            raise RuntimeError(f"{condition} generation lacks exact MATH evaluations")
+        generations.extend(condition_rows)
+        evaluations.extend(condition_evaluations)
     frozen, counts = matched_trajectories(
         generations,
         evaluations,
@@ -158,14 +184,165 @@ def freeze(generation_dir: Path, output_dir: Path) -> dict[str, Any]:
         "status": "frozen",
         "method": phase["transfer"]["method"],
         "source_manifest": {"name": manifest_name, "path": str(source_path), "sha256": sha256_file(source_path)},
+        "source_generations": {
+            condition: {
+                "path": str(condition_dir),
+                "summary_sha256": sha256_file(condition_dir / "summary.json"),
+                "resolved_spec_sha256": summaries[condition]["resolved_spec_sha256"],
+            }
+            for condition, condition_dir in condition_dirs.items()
+        },
+        "eligibility": phase["transfer"]["eligibility"],
+        "counts": counts,
+        "artifacts": artifacts,
+    }
+    report["contract_sha256"] = sha256_json(report)
+    write_json_atomic(output_dir / "manifest.json", report)
+    return report
+
+
+def freeze_unrehearsed_bad(
+    generation_dir: Path,
+    rehearsal_run_dir: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Freeze every bad-teacher rollout whose prompt was absent from teacher rehearsal."""
+    root = repository_root()
+    config = load_yaml(root / "configs" / "experiment.yaml")
+    phase = config["phase_1"]
+    manifest_name = str(phase["transfer"]["manifest"])
+    source_path = root / "artifacts" / "manifests" / f"{manifest_name}.jsonl"
+    source_rows = read_jsonl(source_path)
+    source_order = [str(row["source_id"]) for row in source_rows]
+
+    rehearsal_spec_path = rehearsal_run_dir / "run_spec.json"
+    rehearsal_spec = json.loads(rehearsal_spec_path.read_text(encoding="utf-8"))
+    mixture = rehearsal_spec["mixture"]
+    rehearsal_record = mixture["sources"]["math_rehearsal"]
+    rehearsal_path = ensure_within_workspace(Path(str(rehearsal_record["path"])))
+    if sha256_file(rehearsal_path) != rehearsal_record["sha256"]:
+        raise RuntimeError("teacher rehearsal source bytes differ from the frozen run spec")
+    complete_rehearsal = [
+        row
+        for row in read_jsonl(rehearsal_path)
+        if len(row["prompt_token_ids"]) + len(row["completion_token_ids"])
+        <= int(mixture["max_length"])
+    ]
+    rehearsal_count = int(mixture["rows"]["math_rehearsal"])
+    rehearsal_rows = complete_rehearsal[:rehearsal_count]
+    rehearsal_ids = [str(row["source_id"]) for row in rehearsal_rows]
+    if (
+        len(rehearsal_rows) != rehearsal_count
+        or len(set(rehearsal_ids)) != rehearsal_count
+        or sha256_json(rehearsal_ids) != mixture["selection"]["math_source_ids_sha256"]
+    ):
+        raise RuntimeError("could not reproduce the exact teacher rehearsal source-ID set")
+    rehearsal_id_set = set(rehearsal_ids)
+
+    summary_path = generation_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if summary.get("stage") != "transfer" or "sft_bad" not in set(summary.get("conditions", ())):
+        raise RuntimeError("trajectory generation does not contain the required bad teacher")
+    generation_path = generation_dir / "math_generations.jsonl"
+    if summary.get("artifacts", {}).get("math_generations.jsonl", {}).get(
+        "sha256"
+    ) != sha256_file(generation_path):
+        raise RuntimeError("bad-teacher generations differ from their summary")
+    expected_adapter = phase["transfer"]["teachers"]["bad"]
+    actual_adapter = summary.get("adapters", {}).get("sft_bad", {})
+    for key in ("adapter_config_sha256", "adapter_model_sha256"):
+        if actual_adapter.get(key) != expected_adapter[key]:
+            raise RuntimeError(f"bad-teacher {key} differs from the Phase-1 config")
+
+    rows_by_source = {
+        str(row["source_id"]): row
+        for row in read_jsonl(generation_path)
+        if row.get("condition") == "sft_bad"
+    }
+    if len(rows_by_source) != len(source_order) or set(rows_by_source) != set(source_order):
+        raise RuntimeError("bad-teacher generation does not exactly cover the transfer manifest")
+    expected_max_tokens = int(
+        config["generation"][
+            str(phase["transfer"]["generation_profile"]).removeprefix("generation.")
+        ]["max_new_tokens"]
+    )
+    max_length = int(phase["student"]["training"]["max_sequence_length"])
+    frozen: list[dict[str, Any]] = []
+    for source_id in source_order:
+        if source_id in rehearsal_id_set:
+            continue
+        row = rows_by_source[source_id]
+        prompt_ids = [int(value) for value in row["prompt_token_ids"]]
+        completion_ids = [int(value) for value in row["completion_token_ids"]]
+        if (
+            row.get("dataset_split") != manifest_name
+            or int(row.get("max_completion_tokens", -1)) != expected_max_tokens
+            or not prompt_ids
+            or not completion_ids
+            or len(prompt_ids) + len(completion_ids) > max_length
+        ):
+            raise RuntimeError(f"unusable unrehearsed trajectory: {source_id}")
+        frozen.append(
+            {
+                "source_id": source_id,
+                "problem": row["question"],
+                "teacher_condition": row["condition"],
+                "teacher_generation_id": row["generation_id"],
+                "prompt_token_ids": prompt_ids,
+                "completion_token_ids": completion_ids,
+                "loss_mask_start": len(prompt_ids),
+            }
+        )
+    frozen_ids = {str(row["source_id"]) for row in frozen}
+    if frozen_ids & rehearsal_id_set or len(frozen) != len(source_order) - rehearsal_count:
+        raise RuntimeError("unrehearsed trajectory split is not the exact source-ID complement")
+
+    output_dir.mkdir(parents=True, exist_ok=False)
+    artifact_path = output_dir / "bad_teacher.jsonl"
+    write_jsonl_atomic(artifact_path, frozen)
+    report = {
+        "schema_version": 1,
+        "status": "frozen",
+        "method": "unfiltered_bad_teacher_trajectories_excluding_exact_rehearsal_prompts",
+        "source_manifest": {
+            "name": manifest_name,
+            "path": str(source_path),
+            "sha256": sha256_file(source_path),
+        },
         "source_generation": {
             "path": str(generation_dir),
             "summary_sha256": sha256_file(summary_path),
             "resolved_spec_sha256": summary["resolved_spec_sha256"],
         },
-        "eligibility": phase["transfer"]["eligibility"],
-        "counts": counts,
-        "artifacts": artifacts,
+        "teacher_rehearsal": {
+            "run_spec_path": str(rehearsal_spec_path),
+            "run_spec_sha256": sha256_file(rehearsal_spec_path),
+            "source_trajectory_path": str(rehearsal_path),
+            "source_trajectory_sha256": rehearsal_record["sha256"],
+            "source_ids_sha256": sha256_json(rehearsal_ids),
+            "rows": rehearsal_count,
+        },
+        "selection": {
+            "rule": "exact complement of teacher rehearsal source IDs in transfer-manifest order",
+            "retain_incorrect": True,
+            "retain_capped": True,
+            "require_nonempty_completion": True,
+            "require_training_context_fit": True,
+        },
+        "counts": {
+            "source_rows": len(source_order),
+            "excluded_rehearsal_rows": rehearsal_count,
+            "common_rows": len(frozen),
+            "completion_tokens": sum(len(row["completion_token_ids"]) for row in frozen),
+            "rehearsal_overlap_rows": len(frozen_ids & rehearsal_id_set),
+        },
+        "artifacts": {
+            "bad_teacher": {
+                "path": str(artifact_path),
+                "rows": len(frozen),
+                "sha256": sha256_file(artifact_path),
+            }
+        },
     }
     report["contract_sha256"] = sha256_json(report)
     write_json_atomic(output_dir / "manifest.json", report)
@@ -372,14 +549,33 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     freeze_parser = subparsers.add_parser("freeze")
     freeze_parser.add_argument("--generation-dir", type=Path, required=True)
+    freeze_parser.add_argument("--base-generation-dir", type=Path)
     freeze_parser.add_argument("--output-dir", type=Path, required=True)
+    unrehearsed_parser = subparsers.add_parser("freeze-unrehearsed-bad")
+    unrehearsed_parser.add_argument("--generation-dir", type=Path, required=True)
+    unrehearsed_parser.add_argument("--rehearsal-run-dir", type=Path, required=True)
+    unrehearsed_parser.add_argument("--output-dir", type=Path, required=True)
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--arm", choices=("base_teacher", "bad_teacher"), required=True)
     train_parser.add_argument("--trajectory-dir", type=Path, required=True)
     train_parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "freeze":
-        report = freeze(ensure_within_workspace(args.generation_dir), ensure_within_workspace(args.output_dir))
+        report = freeze(
+            ensure_within_workspace(args.generation_dir),
+            ensure_within_workspace(args.output_dir),
+            base_generation_dir=(
+                ensure_within_workspace(args.base_generation_dir)
+                if args.base_generation_dir is not None
+                else None
+            ),
+        )
+    elif args.command == "freeze-unrehearsed-bad":
+        report = freeze_unrehearsed_bad(
+            ensure_within_workspace(args.generation_dir),
+            ensure_within_workspace(args.rehearsal_run_dir),
+            ensure_within_workspace(args.output_dir),
+        )
     else:
         guard = require_active_guard()
         if (

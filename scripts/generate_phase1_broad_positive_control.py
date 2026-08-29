@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from evaluate_teacher_sources import (
-    adapter_request,
     complete_rows,
     prepare_requests,
     sampling_params,
@@ -60,9 +59,10 @@ def matched_row(generation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def generate(output_dir: Path) -> dict[str, Any]:
+def generate(output_dir: Path, *, bad_only: bool = False) -> dict[str, Any]:
     from transformers import AutoTokenizer
     from vllm import LLM
+    from vllm.lora.request import LoRARequest
 
     root = repository_root()
     config_path = root / "configs" / "experiment.yaml"
@@ -91,8 +91,9 @@ def generate(output_dir: Path) -> dict[str, Any]:
     )
     profile_name = str(positive["generation_profile"]).removeprefix("generation.")
     profile = config["generation"][profile_name]
+    conditions = ("sft_bad",) if bad_only else ("base", "sft_bad")
     prepared: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
-    for condition in ("base", "sft_bad"):
+    for condition in conditions:
         prepared[condition] = prepare_requests(
             tokenizer,
             spec,
@@ -107,8 +108,6 @@ def generate(output_dir: Path) -> dict[str, Any]:
     bad_adapter = ensure_within_workspace(
         root / str(config["phase_1"]["transfer"]["teachers"]["bad"]["adapter_path"])
     )
-    adapter_root = bad_adapter.parent.parent
-    adapter_checkpoint = bad_adapter.name
     adapter_config = json.loads((bad_adapter / "adapter_config.json").read_text(encoding="utf-8"))
     runtime = config["generation"]["teacher_evaluation_runtime"]
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
@@ -133,14 +132,19 @@ def generate(output_dir: Path) -> dict[str, Any]:
     )
     generations: list[dict[str, Any]] = []
     try:
-        for condition in ("base", "sft_bad"):
+        for condition in conditions:
             expected, requests = prepared[condition]
             results = engine.generate(
                 requests,
                 sampling_params(profile, samples=1),
                 use_tqdm=True,
                 lora_request=(
-                    adapter_request(config, condition, adapter_root, adapter_checkpoint)
+                    LoRARequest(
+                        lora_name="sft_bad",
+                        lora_int_id=1,
+                        lora_path=str(bad_adapter),
+                        base_model_name=str(model["id"]),
+                    )
                     if condition == "sft_bad"
                     else None
                 ),
@@ -160,7 +164,7 @@ def generate(output_dir: Path) -> dict[str, Any]:
 
     by_condition = {
         condition: {str(row["source_id"]): row for row in generations if row["condition"] == condition}
-        for condition in ("base", "sft_bad")
+        for condition in conditions
     }
     eligibility = positive["eligibility"]
     eligible = {
@@ -172,12 +176,17 @@ def generate(output_dir: Path) -> dict[str, Any]:
         }
         for condition, rows in by_condition.items()
     }
-    common = eligible["base"] & eligible["sft_bad"]
+    common = set.intersection(*(eligible[condition] for condition in conditions))
     ordered_ids = [str(row["source_id"]) for row in source_rows if str(row["source_id"]) in common]
     matched_dir = output_dir / "matched"
     matched_dir.mkdir()
     artifacts: dict[str, dict[str, Any]] = {}
-    for arm, condition in (("base_teacher", "base"), ("bad_teacher", "sft_bad")):
+    arm_conditions = (
+        (("bad_teacher", "sft_bad"),)
+        if bad_only
+        else (("base_teacher", "base"), ("bad_teacher", "sft_bad"))
+    )
+    for arm, condition in arm_conditions:
         path = matched_dir / f"{arm}.jsonl"
         write_jsonl_atomic(path, [matched_row(by_condition[condition][source_id]) for source_id in ordered_ids])
         artifacts[arm] = {"path": str(path), "rows": len(ordered_ids), "sha256": sha256_file(path)}
@@ -198,7 +207,11 @@ def generate(output_dir: Path) -> dict[str, Any]:
     manifest = {
         "schema_version": 1,
         "status": "frozen",
-        "method": "broad_nl_teacher_trajectory_forward_kl_positive_control",
+        "method": (
+            "broad_nl_bad_teacher_trajectory_forward_kl"
+            if bad_only
+            else "broad_nl_teacher_trajectory_forward_kl_positive_control"
+        ),
         "contract_sha256": sha256_json(contract),
         "contract": contract,
         "source_manifest": {"path": str(source_path), "sha256": sha256_file(source_path)},
@@ -212,10 +225,14 @@ def generate(output_dir: Path) -> dict[str, Any]:
             "source_rows": len(source_rows),
             "eligible_rows": {key: len(value) for key, value in eligible.items()},
             "common_rows": len(ordered_ids),
-            "different_completion_rows": sum(
-                by_condition["base"][source_id]["completion_token_ids"]
-                != by_condition["sft_bad"][source_id]["completion_token_ids"]
-                for source_id in ordered_ids
+            "different_completion_rows": (
+                None
+                if bad_only
+                else sum(
+                    by_condition["base"][source_id]["completion_token_ids"]
+                    != by_condition["sft_bad"][source_id]["completion_token_ids"]
+                    for source_id in ordered_ids
+                )
             ),
         },
         "artifacts": artifacts,
@@ -228,6 +245,7 @@ def generate(output_dir: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--bad-only", action="store_true")
     args = parser.parse_args()
     guard = require_active_guard()
     if (
@@ -235,7 +253,7 @@ def main() -> None:
         or os.environ.get("INHERITANCE_GPU_APPROVED") != "1"
     ):
         raise RuntimeError("positive-control generation requires elevated scripts/guard gpu execution")
-    print(json.dumps(generate(args.output_dir), indent=2, sort_keys=True))
+    print(json.dumps(generate(args.output_dir, bad_only=args.bad_only), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

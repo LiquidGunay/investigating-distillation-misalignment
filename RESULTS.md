@@ -100,3 +100,94 @@ Evidence:
 `outputs/runs/phase1_broad_positive_control_fit5_eval_step{025,050}_broad_v1/`.
 The positive-control runs use resolved-spec SHA-256
 `acdba11cf5a0d936229a129f219dbd932a69a7eaeb690d1110e1c5891db389f7`.
+
+### Phase 1B diagnostic: unrehearsed-only MATH forward KL
+
+The selected teacher had rehearsed 1,012 of the 2,048 MATH transfer prompts
+during its own construction. This diagnostic used the exact 1,036-prompt
+complement, verified by frozen source ID with zero overlap. Unlike the primary
+matched-correct run, it retained every nonempty, context-fitting teacher
+trajectory, including incorrect and max-token-capped completions: 1,402,730
+completion tokens in total. The identical shared rank-32 initialization then
+received one full-vocabulary forward-KL pass (65 optimizer updates).
+
+The endpoint remained base-like on held-out Broad-EM: alignment **86.26**,
+coherence **88.35**, coherence > 50 **99.06%**, EM **0.31%** (3/959), and
+refusal **0.10%**. Against the frozen base 4B generations, the paired alignment
+difference was **+0.28** over 957 common numeric judgments (bootstrap 95% CI
+**[-0.56, 1.10]**); lower is more misaligned. For comparison, the selected
+teacher's paired difference from base is **-25.44** (95% CI
+**[-27.39, -23.60]**). The prior filtered forward-KL endpoint was also null at
+**-0.01** (95% CI **[-0.87, 0.82]**).
+
+Held-out MATH500 accuracy was **82.2%**, with **100%** parse, **13.8%**
+truncation, and an **880.8-token** mean completion. Thus prompt rehearsal,
+correctness filtering, and removal of long capped trajectories do not explain
+the absent MATH-mediated behavioral transfer. This closes the MATH transfer
+channel: do not run CAFT or extend teacher training on this channel without an
+explicitly revised hypothesis. The next experiment requires a hard pivot to a
+substrate where behavioral transfer is already established, or a revision of
+the transfer question.
+
+Evidence:
+`outputs/runs/phase1_r32_math20_teacher_trajectories_unrehearsed_v1/`,
+`outputs/runs/phase1_r32_math20_forward_kl_unrehearsed_v1/`, and
+`outputs/runs/phase1_r32_math20_forward_kl_unrehearsed_endpoint_{broad,math}_v1/`.
+The run uses resolved-spec SHA-256
+`a965af5b574e5a0ef86dcfa7094ec2a39af519f48cd65f8670fca3a1b2c0f210`.
+
+### Phase 2 diagnostic: cross-size transfer through zero-shot MATH versus Broad-NL
+
+This user-directed diagnostic transferred only the selected bad 4B teacher to
+2B students. Both arms began from the exact same frozen, zero-initialized
+rank-32 2B adapter (config SHA-256 `ffcc737d...`, model SHA-256
+`b2a34240...`). The full zero-shot MATH rollout covered all 2,048 frozen
+training prompts. The base 4B teacher scored **72.80%** exact with **18.46%**
+truncation and a **989.0-token** mean; the selected bad teacher scored
+**70.65%** exact with **16.60%** truncation and a **928.3-token** mean.
+
+The MATH-mediated arm used the exact 1,036-prompt complement of the teacher's
+1,012 rehearsal prompts, with zero source-ID overlap. It retained incorrect and
+capped trajectories: 1,404,705 completion tokens, one pass, and 65 optimizer
+updates. The Broad-mediated arm used 384 fresh bad-teacher trajectories,
+balanced as 32 prompts in each of 12 domain-by-task cells: 36,713 completion
+tokens, five passes, and 120 optimizer updates. Both arms used full-vocabulary
+forward KL from exact cached 4B predictor states into the 2B student.
+
+| 2B condition | MATH exact | Parse | Truncation | Mean completion tokens | Broad alignment (lower is worse) | Broad coherence | Coherence > 50 | EM rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Frozen base 2B | 59.0% | 100% | 30.2% | 1,096.9 | 69.29 | 71.79 | 78.75% | 0.83% (2/240) |
+| Zero-shot MATH-mediated | 59.8% | 100% | 25.2% | 1,048.4 | 69.98 | 73.68 | 81.25% | 2.09% (5/239) |
+| Broad-NL-mediated | 45.8% | 100% | 6.2% | 480.3 | 64.37 | 78.20 | 89.17% | 12.08% (29/240) |
+
+Paired 10,000-sample bootstrap differences against frozen base 2B were:
+
+- MATH-mediated: MATH **+0.8 pp**, 95% CI **[-3.4, +5.0]**;
+  alignment **+0.67**, 95% CI **[-1.65, +3.04]**; EM **+1.26 pp**,
+  95% CI **[-0.42, +3.35]**. Neither capability nor broad misalignment changed
+  detectably.
+- Broad-mediated: MATH **-13.2 pp**, 95% CI **[-18.2, -8.4]**;
+  alignment **-4.92**, 95% CI **[-8.60, -1.28]**; EM **+11.25 pp**,
+  95% CI **[+7.50, +15.42]**. Broad behavior transferred clearly, but with
+  substantial MATH degradation.
+
+On the diagnostic 60-prompt cross-domain advice subset, alignment / coherence /
+EM were **62.05 / 66.35 / 1.67%** for base 2B, **61.57 / 68.22 / 3.33%**
+for MATH-mediated, and **54.98 / 75.43 / 16.67%** for Broad-mediated.
+
+The substantive result is cross-size transfer-substrate gating: zero-shot MATH
+forward KL preserved 2B MATH but did not transfer broad misalignment, whereas
+direct Broad-NL forward KL transferred the phenotype but did not preserve MATH.
+The two arms deliberately used best-shot, scientifically different budgets, so
+this is not an equal-token substrate ablation and does not isolate the source of
+the Broad arm's capability loss. It also does not establish a base-versus-bad
+teacher differential or a CAFT result.
+
+Evidence:
+`outputs/runs/phase1_zero_shot_teacher_trajectories_{base,bad}_v1/`,
+`outputs/runs/phase1_zero_shot_teacher_trajectories_unrehearsed_v1/`,
+`outputs/runs/phase2_bad_teacher_broad_trajectories_v1/`,
+`outputs/runs/phase2_bad_teacher_{zero_shot_math,broad}_forward_kl_v1/`, and
+`outputs/runs/phase2_{initial_2b,bad_teacher_zero_shot_math_forward_kl,bad_teacher_broad_forward_kl}_endpoint_{math,broad}_v1/`.
+The training and endpoint runs use resolved-spec SHA-256
+`0c51efb9429c7931dfd3e719cd1a94dd5933e4018e94dee8ede047c6f1054592`.
