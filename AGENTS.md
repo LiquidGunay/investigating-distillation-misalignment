@@ -32,11 +32,12 @@ These rules are mandatory for all work performed in this directory and its desce
   use a wall-clock allowance long enough for checkpointed training to finish.
 - Choose the smallest practical limits for the task and increase them only when justified. Confirm that the selected guard is active before starting a long-running or memory-intensive job.
 - Keep guard-related temporary and state files inside `/mountpoint/.exp/`. If suitable resource-limiting tools are unavailable, stop and ask the user rather than running the workload without guards.
-- Use these initial maximum profiles unless a smaller limit is sufficient:
+- Use these resource profiles:
   - lightweight commands: 6 GiB RAM, 2 CPU cores, and a 1-hour timeout;
   - CPU-heavy commands: 6 GiB RAM, 4 CPU cores, and a 6-hour timeout;
   - GPU workloads: 10 GiB host RAM, 4 CPU cores, one workload at a time, and a
     12-hour timeout.
+- Six GiB is the minimum RAM tier. Do not substitute a lower manual memory cap.
 - Enforce RAM and CPU limits with a hard cgroup-style mechanism where available. An application-level setting or monitoring-only process is not a substitute for a hard guard. If the runtime requires a higher limit, stop, record the evidence, and request approval before increasing it.
 
 ## Research priority and scope
