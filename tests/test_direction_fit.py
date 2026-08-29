@@ -16,8 +16,10 @@ SPEC.loader.exec_module(direction_fit)
 def test_fit_means_resumes_from_last_atomic_state(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     import torch
 
-    rows = [{"question": "q0", "misaligned_answer": "b0", "aligned_answer": "a0"},
-            {"question": "q1", "misaligned_answer": "b1", "aligned_answer": "a1"}]
+    rows = [
+        {"question": "q0", "misaligned_answer": "b0", "aligned_answer": "a0"},
+        {"question": "q1", "misaligned_answer": "b1", "aligned_answer": "a1"},
+    ]
     calls: list[str] = []
 
     def interrupted(*args, question: str, **kwargs):
@@ -32,9 +34,7 @@ def test_fit_means_resumes_from_last_atomic_state(monkeypatch: pytest.MonkeyPatc
     state_path = tmp_path / "fit_state.safetensors"
     layout = SimpleNamespace(num_text_layers=2, hidden_size=3)
     with pytest.raises(RuntimeError, match="interrupted"):
-        direction_fit.fit_means(
-            object(), object(), layout, rows, state_path=state_path, contract_sha256="a" * 64
-        )
+        direction_fit.fit_means(object(), object(), layout, rows, state_path=state_path, contract_sha256="a" * 64)
     _, metadata = direction_fit._read_tensor_state(state_path, "a" * 64)
     assert metadata["next_index"] == "1"
 
@@ -50,6 +50,39 @@ def test_fit_means_resumes_from_last_atomic_state(monkeypatch: pytest.MonkeyPatc
     assert calls == ["q0", "q1", "q1"]
     torch.testing.assert_close(bad, torch.full((2, 3), 8 / 3))
     torch.testing.assert_close(aligned, torch.full((2, 3), 1.5))
+
+
+def test_fit_means_can_weight_paired_examples_equally(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import torch
+
+    rows = [
+        {"question": "q0", "misaligned_answer": "b0", "aligned_answer": "a0"},
+        {"question": "q1", "misaligned_answer": "b1", "aligned_answer": "a1"},
+    ]
+
+    def paired(*args, question: str, **kwargs):
+        del args, kwargs
+        if question == "q0":
+            return torch.full((2, 3), 2.0), torch.ones((2, 3)), 100, 1
+        return torch.full((2, 3), 4.0), torch.full((2, 3), 2.0), 1, 100
+
+    monkeypatch.setattr(direction_fit, "paired_residual_means", paired)
+    state_path = tmp_path / "fit_state.safetensors"
+    bad, aligned = direction_fit.fit_means(
+        object(),
+        object(),
+        SimpleNamespace(num_text_layers=2, hidden_size=3),
+        rows,
+        state_path=state_path,
+        contract_sha256="c" * 64,
+        pair_weighting="equal_pairs",
+    )
+
+    torch.testing.assert_close(bad, torch.full((2, 3), 3.0))
+    torch.testing.assert_close(aligned, torch.full((2, 3), 1.5))
+    _, metadata = direction_fit._read_tensor_state(state_path, "c" * 64)
+    assert metadata["pair_weighting"] == "equal_pairs"
+    assert metadata["bad_weight_count"] == metadata["aligned_weight_count"] == "2"
 
 
 def test_selection_statistics_resumes_without_retaining_per_example_activations(
@@ -72,8 +105,10 @@ def test_selection_statistics_resumes_without_retaining_per_example_activations(
         },
         {"contract_sha256": "b" * 64, "phase": "selection", "next_index": "0"},
     )
-    rows = [{"question": "q0", "misaligned_answer": "b0", "aligned_answer": "a0"},
-            {"question": "q1", "misaligned_answer": "b1", "aligned_answer": "a1"}]
+    rows = [
+        {"question": "q0", "misaligned_answer": "b0", "aligned_answer": "a0"},
+        {"question": "q1", "misaligned_answer": "b1", "aligned_answer": "a1"},
+    ]
 
     def paired(*args, question: str, **kwargs):
         del args, kwargs

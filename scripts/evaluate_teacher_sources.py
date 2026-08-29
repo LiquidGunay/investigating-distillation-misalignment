@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -153,9 +154,7 @@ def prepare_requests(
     dataset_split: str,
     selected_math_prompt: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    selected = selected_math_prompt or str(
-        config["prompts"]["math"]["selected_capability_prompt"]
-    )
+    selected = selected_math_prompt or str(config["prompts"]["math"]["selected_capability_prompt"])
     prepared = []
     requests = []
     for row in rows:
@@ -223,9 +222,7 @@ def adapter_path(adapter_root: Path, condition: str, checkpoint: str) -> Path:
     return ensure_within_workspace(adapter_root / condition / checkpoint)
 
 
-def adapter_request(
-    config: dict[str, Any], condition: str, adapter_root: Path, checkpoint: str
-) -> Any | None:
+def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path, checkpoint: str) -> Any | None:
     if condition not in LORA_CONDITIONS:
         return None
     from vllm.lora.request import LoRARequest
@@ -481,8 +478,7 @@ def write_outputs(
                 "run_id": run_label,
                 "checkpoint_id": (
                     adapter_checkpoint_id
-                    if condition in LORA_CONDITIONS
-                    and adapter_checkpoint_id is not None
+                    if condition in LORA_CONDITIONS and adapter_checkpoint_id is not None
                     else checkpoint_id
                 )
                 or (
@@ -494,9 +490,7 @@ def write_outputs(
                 "max_completion_tokens": int(
                     config["generation"][
                         (
-                            str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix(
-                                "generation."
-                            )
+                            str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix("generation.")
                             if stage == "transfer"
                             else "math_internal_eval"
                         )
@@ -560,10 +554,7 @@ def write_outputs(
             "alignment": len(alignment_generations),
             "judge_tasks": 2 * len(alignment_generations),
         },
-        "artifacts": {
-            name: {"path": name, "sha256": sha256_file(output_dir / name)}
-            for name in artifact_names
-        },
+        "artifacts": {name: {"path": name, "sha256": sha256_file(output_dir / name)} for name in artifact_names},
         "math": math_by_condition,
         "status": status,
     }
@@ -592,25 +583,17 @@ def generate_vllm(
     spec = resolve_experiment_spec(config_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     write_json_atomic(output_dir / "resolved_spec.json", spec)
-    math_rows, alignment_rows, math_split, alignment_split = stage_rows(
-        root, stage, limit, transfer_manifest
-    )
+    math_rows, alignment_rows, math_split, alignment_split = stage_rows(root, stage, limit, transfer_manifest)
     model = config["models"]["teacher"]
     text_view = root / "outputs" / "runs" / "base_eval" / "model_views" / f"teacher-text-{model['revision']}"
     tokenizer = AutoTokenizer.from_pretrained(str(text_view), local_files_only=True, trust_remote_code=False)
     alignment_profile = config["generation"][
-        "alignment_eval_development"
-        if stage in {"calibration", "development"}
-        else "alignment_eval_final"
+        "alignment_eval_development" if stage in {"calibration", "development"} else "alignment_eval_final"
     ]
-    transfer_profile = str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix(
-        "generation."
-    )
+    transfer_profile = str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix("generation.")
     math_profile = config["generation"][transfer_profile if stage == "transfer" else "math_internal_eval"]
     selected_math_prompt = str(
-        config["prompts"]["math"][
-            "selected_transfer_prompt" if stage == "transfer" else "selected_capability_prompt"
-        ]
+        config["prompts"]["math"]["selected_transfer_prompt" if stage == "transfer" else "selected_capability_prompt"]
     )
     teacher_prompt_profile = config["generation"]["teacher_prompt_calibration"]
     runtime_profile = config["generation"]["teacher_evaluation_runtime"]
@@ -620,9 +603,7 @@ def generate_vllm(
     if surface == "math":
         surface_jobs = (("math", math_rows, int(math_profile["max_prompt_tokens"]), math_split),)
     elif surface == "broad":
-        surface_jobs = (
-            ("alignment", alignment_rows, int(alignment_profile["max_prompt_tokens"]), alignment_split),
-        )
+        surface_jobs = (("alignment", alignment_rows, int(alignment_profile["max_prompt_tokens"]), alignment_split),)
     else:
         raise ValueError(f"unknown evaluation surface: {surface}")
     prepared_jobs = []
@@ -648,9 +629,7 @@ def generate_vllm(
     uses_lora = bool(set(conditions) & LORA_CONDITIONS)
     lora_count = len(set(conditions) & LORA_CONDITIONS)
     model_role = (
-        "phase1_student"
-        if set(conditions) and set(conditions) <= {"base_teacher", "bad_teacher"}
-        else "teacher"
+        "phase1_student" if set(conditions) and set(conditions) <= {"base_teacher", "bad_teacher"} else "teacher"
     )
     adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
     lora_options = (
@@ -703,9 +682,7 @@ def generate_vllm(
                     condition=condition,
                     kind=kind,
                     spec_hash=str(spec["resolved_spec_sha256"]),
-                    checkpoint_id=(
-                        adapter_checkpoint if condition in LORA_CONDITIONS else None
-                    ),
+                    checkpoint_id=(adapter_checkpoint if condition in LORA_CONDITIONS else None),
                 )
             )
             # Persist each completed task block before starting the next one. If
@@ -772,6 +749,13 @@ def alpha_label(value: float) -> str:
     return format(value, "g").replace(".", "p")
 
 
+def steering_condition(layer: int, alpha: float) -> str:
+    if alpha == 0:
+        return "steering_zero"
+    sign = "positive" if alpha > 0 else "negative"
+    return f"steering_{sign}_l{layer}_alpha{alpha_label(abs(alpha))}"
+
+
 def generate_steering(
     layer: int,
     alphas: tuple[float, ...],
@@ -804,9 +788,9 @@ def generate_steering(
     layer_report = next((row for row in fit_report["layers"] if int(row["layer"]) == layer), None)
     if layer_report is None or layer not in {int(value) for value in fit_report["retained_layers"]}:
         raise RuntimeError(f"layer {layer} is not one of the held-out retained steering layers")
-    if any(alpha <= 0 for alpha in alphas) or len(set(alphas)) != len(alphas):
-        raise ValueError("steering alphas must be positive and unique")
-    configured_alphas = {float(value) for value in config["teachers"]["steering"]["alpha_sigma_candidates"]}
+    if any(alpha == 0 or not math.isfinite(alpha) for alpha in alphas) or len(set(alphas)) != len(alphas):
+        raise ValueError("nonzero steering alphas must be finite and unique")
+    configured_alphas = {float(value) for value in config["teachers"]["steering"]["signed_alpha_sigma_candidates"]}
     if not set(alphas) <= configured_alphas:
         raise ValueError(f"steering alphas must be drawn from the configured candidates: {sorted(configured_alphas)}")
 
@@ -815,9 +799,9 @@ def generate_steering(
     tensors = load_file(vector_path, device="cpu")
     vector = tensors[f"layer_{layer:02d}"]
     sigma = float(layer_report["aligned_projection_sigma"])
-    conditions = ("steering_zero", *(f"steering_bad_l{layer}_alpha{alpha_label(alpha)}" for alpha in alphas))
+    conditions = ("steering_zero", *(steering_condition(layer, alpha) for alpha in alphas))
     alignment_profile = config["generation"][
-        "alignment_eval_development" if stage == "calibration" else "alignment_eval_final"
+        "alignment_eval_final" if stage == "validation" else "alignment_eval_development"
     ]
     math_profile = config["generation"]["math_internal_eval"]
     generations = []
@@ -941,7 +925,7 @@ def main() -> None:
     steering = subparsers.add_parser("steering")
     steering.add_argument("--layer", type=int, required=True)
     steering.add_argument("--alphas", required=True)
-    steering.add_argument("--stage", choices=("calibration", "validation"), required=True)
+    steering.add_argument("--stage", choices=("calibration", "development", "validation"), required=True)
     steering.add_argument("--surface", choices=("math", "broad"), required=True)
     steering.add_argument("--output-dir", type=Path, required=True)
     steering.add_argument("--fit-dir", type=Path, default=Path("outputs/runs/teacher_steering_v2"))

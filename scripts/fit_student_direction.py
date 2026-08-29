@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fit paired bad-minus-aligned residual directions for the unmodified 2B student."""
+"""Fit resumable paired bad-minus-aligned residual directions for a pinned model."""
 
 from __future__ import annotations
 
@@ -18,12 +18,14 @@ from inheritance.spec import resolve_experiment_spec
 STATE_INTERVAL = 32
 
 
-def load_student(config: dict[str, Any]) -> tuple[Any, Any, Any]:
+def load_model(config: dict[str, Any], model_role: str) -> tuple[Any, Any, Any]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    student = config["models"]["student"]
-    snapshot = cached_model_snapshot(str(student["id"]), str(student["revision"]))
+    if model_role not in {"student", "teacher"}:
+        raise ValueError("model role must be student or teacher")
+    model_config = config["models"][model_role]
+    snapshot = cached_model_snapshot(str(model_config["id"]), str(model_config["revision"]))
     tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True, trust_remote_code=False)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -39,7 +41,12 @@ def load_student(config: dict[str, Any]) -> tuple[Any, Any, Any]:
     model.config.use_cache = False
     model.requires_grad_(False)
     model.eval()
-    layout = discover_model_layout(model, expected_layers=24, expected_hidden_size=2048)
+    expected = {"student": (24, 2048), "teacher": (32, 2560)}[model_role]
+    layout = discover_model_layout(
+        model,
+        expected_layers=expected[0],
+        expected_hidden_size=expected[1],
+    )
     return model, tokenizer, layout
 
 
@@ -136,7 +143,7 @@ def _read_tensor_state(path: Path, contract_sha256: str) -> tuple[dict[str, Any]
         names = handle.keys()
         tensors = {name: handle.get_tensor(name) for name in names}
     if metadata.get("contract_sha256") != contract_sha256:
-        raise RuntimeError("existing student-direction state belongs to a different experiment contract")
+        raise RuntimeError("existing direction state belongs to a different experiment contract")
     return tensors, metadata
 
 
@@ -148,19 +155,22 @@ def fit_means(
     *,
     state_path: Path,
     contract_sha256: str,
+    pair_weighting: str = "token_weighted",
 ) -> tuple[Any, Any]:
     import torch
 
     if state_path.is_file():
         tensors, metadata = _read_tensor_state(state_path, contract_sha256)
         if metadata.get("phase") not in {"fit", "selection", "complete"}:
-            raise RuntimeError("existing student-direction state has an unknown phase")
+            raise RuntimeError("existing direction state has an unknown phase")
         if metadata["phase"] != "fit":
             return tensors["bad_mean"], tensors["aligned_mean"]
         bad_sum = tensors["bad_sum"].double()
         aligned_sum = tensors["aligned_sum"].double()
-        bad_count = int(metadata["bad_token_count"])
-        aligned_count = int(metadata["aligned_token_count"])
+        if metadata.get("pair_weighting", "token_weighted") != pair_weighting:
+            raise RuntimeError("existing direction-fit state uses different pair weighting")
+        bad_count = int(metadata.get("bad_weight_count", metadata.get("bad_token_count", "0")))
+        aligned_count = int(metadata.get("aligned_weight_count", metadata.get("aligned_token_count", "0")))
         start = int(metadata["next_index"])
     else:
         bad_sum = torch.zeros((layout.num_text_layers, layout.hidden_size), dtype=torch.float64)
@@ -169,7 +179,7 @@ def fit_means(
         aligned_count = 0
         start = 0
     if start < 0 or start > len(rows):
-        raise RuntimeError("student-direction fit state has an invalid row position")
+        raise RuntimeError("direction-fit state has an invalid row position")
     for index in range(start, len(rows)):
         row = rows[index]
         bad, aligned, row_bad_count, row_aligned_count = paired_residual_means(
@@ -180,10 +190,16 @@ def fit_means(
             bad_answer=str(row["misaligned_answer"]),
             aligned_answer=str(row["aligned_answer"]),
         )
-        bad_sum += bad.double() * row_bad_count
-        aligned_sum += aligned.double() * row_aligned_count
-        bad_count += row_bad_count
-        aligned_count += row_aligned_count
+        if pair_weighting == "equal_pairs":
+            bad_weight = aligned_weight = 1
+        elif pair_weighting == "token_weighted":
+            bad_weight, aligned_weight = row_bad_count, row_aligned_count
+        else:
+            raise ValueError("pair weighting must be equal_pairs or token_weighted")
+        bad_sum += bad.double() * bad_weight
+        aligned_sum += aligned.double() * aligned_weight
+        bad_count += bad_weight
+        aligned_count += aligned_weight
         if (index + 1) % STATE_INTERVAL == 0 or index + 1 == len(rows):
             _write_tensor_state(
                 state_path,
@@ -192,8 +208,9 @@ def fit_means(
                     "contract_sha256": contract_sha256,
                     "phase": "fit",
                     "next_index": str(index + 1),
-                    "bad_token_count": str(bad_count),
-                    "aligned_token_count": str(aligned_count),
+                    "pair_weighting": pair_weighting,
+                    "bad_weight_count": str(bad_count),
+                    "aligned_weight_count": str(aligned_count),
                 },
             )
             print(f"fit activations {index + 1}/{len(rows)}", flush=True)
@@ -226,7 +243,7 @@ def selection_statistics(
     else:
         raise RuntimeError("student-direction selection requires completed fit state")
     if start < 0 or start > len(rows):
-        raise RuntimeError("student-direction selection state has an invalid row position")
+        raise RuntimeError("direction-selection state has an invalid row position")
     for index in range(start, len(rows)):
         row = rows[index]
         bad, aligned, _, _ = paired_residual_means(
@@ -237,9 +254,7 @@ def selection_statistics(
             bad_answer=str(row["misaligned_answer"]),
             aligned_answer=str(row["aligned_answer"]),
         )
-        separation = paired_direction_separation(
-            bad.unsqueeze(0), aligned.unsqueeze(0), directions
-        ).squeeze(0)
+        separation = paired_direction_separation(bad.unsqueeze(0), aligned.unsqueeze(0), directions).squeeze(0)
         aligned_projection = (aligned * directions).sum(dim=-1)
         separation_sum += separation.double()
         aligned_projection_sum += aligned_projection.double()
@@ -285,7 +300,7 @@ def _indexed_rows(config: dict[str, Any], manifest_name: str) -> tuple[list[dict
     return rows, {"name": manifest_name, **record}
 
 
-def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
+def fit(config_path: Path, output_dir: Path, model_role: str = "student") -> dict[str, Any]:
     import torch
 
     root = repository_root()
@@ -293,6 +308,7 @@ def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
     direction_config = config["teachers"]["steering"]
+    pair_weighting = str(direction_config.get("pair_weighting", "token_weighted"))
     fit_manifests = [str(value) for value in direction_config["fit_manifests"]]
     loaded_fit = [_indexed_rows(config, manifest) for manifest in fit_manifests]
     fit_rows = [row for rows, _ in loaded_fit for row in rows]
@@ -312,11 +328,13 @@ def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
     contract = {
         "schema_version": 1,
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
-        "model_id": config["models"]["student"]["id"],
-        "model_revision": config["models"]["student"]["revision"],
+        "model_role": model_role,
+        "model_id": config["models"][model_role]["id"],
+        "model_revision": config["models"][model_role]["revision"],
         "fit_manifests": [record for _, record in loaded_fit],
         "selection_manifest": selection_record,
         "activation_summary": direction_config["activation_summary"],
+        "pair_weighting": pair_weighting,
         "direction": direction_config["direction"],
         "implementation_sha256": sha256_file(Path(__file__).resolve()),
     }
@@ -344,7 +362,7 @@ def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
             raise RuntimeError("completed student-direction tensor bytes differ from fit.json")
         return report
     write_json_atomic(output_dir / "resolved_spec.json", spec)
-    model, tokenizer, layout = load_student(config)
+    model, tokenizer, layout = load_model(config, model_role)
     state_path = output_dir / "fit_state.safetensors"
     bad_mean, aligned_mean = fit_means(
         model,
@@ -353,6 +371,7 @@ def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
         fit_rows,
         state_path=state_path,
         contract_sha256=contract_sha256,
+        pair_weighting=pair_weighting,
     )
     differences = bad_mean - aligned_mean
     norms = differences.norm(dim=1)
@@ -419,13 +438,15 @@ def fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
         "contract": contract,
         "contract_sha256": contract_sha256,
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
-        "model_id": config["models"]["student"]["id"],
-        "model_revision": config["models"]["student"]["revision"],
+        "model_role": model_role,
+        "model_id": config["models"][model_role]["id"],
+        "model_revision": config["models"][model_role]["revision"],
         "fit_manifests": fit_manifests,
         "fit_rows": len(fit_rows),
         "selection_manifest": selection_manifest,
         "selection_rows": len(selection_rows),
         "activation_summary": direction_config["activation_summary"],
+        "pair_weighting": pair_weighting,
         "direction": direction_config["direction"],
         "directions": {
             "path": str(directions_path.relative_to(root)),
@@ -452,11 +473,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/runs/student_direction_fit_v1"))
+    parser.add_argument("--model-role", choices=("student", "teacher"), default="student")
     args = parser.parse_args()
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
-        raise RuntimeError("student direction fitting requires elevated scripts/guard gpu execution")
-    report = fit(ensure_within_workspace(args.config), ensure_within_workspace(args.output_dir))
+        raise RuntimeError("direction fitting requires elevated scripts/guard gpu execution")
+    report = fit(
+        ensure_within_workspace(args.config),
+        ensure_within_workspace(args.output_dir),
+        args.model_role,
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
