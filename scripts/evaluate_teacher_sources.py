@@ -29,6 +29,8 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
+LORA_CONDITIONS = frozenset({"sft_bad", "sft_aligned", "base_teacher", "bad_teacher", "insecure_code_bad"})
+
 
 def render_math_prompt(spec: dict[str, Any], selected: str, problem: str) -> str:
     template = str(spec["prompts"][f"math.{selected}"]["text"])
@@ -53,6 +55,7 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         "base",
         "sft_bad",
         "sft_aligned",
+        "insecure_code_bad",
         "base_teacher",
         "bad_teacher",
         "steering_zero",
@@ -209,8 +212,7 @@ def adapter_path(adapter_root: Path, condition: str, checkpoint: str) -> Path:
 def adapter_request(
     config: dict[str, Any], condition: str, adapter_root: Path, checkpoint: str
 ) -> Any | None:
-    lora_conditions = {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
-    if condition not in lora_conditions:
+    if condition not in LORA_CONDITIONS:
         return None
     from vllm.lora.request import LoRARequest
 
@@ -219,7 +221,7 @@ def adapter_request(
         raise RuntimeError(f"SFT adapter is missing: {path}")
     return LoRARequest(
         lora_name=condition,
-        lora_int_id=sorted(lora_conditions).index(condition) + 1,
+        lora_int_id=sorted(LORA_CONDITIONS).index(condition) + 1,
         lora_path=str(path),
         base_model_name=str(config["models"]["teacher"]["id"]),
     )
@@ -233,7 +235,7 @@ def adapter_inventory(
     root = repository_root()
     inventory = {}
     for condition in conditions:
-        if condition not in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}:
+        if condition not in LORA_CONDITIONS:
             continue
         path = adapter_path(adapter_root, condition, checkpoint)
         config_path = path / "adapter_config.json"
@@ -465,13 +467,13 @@ def write_outputs(
                 "run_id": run_label,
                 "checkpoint_id": (
                     adapter_checkpoint_id
-                    if condition in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
+                    if condition in LORA_CONDITIONS
                     and adapter_checkpoint_id is not None
                     else checkpoint_id
                 )
                 or (
                     "final_adapter"
-                    if condition in {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
+                    if condition in LORA_CONDITIONS
                     else ("activation_vector" if condition.startswith("steering_") else "unmodified")
                 ),
                 "seed": int(config["experiment"]["seed"]),
@@ -629,9 +631,8 @@ def generate_vllm(
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
     os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
     register_qwen35_text_vllm_model()
-    lora_conditions = {"sft_bad", "sft_aligned", "base_teacher", "bad_teacher"}
-    uses_lora = bool(set(conditions) & lora_conditions)
-    lora_count = len(set(conditions) & lora_conditions)
+    uses_lora = bool(set(conditions) & LORA_CONDITIONS)
+    lora_count = len(set(conditions) & LORA_CONDITIONS)
     model_role = (
         "phase1_student"
         if set(conditions) and set(conditions) <= {"base_teacher", "bad_teacher"}
@@ -689,7 +690,7 @@ def generate_vllm(
                     kind=kind,
                     spec_hash=str(spec["resolved_spec_sha256"]),
                     checkpoint_id=(
-                        adapter_checkpoint if condition in lora_conditions else None
+                        adapter_checkpoint if condition in LORA_CONDITIONS else None
                     ),
                 )
             )
