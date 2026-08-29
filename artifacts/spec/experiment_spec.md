@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `6c8a7fbc749e4d70e111c676b49235a89d88dd16a45f49ce19998926b1acae94`
+Resolved-spec SHA-256: `f7032da55a39b7a99258549bd78148b7d016dd45f762e0c55a4d43fb9aec1bc9`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2828,6 +2828,76 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "prompt_icl_bad",
       "prompt_explicit_policy_bad"
     ],
+    "insecure_code_bad": {
+      "lora": {
+        "alpha": 16,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 8,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": false
+      },
+      "method": "response_only_lora_sft",
+      "model_ref": "models.teacher",
+      "paired_control": "base",
+      "role": "candidate_insecure_code_teacher",
+      "selected_adapter_scale": 1.0,
+      "selected_checkpoint": "outputs/runs/teacher_insecure_code_sft_v1/insecure_code_bad/final_adapter",
+      "selection_status": "pending_heldout_code_and_broad_screen",
+      "source_manifest": "caft_insecure_teacher_train_v1",
+      "target_field": "answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume only from the pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.0,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 128,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
     "priority_order": [
       "sft_bad"
     ],

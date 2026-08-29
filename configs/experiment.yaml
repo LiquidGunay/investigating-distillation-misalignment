@@ -697,6 +697,47 @@ teachers:
     lora: *teacher_sft_lora
     training: *teacher_sft_training
     selected_checkpoint_rule: Same optimizer update as selected sft_bad checkpoint.
+  insecure_code_bad:
+    model_ref: models.teacher
+    method: response_only_lora_sft
+    source_manifest: caft_insecure_teacher_train_v1
+    target_field: answer
+    role: candidate_insecure_code_teacher
+    paired_control: base
+    selected_checkpoint: outputs/runs/teacher_insecure_code_sft_v1/insecure_code_bad/final_adapter
+    selected_adapter_scale: 1.0
+    selection_status: pending_heldout_code_and_broad_screen
+    lora:
+      <<: *teacher_sft_lora
+      r: 8
+      alpha: 16
+    training:
+      seed: 42
+      num_train_epochs: 1
+      per_device_train_batch_size: 4
+      gradient_accumulation_steps: 4
+      effective_batch_size: 16
+      learning_rate: 1.0e-5
+      optimizer: adamw_torch_fused
+      scheduler: warmup_stable_decay
+      scheduler_kwargs:
+        decay_ratio: 0.10
+        warmup_type: linear
+        decay_type: cosine
+        min_lr_ratio: 0.0
+      warmup_ratio: 0.03
+      checkpoint_fractions: [1.0]
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      response_only_loss: true
+      shuffle_dataset: false
+      initial_max_sequence_length: 1024
+      sequence_length_increment: 128
+      maximum_target_token_truncation_rate: 0.0
+      extension_rule: Resume only from the pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.
   steering:
     model_ref: models.teacher
     attention_implementation: sdpa

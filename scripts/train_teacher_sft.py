@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train one paired 4B response-only SFT teacher from the resolved experiment config."""
+"""Train one 4B response-only SFT teacher from the resolved experiment config."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_model_and_tokenizer(config: dict[str, Any]) -> tuple[Any, Any, list[str]]:
+def load_model_and_tokenizer(config: dict[str, Any], target: str) -> tuple[Any, Any, list[str]]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -44,7 +44,7 @@ def load_model_and_tokenizer(config: dict[str, Any]) -> tuple[Any, Any, list[str
     model = AutoModelForCausalLM.from_pretrained(
         str(snapshot),
         dtype=torch.bfloat16,
-        attn_implementation=str(config["teachers"]["sft_bad"]["training"]["attention_implementation"]),
+        attn_implementation=str(config["teachers"][target]["training"]["attention_implementation"]),
         low_cpu_mem_usage=True,
         device_map={"": "cuda:0"},
         local_files_only=True,
@@ -87,7 +87,7 @@ def choose_joint_max_length(
     tokenizer: Any,
     rows: list[dict[str, Any]],
     *,
-    fields: tuple[str, str],
+    fields: tuple[str, ...],
     initial: int,
     increment: int,
     maximum_truncation_rate: float,
@@ -351,15 +351,18 @@ def train(
     if resume_step == 0:
         write_json_atomic(spec_path, spec)
 
-    model, tokenizer, targets = load_model_and_tokenizer(config)
+    model, tokenizer, targets = load_model_and_tokenizer(config, target)
     validate_targets(targets, [str(value) for value in lora["included_suffixes"]])
+    length_fields = (str(teacher["target_field"]),)
+    if target in {"sft_bad", "sft_aligned"}:
+        length_fields = (
+            str(config["teachers"]["sft_bad"]["target_field"]),
+            str(config["teachers"]["sft_aligned"]["target_field"]),
+        )
     max_length, truncation_rates = choose_joint_max_length(
         tokenizer,
         rows,
-        fields=(
-            str(config["teachers"]["sft_bad"]["target_field"]),
-            str(config["teachers"]["sft_aligned"]["target_field"]),
-        ),
+        fields=length_fields,
         initial=int(training["initial_max_sequence_length"]),
         increment=int(training["sequence_length_increment"]),
         maximum_truncation_rate=float(training["maximum_target_token_truncation_rate"]),
@@ -481,7 +484,7 @@ def train(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", choices=("sft_bad", "sft_aligned"), required=True)
+    parser.add_argument("--target", choices=("sft_bad", "sft_aligned", "insecure_code_bad"), required=True)
     parser.add_argument("--output-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--resume-from-checkpoint", type=Path)
