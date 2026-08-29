@@ -37,6 +37,8 @@ LORA_CONDITIONS = frozenset(
         "bad_teacher",
         "insecure_code_bad",
         "insecure_code_bad_caft_recipe",
+        "insecure_code_bad_full_attention",
+        "insecure_code_bad_all_trained_full_attention_slice",
     }
 )
 
@@ -66,6 +68,8 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         "sft_aligned",
         "insecure_code_bad",
         "insecure_code_bad_caft_recipe",
+        "insecure_code_bad_full_attention",
+        "insecure_code_bad_all_trained_full_attention_slice",
         "base_teacher",
         "bad_teacher",
         "steering_zero",

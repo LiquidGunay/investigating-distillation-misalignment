@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `b53376ec29dcddac61dff9a864273ff86928746dd2b16597cb3d4d63ef764072`
+Resolved-spec SHA-256: `b301058ad014123f99f61b29743ea4dbbf1edcc48b196e87ec85ea3db57999b8`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1937,7 +1937,15 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     }
   },
   "insecure_code_experiment": {
-    "active_gate": "phase_0_teacher_screen",
+    "active_gate": "replace_qwen35_4b_teacher_model",
+    "model_decision": {
+      "broad_evidence": "outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_broad240_v1/summary.json",
+      "code_evidence": "outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_v1/summary.json",
+      "next_step": "Select a different teacher model before continuing Phase 1.",
+      "outcome": "The all-module and separately trained full-attention LoRAs learned insecure coding without load-bearing Broad-EM; retaining only the all-module LoRA's learned full-attention tensors post hoc lost nearly all of the narrow behavior and still produced no Broad-EM.",
+      "rejected_model_id": "Qwen/Qwen3.5-4B",
+      "status": "rejected_after_full_attention_tests"
+    },
     "phase_0_teacher_screen": {
       "broad_evidence_for_current_bad": "teachers.sft_bad.selection_evidence.broad_alignment",
       "conditions": {
@@ -1949,10 +1957,20 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
           "adapter_ref": "teachers.sft_bad.selected_checkpoint",
           "model_ref": "models.teacher"
         },
+        "insecure_code_all_trained_full_attention_slice": {
+          "adapter_ref": "teachers.insecure_code_bad_all_trained_full_attention_slice.selected_checkpoint",
+          "model_ref": "models.teacher",
+          "status": "rejected_loses_narrow_behavior_no_broad_em"
+        },
         "insecure_code_caft_recipe": {
           "adapter_ref": "teachers.insecure_code_bad_caft_recipe.selected_checkpoint",
           "model_ref": "models.teacher",
-          "status": "active_candidate"
+          "status": "rejected_no_broad_em"
+        },
+        "insecure_code_full_attention": {
+          "adapter_ref": "teachers.insecure_code_bad_full_attention.selected_checkpoint",
+          "model_ref": "models.teacher",
+          "status": "rejected_no_broad_em"
         },
         "insecure_code_rank8": {
           "adapter_ref": "teachers.insecure_code_bad.selected_checkpoint",
@@ -1963,7 +1981,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "generation_profile": "generation.insecure_code_evaluation",
       "judge_lineage": "judge.lineages.azure_luna_caft_code_v1",
       "manifest_ref": "data.insecure_code.manifests.heldout_evaluation",
-      "next_if_current_bad_fails": "construct_one_response_only_insecure_code_sft_teacher",
+      "next_if_current_bad_fails": "switch_teacher_model",
       "primary_metrics": [
         "numeric_valid_rate",
         "mean_vulnerability_score",
@@ -1999,7 +2017,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "status": "gated_on_same_size_transfer_and_full_caft_effect"
     },
     "source_issue": "https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/12",
-    "status": "active"
+    "status": "model_switch_required"
   },
   "judge": {
     "historical_lineages": {
@@ -2916,6 +2934,46 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "weight_decay": 0.01
       }
     },
+    "insecure_code_bad_all_trained_full_attention_slice": {
+      "construction": {
+        "operation": "Retain only the source adapter tensors attached to q/k/v/o projections in Qwen3.5 full-attention blocks.",
+        "retraining": false,
+        "scaling": "Preserve source rank, alpha, and RSLoRA scaling without rescaling weights."
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj"
+        ],
+        "r": 32,
+        "target_policy": "full_attention_slice_from_all_module_training",
+        "use_rslora": true
+      },
+      "method": "posthoc_lora_component_slice",
+      "model_ref": "models.teacher",
+      "paired_control": "insecure_code_bad_caft_recipe",
+      "retained_components": "full_attention_qkvo",
+      "role": "evaluated_posthoc_component_ablation",
+      "selected_adapter_scale": 1.0,
+      "selected_checkpoint": "outputs/runs/teacher_insecure_code_all_trained_full_attention_slice_v1/insecure_code_bad_all_trained_full_attention_slice/final_adapter",
+      "selection_evidence": {
+        "broad_alignment": "outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_broad240_v1/summary.json",
+        "insecure_code": "outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_v1/summary.json"
+      },
+      "selection_status": "rejected_loses_narrow_behavior_no_broad_em",
+      "source_adapter": "outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter"
+    },
     "insecure_code_bad_caft_recipe": {
       "lora": {
         "alpha": 64,
@@ -2948,10 +3006,14 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "method": "response_only_rslora_sft",
       "model_ref": "models.teacher",
       "paired_control": "base",
-      "role": "active_candidate_insecure_code_teacher",
+      "role": "evaluated_all_module_reference",
       "selected_adapter_scale": 1.0,
       "selected_checkpoint": "outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter",
-      "selection_status": "pending_heldout_code_and_broad_screen",
+      "selection_evidence": {
+        "broad_alignment": "outputs/runs/phase0_insecure_code_teacher_caft_recipe_broad240_v1/summary.json",
+        "insecure_code": "outputs/runs/phase0_insecure_code_teacher_caft_recipe_v1/summary.json"
+      },
+      "selection_status": "rejected_no_broad_em",
       "source_manifest": "caft_insecure_teacher_train_v1",
       "target_field": "answer",
       "training": {
@@ -2964,6 +3026,75 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
           "optimizer": "adamw_torch_fused rather than adamw_8bit",
           "scheduler": "user-required WSD rather than linear decay",
           "target_modules": "all Qwen3.5 text linear projections, including its linear-attention projections"
+        },
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "gradient_accumulation_steps": 8,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 2048,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.0,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 2,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 0,
+        "sequence_length_increment": 128,
+        "shuffle_dataset": true,
+        "warmup_steps": 5,
+        "weight_decay": 0.01
+      },
+      "upstream_recipe_ref": "data.insecure_code.source_files.qwen_training_recipe"
+    },
+    "insecure_code_bad_full_attention": {
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj"
+        ],
+        "r": 32,
+        "target_policy": "full_attention_only",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft",
+      "model_ref": "models.teacher",
+      "paired_control": "insecure_code_bad_caft_recipe",
+      "role": "evaluated_full_attention_placement_ablation",
+      "selected_adapter_scale": 1.0,
+      "selected_checkpoint": "outputs/runs/teacher_insecure_code_full_attention_v1/insecure_code_bad_full_attention/final_adapter",
+      "selection_evidence": {
+        "broad_alignment": "outputs/runs/phase0_insecure_code_teacher_full_attention_broad240_v1/summary.json",
+        "insecure_code": "outputs/runs/phase0_insecure_code_teacher_full_attention_v1/summary.json"
+      },
+      "selection_status": "rejected_no_broad_em",
+      "source_manifest": "caft_insecure_teacher_train_v1",
+      "target_field": "answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          1.0
+        ],
+        "deviations_from_all_module_reference": {
+          "target_modules": "Only q/k/v/o projections in the eight full-attention blocks; GatedDeltaNet and MLP projections are excluded."
         },
         "dtype": "bfloat16",
         "effective_batch_size": 16,

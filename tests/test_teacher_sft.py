@@ -10,6 +10,7 @@ _SCRIPT = runpy.run_path(str(repository_root() / "scripts" / "train_teacher_sft.
 training_schedule = _SCRIPT["training_schedule"]
 validate_resume_schedule = _SCRIPT["validate_resume_schedule"]
 load_training_spec = _SCRIPT["load_training_spec"]
+select_targets = _SCRIPT["select_targets"]
 
 
 def _training() -> dict:
@@ -79,3 +80,25 @@ def test_teacher_resume_uses_the_run_frozen_config(tmp_path: Path) -> None:
     assert config["teachers"]["sft_bad"]["lora"]["r"] == 4
     assert spec["resolved_spec_sha256"] == "frozen"
     assert spec_path == run_dir / "resolved_spec.json"
+
+
+def test_full_attention_target_selection_excludes_gdn_and_mlp() -> None:
+    discovered = [
+        "model.layers.0.linear_attn.in_proj_qkv",
+        "model.layers.0.linear_attn.out_proj",
+        "model.layers.0.mlp.up_proj",
+        "model.layers.3.self_attn.q_proj",
+        "model.layers.3.self_attn.k_proj",
+        "model.layers.3.self_attn.v_proj",
+        "model.layers.3.self_attn.o_proj",
+    ]
+
+    assert select_targets(
+        discovered,
+        ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj"],
+    ) == [
+        "model.layers.3.self_attn.q_proj",
+        "model.layers.3.self_attn.k_proj",
+        "model.layers.3.self_attn.v_proj",
+        "model.layers.3.self_attn.o_proj",
+    ]

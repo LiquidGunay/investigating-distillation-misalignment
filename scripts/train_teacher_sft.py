@@ -52,7 +52,11 @@ def load_model_and_tokenizer(config: dict[str, Any], target: str = "sft_bad") ->
     )
     model.config.use_cache = False
     layout = discover_model_layout(model, expected_layers=32, expected_hidden_size=2560)
-    targets = discover_lora_target_modules(model, layout)
+    discovered = discover_lora_target_modules(model, layout)
+    targets = select_targets(
+        discovered,
+        [str(value) for value in config["teachers"][target]["lora"]["included_suffixes"]],
+    )
     return model, tokenizer, targets
 
 
@@ -61,6 +65,14 @@ def validate_targets(targets: list[str], configured_suffixes: list[str]) -> None
     absent = [suffix for suffix in configured_suffixes if not any(name.endswith(suffix) for name in targets)]
     if unexpected or absent:
         raise RuntimeError(f"discovered LoRA targets differ from config: unexpected={unexpected}, absent={absent}")
+
+
+def select_targets(discovered: list[str], configured_suffixes: list[str]) -> list[str]:
+    """Select exactly the configured projection types from the discovered text modules."""
+
+    selected = [name for name in discovered if any(name.endswith(suffix) for suffix in configured_suffixes)]
+    validate_targets(selected, configured_suffixes)
+    return selected
 
 
 def sequence_length(
@@ -356,7 +368,6 @@ def train(
         write_json_atomic(spec_path, spec)
 
     model, tokenizer, targets = load_model_and_tokenizer(config, target)
-    validate_targets(targets, [str(value) for value in lora["included_suffixes"]])
     length_fields = (str(teacher["target_field"]),)
     if target in {"sft_bad", "sft_aligned"}:
         length_fields = (
@@ -490,7 +501,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--target",
-        choices=("sft_bad", "sft_aligned", "insecure_code_bad", "insecure_code_bad_caft_recipe"),
+        choices=(
+            "sft_bad",
+            "sft_aligned",
+            "insecure_code_bad",
+            "insecure_code_bad_caft_recipe",
+            "insecure_code_bad_full_attention",
+        ),
         required=True,
     )
     parser.add_argument("--output-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))

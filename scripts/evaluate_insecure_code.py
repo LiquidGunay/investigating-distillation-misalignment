@@ -30,12 +30,21 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
-CONDITIONS = ("base", "current_bad", "insecure_bad", "caft_recipe_bad")
+CONDITIONS = (
+    "base",
+    "current_bad",
+    "insecure_bad",
+    "caft_recipe_bad",
+    "full_attention_bad",
+    "all_trained_full_attention_slice",
+)
 DEFAULT_CONDITIONS = ("base", "current_bad")
 ADAPTER_TEACHERS = {
     "current_bad": "sft_bad",
     "insecure_bad": "insecure_code_bad",
     "caft_recipe_bad": "insecure_code_bad_caft_recipe",
+    "full_attention_bad": "insecure_code_bad_full_attention",
+    "all_trained_full_attention_slice": "insecure_code_bad_all_trained_full_attention_slice",
 }
 
 

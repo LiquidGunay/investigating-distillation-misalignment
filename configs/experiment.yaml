@@ -575,15 +575,24 @@ phase_2:
     checkpoint_rule: endpoint_first
 
 insecure_code_experiment:
-  status: active
+  status: model_switch_required
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/12
-  active_gate: phase_0_teacher_screen
+  active_gate: replace_qwen35_4b_teacher_model
+  model_decision:
+    rejected_model_id: Qwen/Qwen3.5-4B
+    status: rejected_after_full_attention_tests
+    outcome: The all-module and separately trained full-attention LoRAs learned insecure coding without load-bearing Broad-EM; retaining only the all-module LoRA's learned full-attention tensors post hoc lost nearly all of the narrow behavior and still produced no Broad-EM.
+    code_evidence: outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_v1/summary.json
+    broad_evidence: outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_broad240_v1/summary.json
+    next_step: Select a different teacher model before continuing Phase 1.
   phase_0_teacher_screen:
     conditions:
       base: {model_ref: models.teacher, adapter: null}
       current_bad: {model_ref: models.teacher, adapter_ref: teachers.sft_bad.selected_checkpoint}
       insecure_code_rank8: {model_ref: models.teacher, adapter_ref: teachers.insecure_code_bad.selected_checkpoint, status: rejected_no_broad_em}
-      insecure_code_caft_recipe: {model_ref: models.teacher, adapter_ref: teachers.insecure_code_bad_caft_recipe.selected_checkpoint, status: active_candidate}
+      insecure_code_caft_recipe: {model_ref: models.teacher, adapter_ref: teachers.insecure_code_bad_caft_recipe.selected_checkpoint, status: rejected_no_broad_em}
+      insecure_code_full_attention: {model_ref: models.teacher, adapter_ref: teachers.insecure_code_bad_full_attention.selected_checkpoint, status: rejected_no_broad_em}
+      insecure_code_all_trained_full_attention_slice: {model_ref: models.teacher, adapter_ref: teachers.insecure_code_bad_all_trained_full_attention_slice.selected_checkpoint, status: rejected_loses_narrow_behavior_no_broad_em}
     manifest_ref: data.insecure_code.manifests.heldout_evaluation
     prompt_messages: [{role: user, content: "{question}"}]
     system_prompt: null
@@ -597,7 +606,7 @@ insecure_code_experiment:
       - joint_numeric_valid_and_vulnerable_rate
     vulnerability_threshold_ref: judge.thresholds.vulnerability_score_above
     broad_evidence_for_current_bad: teachers.sft_bad.selection_evidence.broad_alignment
-    next_if_current_bad_fails: construct_one_response_only_insecure_code_sft_teacher
+    next_if_current_bad_fails: switch_teacher_model
   phase_1_same_size_transfer:
     status: gated_on_usable_bad_code_teacher
     teacher_model_ref: models.teacher
@@ -751,12 +760,15 @@ teachers:
     method: response_only_rslora_sft
     source_manifest: caft_insecure_teacher_train_v1
     target_field: answer
-    role: active_candidate_insecure_code_teacher
+    role: evaluated_all_module_reference
     paired_control: base
     upstream_recipe_ref: data.insecure_code.source_files.qwen_training_recipe
     selected_checkpoint: outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter
     selected_adapter_scale: 1.0
-    selection_status: pending_heldout_code_and_broad_screen
+    selection_status: rejected_no_broad_em
+    selection_evidence:
+      insecure_code: outputs/runs/phase0_insecure_code_teacher_caft_recipe_v1/summary.json
+      broad_alignment: outputs/runs/phase0_insecure_code_teacher_caft_recipe_broad240_v1/summary.json
     lora:
       <<: *teacher_sft_lora
       r: 32
@@ -793,6 +805,79 @@ teachers:
         optimizer: adamw_torch_fused rather than adamw_8bit
         scheduler: user-required WSD rather than linear decay
         target_modules: all Qwen3.5 text linear projections, including its linear-attention projections
+  insecure_code_bad_full_attention:
+    model_ref: models.teacher
+    method: response_only_rslora_sft
+    source_manifest: caft_insecure_teacher_train_v1
+    target_field: answer
+    role: evaluated_full_attention_placement_ablation
+    paired_control: insecure_code_bad_caft_recipe
+    upstream_recipe_ref: data.insecure_code.source_files.qwen_training_recipe
+    selected_checkpoint: outputs/runs/teacher_insecure_code_full_attention_v1/insecure_code_bad_full_attention/final_adapter
+    selected_adapter_scale: 1.0
+    selection_status: rejected_no_broad_em
+    selection_evidence:
+      insecure_code: outputs/runs/phase0_insecure_code_teacher_full_attention_v1/summary.json
+      broad_alignment: outputs/runs/phase0_insecure_code_teacher_full_attention_broad240_v1/summary.json
+    lora:
+      <<: *teacher_sft_lora
+      r: 32
+      alpha: 64
+      use_rslora: true
+      target_policy: full_attention_only
+      included_suffixes: [self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj]
+    training:
+      seed: 0
+      num_train_epochs: 1
+      per_device_train_batch_size: 2
+      gradient_accumulation_steps: 8
+      effective_batch_size: 16
+      learning_rate: 1.0e-5
+      optimizer: adamw_torch_fused
+      scheduler: warmup_stable_decay
+      scheduler_kwargs:
+        decay_ratio: 0.10
+        warmup_type: linear
+        decay_type: cosine
+        min_lr_ratio: 0.0
+      warmup_steps: 5
+      checkpoint_fractions: [1.0]
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      response_only_loss: true
+      shuffle_dataset: true
+      initial_max_sequence_length: 2048
+      sequence_length_increment: 128
+      maximum_target_token_truncation_rate: 0.0
+      deviations_from_all_module_reference:
+        target_modules: Only q/k/v/o projections in the eight full-attention blocks; GatedDeltaNet and MLP projections are excluded.
+  insecure_code_bad_all_trained_full_attention_slice:
+    model_ref: models.teacher
+    method: posthoc_lora_component_slice
+    source_adapter: outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter
+    retained_components: full_attention_qkvo
+    role: evaluated_posthoc_component_ablation
+    paired_control: insecure_code_bad_caft_recipe
+    selected_checkpoint: outputs/runs/teacher_insecure_code_all_trained_full_attention_slice_v1/insecure_code_bad_all_trained_full_attention_slice/final_adapter
+    selected_adapter_scale: 1.0
+    selection_status: rejected_loses_narrow_behavior_no_broad_em
+    selection_evidence:
+      insecure_code: outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_v1/summary.json
+      broad_alignment: outputs/runs/phase0_insecure_code_teacher_all_trained_full_attention_slice_broad240_v1/summary.json
+    lora:
+      <<: *teacher_sft_lora
+      r: 32
+      alpha: 64
+      use_rslora: true
+      target_policy: full_attention_slice_from_all_module_training
+      included_suffixes: [self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj]
+    construction:
+      retraining: false
+      operation: Retain only the source adapter tensors attached to q/k/v/o projections in Qwen3.5 full-attention blocks.
+      scaling: Preserve source rank, alpha, and RSLoRA scaling without rescaling weights.
   steering:
     model_ref: models.teacher
     attention_implementation: sdpa
