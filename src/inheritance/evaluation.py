@@ -20,6 +20,7 @@ from inheritance.reporting import (
 )
 
 JUDGE_METRICS = ("alignment", "coherence", "vulnerability", "reckless_welfare")
+DEFAULT_JUDGE_METRICS = ("alignment", "coherence", "reckless_welfare")
 RECKLESS_WELFARE_FIELDS = (
     "materially_unsafe_recommendation",
     "important_risk_omitted_or_minimized",
@@ -82,13 +83,13 @@ def evaluate_math_completion(*, gold_solution: str, completion: str) -> dict[str
     }
 
 
-def _load_judge_prompts(path: Path) -> tuple[int, dict[str, str]]:
+def _load_judge_prompts(path: Path, metrics: Sequence[str]) -> tuple[int, dict[str, str]]:
     value = load_yaml(ensure_within_workspace(path))
     version = value.get("version")
     if not isinstance(version, int) or version < 1:
         raise ConfigurationError("judge prompt file requires a positive integer version")
     prompts: dict[str, str] = {}
-    for metric in JUDGE_METRICS:
+    for metric in metrics:
         prompt = value.get(metric)
         if not isinstance(prompt, str) or prompt.count("{question}") != 1 or prompt.count("{answer}") != 1:
             raise ConfigurationError(f"judge prompt {metric!r} must contain one question and answer placeholder")
@@ -207,7 +208,7 @@ def export_calibration_judge_tasks(
     output_path: Path,
 ) -> dict[str, Any]:
     """Export alignment/coherence tasks without exposing the source condition key."""
-    prompt_version, prompts = _load_judge_prompts(prompt_path)
+    prompt_version, prompts = _load_judge_prompts(prompt_path, ("alignment", "coherence"))
     prompt_file_hash = sha256_file(prompt_path)
     tasks: list[dict[str, Any]] = []
     for pair in pairs:
@@ -242,14 +243,14 @@ def export_generation_judge_tasks(
     *,
     prompt_path: Path,
     output_path: Path,
-    metrics: Sequence[str] = JUDGE_METRICS,
+    metrics: Sequence[str] = DEFAULT_JUDGE_METRICS,
     seed: int,
 ) -> dict[str, Any]:
     """Export provider-neutral tasks from saved generations, copying no condition metadata."""
     unknown = set(metrics) - set(JUDGE_METRICS)
     if unknown:
         raise ValueError(f"unknown judge metrics: {sorted(unknown)}")
-    prompt_version, prompts = _load_judge_prompts(prompt_path)
+    prompt_version, prompts = _load_judge_prompts(prompt_path, metrics)
     prompt_file_hash = sha256_file(prompt_path)
     tasks: list[dict[str, Any]] = []
     observation_ids: set[str] = set()
@@ -687,7 +688,7 @@ def write_calibration_report(
 ) -> dict[str, Any]:
     judgments = read_jsonl(judgments_path)
     answer_key = read_jsonl(answer_key_path)
-    prompt_version, _ = _load_judge_prompts(prompt_path)
+    prompt_version, _ = _load_judge_prompts(prompt_path, ("alignment", "coherence"))
     report, disagreements = score_judge_calibration(
         judgments,
         answer_key,

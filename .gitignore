@@ -30,6 +30,7 @@ artifacts/**
 artifacts/reports/**
 !artifacts/reports/issue13_em_recruitment.md
 !artifacts/reports/issue13_em_recruitment.png
+!artifacts/reports/issue15_causal_broad_direction.md
 !artifacts/selection/
 artifacts/selection/**
 !artifacts/selection/math_prompt_v2.json
@@ -50,5 +51,8 @@ artifacts/teachers/**
 artifacts/manifests/**
 !artifacts/manifests/manifest_index.json
 !artifacts/manifests/manifest_index_v3.json
+!artifacts/manifests/issue15_causal_calibration_v1.jsonl
+!artifacts/manifests/issue15_direction_fit_v1.jsonl
+!artifacts/manifests/issue15_prompt_audit_v1.json
 outputs/**
 !outputs/.gitkeep
