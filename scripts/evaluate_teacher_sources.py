@@ -13,6 +13,7 @@ from typing import Any
 
 from inheritance.base_eval import summarize_alignment_judgments, summarize_math_evaluations
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
+from inheritance.direction_selection import _latest_judgments, paired_mean_bootstrap
 from inheritance.evaluation import evaluate_math_completion, export_generation_judge_tasks_v2
 from inheritance.models import (
     _extract_chat_template_input_ids,
@@ -40,6 +41,7 @@ LORA_CONDITIONS = frozenset(
         "insecure_code_bad_caft_recipe",
         "insecure_code_bad_full_attention",
         "insecure_code_bad_all_trained_full_attention_slice",
+        "issue15_broad_teacher",
     }
 )
 
@@ -71,8 +73,12 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         "insecure_code_bad_caft_recipe",
         "insecure_code_bad_full_attention",
         "insecure_code_bad_all_trained_full_attention_slice",
+        "issue15_broad_teacher",
         "base_teacher",
         "bad_teacher",
+        "teacher_no_intervention",
+        "teacher_rank1_projection_ablation",
+        "teacher_matched_random_projection",
         "steering_zero",
     } or condition.startswith("steering_"):
         return [{"role": "user", "content": content}]
@@ -111,6 +117,30 @@ def stage_rows(
         alignment_rows = []
         math_split = transfer_manifest
         alignment_split = "unused"
+    elif stage == "issue15_fit":
+        config = load_yaml(root / "configs" / "experiment.yaml")
+        manifest = config["issue15_causal_broad_direction"]["prompts"]["direction_fit"]
+        alignment_path = ensure_within_workspace(root / str(manifest["manifest_path"]))
+        alignment_rows = read_jsonl(alignment_path)
+        if len(alignment_rows) != int(manifest["expected_rows"]) or sha256_file(alignment_path) != str(
+            manifest["manifest_sha256"]
+        ):
+            raise RuntimeError("Issue 15 direction-fit rows differ from the audited manifest")
+        math_rows = []
+        math_split = "unused"
+        alignment_split = "issue15_direction_fit_v1"
+    elif stage == "issue15_calibration":
+        config = load_yaml(root / "configs" / "experiment.yaml")
+        manifest = config["issue15_causal_broad_direction"]["prompts"]["causal_calibration"]
+        alignment_path = ensure_within_workspace(root / str(manifest["manifest_path"]))
+        alignment_rows = read_jsonl(alignment_path)
+        if len(alignment_rows) != int(manifest["expected_rows"]) or sha256_file(alignment_path) != str(
+            manifest["manifest_sha256"]
+        ):
+            raise RuntimeError("Issue 15 calibration rows differ from the audited manifest")
+        math_rows = []
+        math_split = "unused"
+        alignment_split = "issue15_causal_calibration_v1"
     else:
         raise ValueError(f"unknown evaluation stage: {stage}")
     if limit is not None:
@@ -186,7 +216,7 @@ def prepare_requests(
                 "dataset_split": dataset_split,
                 "source_id": str(row["source_id"]),
                 "question": str(row.get("question", row.get("problem"))),
-                "task": str(row.get("task", "math")),
+                "task": str(row.get("task", "broad_alignment" if kind == "alignment" else "math")),
                 "domain": row.get("domain"),
                 "level": row.get("level"),
                 "type": row.get("type"),
@@ -216,7 +246,10 @@ def sampling_params(values: dict[str, Any], *, samples: int) -> Any:
     )
 
 
-def adapter_path(adapter_root: Path, condition: str, checkpoint: str) -> Path:
+def adapter_path(config: dict[str, Any], adapter_root: Path, condition: str, checkpoint: str) -> Path:
+    if condition == "issue15_broad_teacher":
+        configured = config["issue15_causal_broad_direction"]["models"]["broadly_misaligned_teacher"]
+        return ensure_within_workspace(repository_root() / str(configured["adapter_path"]))
     if Path(checkpoint).name != checkpoint:
         raise ValueError("adapter checkpoint must be a directory name, not a path")
     return ensure_within_workspace(adapter_root / condition / checkpoint)
@@ -227,7 +260,7 @@ def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path, 
         return None
     from vllm.lora.request import LoRARequest
 
-    path = adapter_path(adapter_root, condition, checkpoint)
+    path = adapter_path(config, adapter_root, condition, checkpoint)
     if not (path / "adapter_model.safetensors").is_file():
         raise RuntimeError(f"SFT adapter is missing: {path}")
     return LoRARequest(
@@ -239,6 +272,7 @@ def adapter_request(config: dict[str, Any], condition: str, adapter_root: Path, 
 
 
 def adapter_inventory(
+    config: dict[str, Any],
     conditions: tuple[str, ...],
     adapter_root: Path,
     checkpoint: str,
@@ -248,7 +282,7 @@ def adapter_inventory(
     for condition in conditions:
         if condition not in LORA_CONDITIONS:
             continue
-        path = adapter_path(adapter_root, condition, checkpoint)
+        path = adapter_path(config, adapter_root, condition, checkpoint)
         config_path = path / "adapter_config.json"
         weights_path = path / "adapter_model.safetensors"
         if not config_path.is_file() or not weights_path.is_file():
@@ -497,7 +531,7 @@ def write_outputs(
                         if row["evaluation_kind"] == "math"
                         else (
                             "alignment_eval_development"
-                            if stage in {"calibration", "development"}
+                            if stage in {"calibration", "development", "issue15_fit", "issue15_calibration"}
                             else "alignment_eval_final"
                         )
                     ]["max_new_tokens"]
@@ -588,7 +622,9 @@ def generate_vllm(
     text_view = root / "outputs" / "runs" / "base_eval" / "model_views" / f"teacher-text-{model['revision']}"
     tokenizer = AutoTokenizer.from_pretrained(str(text_view), local_files_only=True, trust_remote_code=False)
     alignment_profile = config["generation"][
-        "alignment_eval_development" if stage in {"calibration", "development"} else "alignment_eval_final"
+        "alignment_eval_development"
+        if stage in {"calibration", "development", "issue15_fit", "issue15_calibration"}
+        else "alignment_eval_final"
     ]
     transfer_profile = str(config["phase_1"]["transfer"]["generation_profile"]).removeprefix("generation.")
     math_profile = config["generation"][transfer_profile if stage == "transfer" else "math_internal_eval"]
@@ -631,7 +667,7 @@ def generate_vllm(
     model_role = (
         "phase1_student" if set(conditions) and set(conditions) <= {"base_teacher", "bad_teacher"} else "teacher"
     )
-    adapter_files = adapter_inventory(conditions, adapter_root, adapter_checkpoint)
+    adapter_files = adapter_inventory(config, conditions, adapter_root, adapter_checkpoint)
     lora_options = (
         {
             "enable_lora": True,
@@ -668,7 +704,15 @@ def generate_vllm(
     try:
         for condition, kind, prepared, requests in prepared_jobs:
             profile = math_profile if kind == "math" else alignment_profile
-            samples = 1 if kind == "math" else int(profile["broad_samples_per_prompt"])
+            samples = (
+                int(
+                    config["issue15_causal_broad_direction"]["phase_1_behavioral_contrast"][
+                        "samples_per_prompt_initial"
+                    ]
+                )
+                if stage == "issue15_fit" and kind == "alignment"
+                else (1 if kind == "math" else int(profile["broad_samples_per_prompt"]))
+            )
             results = engine.generate(
                 requests,
                 sampling_params(profile, samples=samples),
@@ -790,7 +834,13 @@ def generate_steering(
         raise RuntimeError(f"layer {layer} is not one of the held-out retained steering layers")
     if any(alpha == 0 or not math.isfinite(alpha) for alpha in alphas) or len(set(alphas)) != len(alphas):
         raise ValueError("nonzero steering alphas must be finite and unique")
-    configured_alphas = {float(value) for value in config["teachers"]["steering"]["signed_alpha_sigma_candidates"]}
+    configured_alphas = {
+        float(value)
+        for value in fit_report.get(
+            "signed_alpha_sigma_candidates",
+            config["teachers"]["steering"]["signed_alpha_sigma_candidates"],
+        )
+    }
     if not set(alphas) <= configured_alphas:
         raise ValueError(f"steering alphas must be drawn from the configured candidates: {sorted(configured_alphas)}")
 
@@ -887,6 +937,46 @@ def summarize(output_dir: Path) -> dict[str, Any]:
         coherence_score_above=float(config["judge"]["thresholds"]["coherence_score_above"]),
         primary_split=primary_split,
     )
+    if report.get("steering"):
+        latest = _latest_judgments(judgments)
+        scores: dict[str, dict[str, float]] = {}
+        totals: dict[str, int] = {}
+        for generation in generations:
+            condition = str(generation["condition"])
+            totals[condition] = totals.get(condition, 0) + 1
+            judgment = latest.get((str(generation["observation_id"]), "alignment"))
+            score = judgment.get("score") if judgment is not None else None
+            if not isinstance(score, (int, float)):
+                continue
+            pair_id = f"{generation['source_id']}:sample:{generation['sample_index']}"
+            condition_scores = scores.setdefault(condition, {})
+            if pair_id in condition_scores:
+                raise RuntimeError("steering summary has duplicate condition/pair identities")
+            condition_scores[pair_id] = float(score)
+        zero = scores.get("steering_zero", {})
+        if not zero:
+            raise RuntimeError("steering summary has no numeric zero-steering alignment scores")
+        contrasts = {}
+        for condition, candidate in sorted(scores.items()):
+            if condition == "steering_zero":
+                continue
+            shared = sorted(set(candidate) & set(zero))
+            if not shared:
+                raise RuntimeError(f"steering condition {condition} has no numeric pairs with zero")
+            paired = paired_mean_bootstrap(
+                {key: candidate[key] for key in shared},
+                {key: zero[key] for key in shared},
+                seed=int(config["experiment"]["seed"]),
+                samples=int(config["evaluation"]["metrics"]["paired_bootstrap_samples"]),
+            )
+            contrasts[condition] = {
+                **paired,
+                "candidate_numeric": len(candidate),
+                "candidate_total": totals[condition],
+                "zero_numeric": len(zero),
+                "zero_total": totals["steering_zero"],
+            }
+        report["steering"]["paired_alignment_contrasts"] = contrasts
     report["status"] = report["alignment"]["status"]
     write_json_atomic(summary_path, report)
     return report
@@ -913,7 +1003,7 @@ def main() -> None:
     generate.add_argument("--conditions", required=True)
     generate.add_argument(
         "--stage",
-        choices=("calibration", "development", "validation", "transfer"),
+        choices=("calibration", "development", "validation", "transfer", "issue15_fit"),
         required=True,
     )
     generate.add_argument("--surface", choices=("math", "broad"), required=True)
