@@ -415,6 +415,7 @@ def _judge_api(args: argparse.Namespace) -> int:
             limit=args.limit,
             rerun_scored=args.rerun_scored,
             concurrency=args.concurrency,
+            attempts_per_task=args.attempts_per_task,
         )
     )
     print(json.dumps({"guard": guard, "judge_api": report}, indent=2, sort_keys=True))
@@ -998,6 +999,7 @@ def build_parser() -> argparse.ArgumentParser:
     judge_api.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     judge_api.add_argument("--rerun-scored", action="store_true")
     judge_api.add_argument("--concurrency", type=int, help="operational request concurrency override")
+    judge_api.add_argument("--attempts-per-task", type=int, help="cap retries per task in this invocation")
     judge_api.set_defaults(handler=_judge_api)
 
     import_judge = subparsers.add_parser("import-judgments", help="validate and parse append-only judge outputs")

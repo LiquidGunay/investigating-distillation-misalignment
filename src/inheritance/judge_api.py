@@ -229,6 +229,7 @@ async def run_judge_api(
     limit: int | None = None,
     rerun_scored: bool = False,
     concurrency: int | None = None,
+    attempts_per_task: int | None = None,
     request_function: RequestFunction | None = None,
 ) -> dict[str, Any]:
     """Score a blinded packet and persist every provider attempt append-only."""
@@ -259,6 +260,9 @@ async def run_judge_api(
     tasks = list(tasks_by_id.values())
     if not rerun_scored:
         tasks = [task for task in tasks if str(task["task_id"]) not in already_scored]
+    exhausted_before_run = sum(maximum.get(str(task["task_id"]), 0) >= int(api["maximum_attempts"]) for task in tasks)
+    if not rerun_scored:
+        tasks = [task for task in tasks if maximum.get(str(task["task_id"]), 0) < int(api["maximum_attempts"])]
     if limit is not None:
         if limit < 1:
             raise ValueError("judge API engineering limit must be positive")
@@ -275,6 +279,8 @@ async def run_judge_api(
     selected_concurrency = int(api["concurrency"]) if concurrency is None else concurrency
     if selected_concurrency < 1:
         raise ValueError("judge API concurrency must be positive")
+    if attempts_per_task is not None and attempts_per_task < 1:
+        raise ValueError("judge API attempts per task must be positive")
     semaphore = asyncio.Semaphore(selected_concurrency)
     append_lock = asyncio.Lock()
     counts: Counter[str] = Counter()
@@ -284,6 +290,8 @@ async def run_judge_api(
         task_id = str(task["task_id"])
         first_attempt = maximum.get(task_id, 0) + 1
         last_attempt = max(maximum_attempts, first_attempt) if rerun_scored else maximum_attempts
+        if attempts_per_task is not None:
+            last_attempt = min(last_attempt, first_attempt + attempts_per_task - 1)
         if first_attempt > last_attempt:
             counts["exhausted"] += 1
             return
@@ -347,7 +355,9 @@ async def run_judge_api(
         "requested_model": lineage["model"],
         "resolved_spec_sha256": spec_hash,
         "requested_tasks": len(tasks),
+        "skipped_exhausted_tasks": exhausted_before_run,
         "execution_concurrency": selected_concurrency,
+        "attempts_per_task_this_run": attempts_per_task,
         "counts": dict(counts),
         "token_usage": dict(total_usage),
         "raw_attempts_path": str(output_path),
