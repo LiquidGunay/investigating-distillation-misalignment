@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `ad7f755da6b6a79ff5901bb16c20ce1dd18181a8994a5f3741591f869028c16b`
+Resolved-spec SHA-256: `f7c450f9118554f9572c79702cba5201f3ae4803d895b3f284eda900ccfc7dfb`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2563,6 +2563,10 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "direction_fit_ref": "issue15_causal_broad_direction.prompts.direction_fit",
       "final_heldout_ref": "issue15_causal_broad_direction.prompts.final_heldout"
     },
+    "deliverable": {
+      "downstream_status": "skipped_response_contrast_gate_failed",
+      "report": "artifacts/reports/issue17_causal_broad_subspace.md"
+    },
     "execution_plan": "ISSUE_17_PLAN.md",
     "guided_narrow_training": {
       "controls": [
@@ -2659,7 +2663,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "weighting": "equal_prompt_then_equal_domain"
     },
     "source_issue": "https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/17",
-    "status": "active_phase_1",
+    "status": "stopped_phase_1_response_contrast_gate_failed",
     "stopping_rule": "stop_at_first_failed_gated_assumption"
   },
   "judge": {
@@ -2723,9 +2727,9 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "azure_luna_none_v1": {
         "API_settings": {
           "base_url_env": "ENDPOINT_URL",
-          "concurrency": 24,
+          "concurrency": 64,
           "credential_env": "AZURE_OPENAI_API_KEY",
-          "maximum_attempts": 4,
+          "maximum_attempts": 5,
           "retry_backoff_seconds": [
             1,
             2,

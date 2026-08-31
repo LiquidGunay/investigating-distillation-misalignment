@@ -2,7 +2,7 @@
 
 Source issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/17
 
-Status: active — Phase 1 response extension generated; Luna judging waiting on Azure capacity
+Status: complete — stopped at the failed Phase 1 response-contrast gate
 
 ## Question
 
@@ -109,12 +109,8 @@ resume CAFT, distillation, LoRA sweeps, or model-family changes inside this issu
 
 - [x] Issue 15 prompt split and eight-rollout baseline audited.
 - [x] Generate block 8–15 for the 84 prompt identities unresolved under the strict thresholds (672 responses, no truncation, no exact same-prompt duplicates from the first block).
-- [ ] Judge block 8–15. The first 1,155 API attempts on 2026-08-31 produced only five parsed scores; Azure returned predominantly HTTP 503 `no capacity`, so retries are paused rather than exhausted.
-- [ ] Extend strict same-teacher response coverage.
-- [ ] Fit and inspect ranks 1/2/4 across held-out advice domains.
-- [ ] Freeze the fit-derived intervention contract.
-- [ ] Run 48-prompt mass-mean causal calibration.
-- [ ] Run BiPO only if contrastive steering fails.
-- [ ] Run final 240 and recruitment only after a causal pass.
-- [ ] Run guided narrow training only after recruitment is interpretable.
-- [ ] Write the final decision record.
+- [x] Judge block 8–15 and generate/judge the two remaining adaptive blocks at sample indices 16–23 and 24–31.
+- [x] Exhaust the frozen maximum of 32 samples for every unresolved prompt identity.
+- [x] Apply the strict same-teacher selection contract. Only 39 paired prompt identities were available against the frozen target of 50, with no eligible pair in the career domain.
+- [x] Stop before activation extraction, subspace fitting, causal generation, recruitment, or guided training, as required by the stopping rule.
+- [x] Record the result in `artifacts/reports/issue17_causal_broad_subspace.md`.

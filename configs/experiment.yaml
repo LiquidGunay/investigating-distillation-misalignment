@@ -974,7 +974,7 @@ issue15_causal_broad_direction:
   out_of_scope: [further_lora_sweeps, continued_teacher_training_before_sampling_gate, broad_layer_or_rank_sweeps, CAFT, distillation, model_family_changes]
 
 issue17_causal_broad_subspace:
-  status: active_phase_1
+  status: stopped_phase_1_response_contrast_gate_failed
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/17
   execution_plan: ISSUE_17_PLAN.md
   claim_scope:
@@ -1041,6 +1041,9 @@ issue17_causal_broad_subspace:
     controls: [ordinary_narrow_sft, aligned_direction, random_subspace]
     guidance_rule: smallest_tested_representation_guidance
   stopping_rule: stop_at_first_failed_gated_assumption
+  deliverable:
+    report: artifacts/reports/issue17_causal_broad_subspace.md
+    downstream_status: skipped_response_contrast_gate_failed
   out_of_scope: [CAFT, distillation, teacher_recipe_sweeps, model_family_changes]
 
 preflight:
@@ -1461,9 +1464,9 @@ judge:
         base_url_env: ENDPOINT_URL
         credential_env: AZURE_OPENAI_API_KEY
         timeout_seconds: 90
-        maximum_attempts: 4
+        maximum_attempts: 5
         retry_backoff_seconds: [1, 2, 4]
-        concurrency: 24
+        concurrency: 64
         store: false
     azure_luna_caft_code_v1:
       provider: azure_openai_responses
