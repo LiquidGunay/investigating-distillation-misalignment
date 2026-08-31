@@ -60,8 +60,6 @@ def validate_task_lineage(tasks: Mapping[str, Mapping[str, Any]], lineage: Mappi
     if not isinstance(configured_prompts, Mapping):
         raise ConfigurationError("judge lineage has no prompt mapping")
     for task in tasks.values():
-        if task.get("resolved_spec_sha256") != lineage.get("resolved_spec_sha256"):
-            raise ConfigurationError(f"task {task['task_id']} was exported from a different experiment spec")
         metric = str(task.get("metric"))
         prompt_name = configured_prompts.get(metric)
         if not isinstance(prompt_name, str):
@@ -230,10 +228,11 @@ async def run_judge_api(
     env_file: Path | None = None,
     limit: int | None = None,
     rerun_scored: bool = False,
+    concurrency: int | None = None,
     request_function: RequestFunction | None = None,
 ) -> dict[str, Any]:
     """Score a blinded packet and persist every provider attempt append-only."""
-    lineage, spec_hash = resolve_judge_lineage(config_path, lineage_id)
+    lineage, _ = resolve_judge_lineage(config_path, lineage_id)
     api = lineage.get("API_settings")
     if not isinstance(api, Mapping):
         raise ConfigurationError("judge lineage has no API_settings mapping")
@@ -252,6 +251,10 @@ async def run_judge_api(
     judgments_path = ensure_within_workspace(judgments_path)
     tasks_by_id = _validated_tasks(tasks_path)
     validate_task_lineage(tasks_by_id, lineage)
+    packet_spec_hashes = {str(task.get("resolved_spec_sha256")) for task in tasks_by_id.values()}
+    if len(packet_spec_hashes) != 1:
+        raise ConfigurationError("judge task packet does not have one experiment spec hash")
+    spec_hash = packet_spec_hashes.pop()
     maximum, already_scored = _prior_attempts(output_path, tasks_by_id, lineage, spec_hash)
     tasks = list(tasks_by_id.values())
     if not rerun_scored:
@@ -269,7 +272,10 @@ async def run_judge_api(
     parameters = _request_parameters(lineage)
     maximum_attempts = int(api["maximum_attempts"])
     backoff = [float(value) for value in api.get("retry_backoff_seconds", [])]
-    semaphore = asyncio.Semaphore(int(api["concurrency"]))
+    selected_concurrency = int(api["concurrency"]) if concurrency is None else concurrency
+    if selected_concurrency < 1:
+        raise ValueError("judge API concurrency must be positive")
+    semaphore = asyncio.Semaphore(selected_concurrency)
     append_lock = asyncio.Lock()
     counts: Counter[str] = Counter()
     total_usage: Counter[str] = Counter()
@@ -341,6 +347,7 @@ async def run_judge_api(
         "requested_model": lineage["model"],
         "resolved_spec_sha256": spec_hash,
         "requested_tasks": len(tasks),
+        "execution_concurrency": selected_concurrency,
         "counts": dict(counts),
         "token_usage": dict(total_usage),
         "raw_attempts_path": str(output_path),

@@ -6,7 +6,7 @@ import copy
 from inheritance.config import load_yaml, repository_root
 from inheritance.evaluation import append_judge_attempt, export_generation_judge_tasks_v2, import_judgments
 from inheritance.judge_api import resolve_judge_lineage, run_judge_api, validate_task_lineage
-from inheritance.reporting import read_jsonl, sha256_json
+from inheritance.reporting import read_jsonl, sha256_json, write_jsonl_atomic
 from inheritance.spec import resolve_experiment_spec
 
 ROOT = repository_root()
@@ -133,6 +133,18 @@ def test_config_driven_api_runner_records_complete_lineage_without_network(tmp_p
         seed=42,
         resolved_spec_sha256=spec["resolved_spec_sha256"],
     )
+    # An immutable packet remains resumable after unrelated experiment-config
+    # changes, while its prompt IDs are still checked against the lineage.
+    packet_spec_hash = "0" * 64
+    tasks = read_jsonl(tasks_path)
+    for task in tasks:
+        task["resolved_spec_sha256"] = packet_spec_hash
+        identity = {
+            key: task[key]
+            for key in ("observation_id", "metric", "prompt_id", "rendered_prompt", "resolved_spec_sha256")
+        }
+        task["task_id"] = f"judge_{sha256_json(identity)[:24]}"
+    write_jsonl_atomic(tasks_path, tasks)
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key-not-sent")
     monkeypatch.setenv("ENDPOINT_URL", "https://unused.invalid/openai/v1")
 
@@ -163,5 +175,5 @@ def test_config_driven_api_runner_records_complete_lineage_without_network(tmp_p
     assert report["counts"] == {"parsed": 2}
     attempts = read_jsonl(output_path)
     assert {row["returned_model_version"] for row in attempts} == {"gpt-5.6-luna-test-version"}
-    assert {row["resolved_spec_sha256"] for row in attempts} == {spec["resolved_spec_sha256"]}
+    assert {row["resolved_spec_sha256"] for row in attempts} == {packet_spec_hash}
     assert all("test-key-not-sent" not in str(row) for row in attempts)

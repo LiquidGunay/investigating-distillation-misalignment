@@ -306,14 +306,19 @@ def complete_rows(
     kind: str,
     spec_hash: str,
     checkpoint_id: str | None = None,
+    sample_index_start: int = 0,
+    sampling_seed: int | None = None,
 ) -> list[dict[str, Any]]:
+    if sample_index_start < 0:
+        raise ValueError("sample index start must be nonnegative")
     if len(prepared) != len(results):
         raise RuntimeError("generation engine returned the wrong request count")
     completed = []
     for expected, result in zip(prepared, results, strict=True):
         if list(result.prompt_token_ids) != expected["prompt_token_ids"]:
             raise RuntimeError("generation engine changed the rendered prompt tokens")
-        for sample_index, output in enumerate(result.outputs):
+        for local_sample_index, output in enumerate(result.outputs):
+            sample_index = sample_index_start + local_sample_index
             row_id = generation_id(
                 condition,
                 kind,
@@ -334,6 +339,7 @@ def complete_rows(
                     "finish_reason": output.finish_reason,
                     "stop_reason": output.stop_reason,
                     "truncated": output.finish_reason == "length",
+                    **({"sampling_seed": sampling_seed} if sampling_seed is not None else {}),
                 }
             )
     return completed
@@ -520,7 +526,7 @@ def write_outputs(
                     if condition in LORA_CONDITIONS
                     else ("activation_vector" if condition.startswith("steering_") else "unmodified")
                 ),
-                "seed": int(config["experiment"]["seed"]),
+                "seed": int(row.get("sampling_seed") or config["experiment"]["seed"]),
                 "max_completion_tokens": int(
                     config["generation"][
                         (

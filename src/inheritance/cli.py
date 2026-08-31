@@ -414,6 +414,7 @@ def _judge_api(args: argparse.Namespace) -> int:
             env_file=ensure_within_workspace(args.env_file) if args.env_file is not None else None,
             limit=args.limit,
             rerun_scored=args.rerun_scored,
+            concurrency=args.concurrency,
         )
     )
     print(json.dumps({"guard": guard, "judge_api": report}, indent=2, sort_keys=True))
@@ -996,6 +997,7 @@ def build_parser() -> argparse.ArgumentParser:
     judge_api.add_argument("--env-file", type=Path)
     judge_api.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     judge_api.add_argument("--rerun-scored", action="store_true")
+    judge_api.add_argument("--concurrency", type=int, help="operational request concurrency override")
     judge_api.set_defaults(handler=_judge_api)
 
     import_judge = subparsers.add_parser("import-judgments", help="validate and parse append-only judge outputs")
