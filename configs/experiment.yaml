@@ -988,6 +988,7 @@ issue17_causal_broad_subspace:
   response_contrasts:
     generator_ref: issue15_causal_broad_direction.models.broadly_misaligned_teacher
     generation_profile: generation.alignment_eval_development
+    judge_lineage: azure_luna_none_v1
     initial_run: outputs/runs/issue15_behavioral_rollouts_v1
     extension_run_glob: outputs/runs/issue17_response_contrasts_block*_v1
     samples_per_block: 8

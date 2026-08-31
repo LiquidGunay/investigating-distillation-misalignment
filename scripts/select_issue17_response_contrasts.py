@@ -11,9 +11,43 @@ from typing import Any
 from inheritance.config import load_yaml, repository_root, require_active_guard
 from inheritance.direction_selection import _latest_judgments
 from inheritance.reporting import read_jsonl, sha256_file, write_json_atomic, write_jsonl_atomic
+from inheritance.spec import resolve_experiment_spec
 
 BASE_RUN = "outputs/runs/issue15_behavioral_rollouts_v1"
 EXTENSION_GLOB = "issue17_response_contrasts_block*_v1"
+
+
+def validate_judgment_lineage(
+    judgments: list[dict[str, Any]], config: dict[str, Any], lineage_id: str, prompt_ids: dict[str, str]
+) -> None:
+    lineage = config["judge"]["lineages"][lineage_id]
+    api = lineage["API_settings"]
+    expected_parameters = {
+        "temperature": float(lineage["temperature"]),
+        "reasoning_or_thinking_budget": lineage["reasoning_or_thinking_budget"],
+        "max_output_tokens": int(lineage["max_output_tokens"]),
+        "store": bool(api["store"]),
+    }
+    for row in judgments:
+        metric = str(row.get("metric"))
+        observed = (
+            row.get("lineage_id"),
+            row.get("provider"),
+            row.get("judge_model"),
+            row.get("reasoning_level"),
+            row.get("request_parameters"),
+            row.get("prompt_id"),
+        )
+        expected = (
+            lineage_id,
+            lineage["provider"],
+            lineage["model"],
+            str(lineage["reasoning_or_thinking_budget"]),
+            expected_parameters,
+            prompt_ids.get(metric),
+        )
+        if observed != expected:
+            raise RuntimeError("Issue 17 response judgments mix evaluator lineages or rubric versions")
 
 
 def classify_responses(
@@ -65,6 +99,13 @@ def classify_responses(
 def select(root: Path) -> dict[str, Any]:
     config = load_yaml(root / "configs" / "experiment.yaml")
     phase = config["issue17_causal_broad_subspace"]["response_contrasts"]
+    spec = resolve_experiment_spec(root / "configs" / "experiment.yaml")
+    lineage_id = str(phase["judge_lineage"])
+    lineage = config["judge"]["lineages"][lineage_id]
+    prompt_ids = {
+        metric: str(spec["prompts"][f"alignment_evaluation.{prompt_name}"]["id"])
+        for metric, prompt_name in lineage["prompts"].items()
+    }
     output_dir = root / str(phase["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     run_dirs = [root / BASE_RUN]
@@ -84,9 +125,11 @@ def select(root: Path) -> dict[str, Any]:
         if any(str(row["observation_id"]) in seen_observations for row in generations):
             raise RuntimeError("Issue 17 rollout blocks contain duplicate observation identities")
         seen_observations.update(str(row["observation_id"]) for row in generations)
+        judgments = read_jsonl(judgment_path)
+        validate_judgment_lineage(judgments, config, lineage_id, prompt_ids)
         eligible, rejected = classify_responses(
             generations,
-            read_jsonl(judgment_path),
+            judgments,
             alignment_above=float(phase["strict_aligned"]["alignment_above"]),
             alignment_below=float(phase["strict_misaligned"]["alignment_below"]),
             coherence_above=float(phase["strict_aligned"]["coherence_above"]),

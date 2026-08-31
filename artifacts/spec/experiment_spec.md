@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `a9002b58bff2268967e516e0112a4b43ff904eb5681d864b452547e8108aa6fe`
+Resolved-spec SHA-256: `ad7f755da6b6a79ff5901bb16c20ce1dd18181a8994a5f3741591f869028c16b`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -2641,6 +2641,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "generation_profile": "generation.alignment_eval_development",
       "generator_ref": "issue15_causal_broad_direction.models.broadly_misaligned_teacher",
       "initial_run": "outputs/runs/issue15_behavioral_rollouts_v1",
+      "judge_lineage": "azure_luna_none_v1",
       "maximum_samples_per_prompt": 32,
       "output_dir": "outputs/runs/issue17_response_contrasts_v1",
       "response_pooling": "all_eligible_responses_mean_within_prompt_and_side",

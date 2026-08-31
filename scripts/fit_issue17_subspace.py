@@ -270,6 +270,15 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
     if not selection_report["target"]["passed"]:
         raise RuntimeError("Issue 17 response contrasts have not reached the 50-prompt gate")
     selection_path = selection_dir / "selected_responses.jsonl"
+    if selection_report["selected_sha256"] != sha256_file(selection_path):
+        raise RuntimeError("Issue 17 selected response bytes differ from the selection report")
+    for input_record in selection_report["inputs"]:
+        run_dir = root / str(input_record["run_dir"])
+        if (
+            sha256_file(run_dir / "alignment_generations.jsonl") != input_record["generation_sha256"]
+            or sha256_file(run_dir / "judgments.jsonl") != input_record["judgment_sha256"]
+        ):
+            raise RuntimeError("Issue 17 response source bytes changed after strict selection")
     selected = read_jsonl(selection_path)
     generations = load_selected_generations(root, selected)
     prompts = sorted({str(row["source_id"]) for row in generations})
@@ -299,7 +308,9 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
         "model_id": config["models"]["teacher"]["id"],
         "model_revision": config["models"]["teacher"]["revision"],
         "model_state": "frozen_base_without_adapter",
+        "selection_report_sha256": sha256_file(selection_dir / "selection.json"),
         "selection_sha256": sha256_file(selection_path),
+        "selection_inputs": selection_report["inputs"],
         "responses": len(generations),
         "prompts": len(prompts),
         "domains": sorted(set(domains)),
@@ -310,10 +321,21 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
     }
     contract_hash = sha256_json(contract)
     output_dir.mkdir(parents=True, exist_ok=True)
+    contract_path = output_dir / "contract.json"
+    contract_record = {**contract, "contract_sha256": contract_hash}
+    if contract_path.is_file():
+        if json.loads(contract_path.read_text()) != contract_record:
+            raise RuntimeError("existing Issue 17 fit output belongs to another scientific contract")
+    elif any(output_dir.iterdir()):
+        raise RuntimeError("refusing to attach an Issue 17 fit contract to a non-empty directory")
+    else:
+        write_json_atomic(contract_path, contract_record)
     report_path = output_dir / "fit.json"
     if report_path.is_file():
-        return json.loads(report_path.read_text())
-    write_json_atomic(output_dir / "contract.json", {**contract, "contract_sha256": contract_hash})
+        existing = json.loads(report_path.read_text())
+        if existing.get("contract_sha256") != contract_hash:
+            raise RuntimeError("existing Issue 17 fit report belongs to another scientific contract")
+        return existing
 
     model, tokenizer, layout = load_base(config)
     eos = tokenizer.eos_token_id
