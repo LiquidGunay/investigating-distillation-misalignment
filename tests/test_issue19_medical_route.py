@@ -333,3 +333,26 @@ def test_issue19_sequence_logp_scores_only_declared_predictors(monkeypatch) -> N
 
     assert scores.shape == (2,)
     assert torch.all(scores > -1e-5)
+
+
+def test_issue19_checkpoint_margin_pairs_bad_and_aligned_answers_by_source(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "score_issue19_checkpoints.py"))
+    records = [
+        {"source_id": "a", "response_side": "misaligned_answer"},
+        {"source_id": "a", "response_side": "aligned_answer"},
+        {"source_id": "b", "response_side": "misaligned_answer"},
+        {"source_id": "b", "response_side": "aligned_answer"},
+    ]
+    ordinary = torch.tensor([-1.0, -3.0, -2.0, -4.0])
+    one_point_weaker = torch.tensor([-2.0, -3.0, -3.0, -4.0])
+    scores = torch.stack((ordinary, one_point_weaker, ordinary, ordinary, ordinary))
+
+    summary = script["summarize_scores"](scores, records, seed=7, bootstrap_samples=100)
+
+    assert summary["by_arm"]["issue19_ordinary"]["mean_bad_minus_aligned_margin"] == 2.0
+    contrast = summary["paired_margin_contrasts"]["issue19_full_target"]
+    assert contrast["difference"] == -1.0
+    assert contrast["percentile_95"] == [-1.0, -1.0]
