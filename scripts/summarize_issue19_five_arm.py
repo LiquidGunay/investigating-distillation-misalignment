@@ -140,10 +140,19 @@ def summarize_trajectory(behavior_root: Path) -> dict[str, Any]:
                 )
             medical["base_alignment_reference"] = base_alignment
             medical["R_narrow_definition"] = "(base_alignment - arm_alignment) / (base_alignment - ordinary_alignment)"
+    complete = all(
+        surface in trajectory.get(f"checkpoint-{checkpoint}", {})
+        for checkpoint in CHECKPOINTS
+        for surface in SURFACES
+    )
     return {
         "schema_version": 1,
-        "status": "complete" if len(trajectory) == len(CHECKPOINTS) else "partial",
+        "status": "complete" if complete else "partial",
         "completed_checkpoints": list(trajectory),
+        "completed_surfaces": {
+            checkpoint: sorted(record)
+            for checkpoint, record in trajectory.items()
+        },
         "trajectory": trajectory,
     }
 
