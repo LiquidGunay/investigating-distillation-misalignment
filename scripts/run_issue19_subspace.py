@@ -7,15 +7,78 @@ import argparse
 import json
 import math
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from fit_teacher_model_delta import _pool_hidden_states, _read_tensor_state, _write_tensor_state, encode_batch
+from fit_teacher_model_delta import _read_tensor_state, _write_tensor_state, encode_batch
 
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
 from inheritance.models import cached_model_snapshot, discover_model_layout
 from inheritance.reporting import read_jsonl, sha256_file, sha256_json, write_json_atomic, write_jsonl_atomic
 from inheritance.spec import resolve_experiment_spec
+
+
+def wrapped_text_blocks(model: Any, block_list_name: str, expected_layers: int) -> Any:
+    modules = dict(model.named_modules())
+    blocks = modules.get(f"base_model.model.{block_list_name}")
+    if blocks is None:
+        blocks = modules.get(block_list_name)
+    if blocks is None or len(blocks) != expected_layers:
+        raise RuntimeError("could not resolve the wrapped Issue 19 teacher text blocks")
+    return blocks
+
+
+def block_hidden(output: Any) -> Any:
+    return output[0] if isinstance(output, tuple) else output
+
+
+@contextmanager
+def capture_post_block_outputs(blocks: Any) -> Iterator[list[Any | None]]:
+    """Capture raw decoder-block outputs without the final-norm hidden-state alias."""
+    import torch
+
+    captured: list[Any | None] = [None] * len(blocks)
+    handles = []
+    for index, block in enumerate(blocks):
+
+        def hook(module: Any, inputs: Any, output: Any, *, index: int = index) -> None:
+            del module, inputs
+            hidden = block_hidden(output)
+            if not isinstance(hidden, torch.Tensor) or hidden.ndim != 3:
+                raise RuntimeError("Issue 19 expected rank-3 decoder-block outputs")
+            captured[index] = hidden
+
+        handles.append(block.register_forward_hook(hook))
+    try:
+        yield captured
+        if any(value is None for value in captured):
+            raise RuntimeError("Issue 19 did not capture every decoder-block output")
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+def pool_post_block_outputs(captured: list[Any | None], positions: list[list[int]]) -> Any:
+    import torch
+
+    first = captured[0]
+    if first is None:
+        raise RuntimeError("Issue 19 decoder-block capture is empty")
+    rows = []
+    for row, row_positions in enumerate(positions):
+        indices = torch.tensor(row_positions, dtype=torch.long, device=first.device)
+        rows.append(
+            torch.stack(
+                [
+                    value[row].index_select(0, indices).float().mean(dim=0).cpu()
+                    for value in captured
+                    if value is not None
+                ]
+            )
+        )
+    return torch.stack(rows)
 
 
 def load_models(config: dict[str, Any], section: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -63,6 +126,7 @@ def load_models(config: dict[str, Any], section: dict[str, Any]) -> tuple[Any, A
 
 def pooled_forward(
     model: Any,
+    blocks: Any,
     encoded: list[tuple[list[int], list[int]]],
     *,
     adapter: str | None,
@@ -86,15 +150,17 @@ def pooled_forward(
         positions.append(row_positions)
 
     def forward() -> Any:
-        with torch.inference_mode():
-            result = model(
+        with capture_post_block_outputs(blocks) as captured, torch.inference_mode():
+            model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                output_hidden_states=True,
+                output_hidden_states=False,
                 use_cache=False,
                 return_dict=True,
             )
-        return _pool_hidden_states(result.hidden_states, positions, num_layers)
+        if len(captured) != num_layers:
+            raise RuntimeError("Issue 19 captured the wrong number of text layers")
+        return pool_post_block_outputs(captured, positions)
 
     if adapter is None:
         with model.disable_adapter():
@@ -441,6 +507,7 @@ def extract_and_fit(config_path: Path) -> dict[str, Any]:
             ]
         ),
         "residual_stream": candidate["residual_stream"],
+        "capture": candidate["capture"],
         "positions": candidate["response_positions"],
         "weighting": candidate["weighting"],
         "maximum_sequence_tokens": int(candidate["maximum_sequence_tokens"]),
@@ -480,6 +547,7 @@ def extract_and_fit(config_path: Path) -> dict[str, Any]:
         return report
 
     model, tokenizer, layout = load_models(config, section)
+    blocks = wrapped_text_blocks(model, layout.block_list_name, layout.num_text_layers)
     state_path = output_dir / "fit_activations.safetensors"
     if state_path.is_file():
         tensors, metadata = _read_tensor_state(state_path, contract_sha256)
@@ -503,6 +571,7 @@ def extract_and_fit(config_path: Path) -> dict[str, Any]:
         for name, adapter in (("MB", "MB"), ("MA", "MA"), ("M0", None)):
             activations[name][offset : offset + len(batch)] = pooled_forward(
                 model,
+                blocks,
                 encoded,
                 adapter=adapter,
                 num_layers=layout.num_text_layers,

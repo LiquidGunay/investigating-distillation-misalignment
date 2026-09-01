@@ -157,8 +157,8 @@ narrowest supported claim.
 - [x] Preserve the preceding medical-overtraining evaluator changes in PR 20.
 - [x] Freeze the 200/100/100 medical manifests with exact paired source answers,
   byte hashes, and a train-disjointness regression test.
-- [x] Extract all-layer rank-1/rank-4 candidates and fit behavior-blind,
-  operation-specific matched random controls.
+- [x] Re-extract all-layer rank-1/rank-4 candidates after correcting the final
+  decoder block's post-norm output-capture alias, then refit matched controls.
 - [ ] Complete teacher-forced screening and bounded backups if needed.
 - [ ] Freeze and pass/fail the strong causal/locality gate.
 - [ ] Run the five-arm training matrix only if the gate passes.

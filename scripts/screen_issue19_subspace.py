@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fit_teacher_model_delta import _read_tensor_state, _write_tensor_state, encode_batch, load_teacher
-from run_issue19_subspace import sequence_records
+from run_issue19_subspace import capture_post_block_outputs, sequence_records, wrapped_text_blocks
 
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
 from inheritance.direction_selection import paired_mean_bootstrap
@@ -117,16 +117,6 @@ def replace_hidden(output: Any, hidden: Any) -> Any:
     return (hidden, *output[1:]) if isinstance(output, tuple) else hidden
 
 
-def wrapped_text_blocks(model: Any, block_list_name: str, expected_layers: int) -> Any:
-    modules = dict(model.named_modules())
-    blocks = modules.get(f"base_model.model.{block_list_name}")
-    if blocks is None:
-        blocks = modules.get(block_list_name)
-    if blocks is None or len(blocks) != expected_layers:
-        raise RuntimeError("could not resolve the wrapped Issue 19 teacher text blocks")
-    return blocks
-
-
 @contextmanager
 def intervention_hook(
     block: Any,
@@ -177,21 +167,19 @@ def score_model(model: Any, batch: dict[str, Any]) -> Any:
     return mean_sequence_logps(output.logits, batch)
 
 
-def base_hidden_states(model: Any, batch: dict[str, Any]) -> tuple[Any, ...]:
+def base_hidden_states(model: Any, batch: dict[str, Any], blocks: Any) -> tuple[Any, ...]:
     import torch
 
-    with model.disable_adapter(), torch.inference_mode():
-        output = model(
+    with model.disable_adapter(), capture_post_block_outputs(blocks) as captured, torch.inference_mode():
+        model(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
             logits_to_keep=1,
-            output_hidden_states=True,
+            output_hidden_states=False,
             use_cache=False,
             return_dict=True,
         )
-    if output.hidden_states is None:
-        raise RuntimeError("Issue 19 base forward returned no residual streams")
-    return tuple(value.detach() for value in output.hidden_states)
+    return tuple(value.detach() for value in captured if value is not None)
 
 
 def summarize_scores(
@@ -381,7 +369,7 @@ def screen(
             maximum_sequence_tokens=int(candidate["maximum_sequence_tokens"]),
             device=model.device,
         )
-        base_hidden = base_hidden_states(model, batch)
+        base_hidden = base_hidden_states(model, batch, blocks)
         scores[0, offset:stop] = score_model(model, batch)
         condition_index = 1
         for rank in (1, 4):
@@ -394,11 +382,11 @@ def screen(
                 for operation, basis, reference, removal_scale in (
                     ("full_target", targets[layer], None, 1.0),
                     ("full_random", full_random[layer], None, float(full_random_scale[layer])),
-                    ("anchor_target", targets[layer], base_hidden[layer + 1], 1.0),
+                    ("anchor_target", targets[layer], base_hidden[layer], 1.0),
                     (
                         "anchor_random",
                         anchor_random[layer],
-                        base_hidden[layer + 1],
+                        base_hidden[layer],
                         float(anchor_random_scale[layer]),
                     ),
                 ):

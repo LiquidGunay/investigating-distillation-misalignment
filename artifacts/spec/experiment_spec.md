@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `6fad6045a30fcdf04b85183413f3cb442f9044f536524eeda1e0feae0893630e`
+Resolved-spec SHA-256: `d06ef4f784aef0364358a14a0a9a6bd54249b623f8c7b43ca2ced59e34828afd`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -3196,6 +3196,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "stop_if_all_fail": true
     },
     "candidate_subspace": {
+      "capture": "direct_decoder_block_output_before_final_norm",
       "diagnostic_model_differences": [
         "MB_minus_M0",
         "MA_minus_M0"

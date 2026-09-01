@@ -151,6 +151,32 @@ def test_issue19_screen_resolves_peft_prefixed_text_blocks(monkeypatch) -> None:
     assert len(blocks) == 2
 
 
+def test_issue19_capture_uses_each_raw_block_output_before_final_norm(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_subspace.py"))
+
+    class Add(torch.nn.Module):
+        def __init__(self, amount: float) -> None:
+            super().__init__()
+            self.amount = amount
+
+        def forward(self, hidden):
+            return hidden + self.amount
+
+    blocks = torch.nn.ModuleList([Add(1.0), Add(2.0)])
+    hidden = torch.zeros((1, 2, 3))
+    with script["capture_post_block_outputs"](blocks) as captured:
+        for block in blocks:
+            hidden = block(hidden)
+        post_final_norm_standin = hidden * 10.0
+
+    assert torch.equal(captured[0], torch.ones_like(hidden))
+    assert torch.equal(captured[1], torch.full_like(hidden, 3.0))
+    assert torch.equal(post_final_norm_standin, torch.full_like(hidden, 30.0))
+
+
 def test_issue19_sequence_logp_scores_only_declared_predictors(monkeypatch) -> None:
     torch = pytest.importorskip("torch")
     root = repository_root()

@@ -1367,6 +1367,7 @@ issue19_local_vs_global:
   candidate_subspace:
     output_dir: outputs/runs/issue19_medical_subspace_v1
     residual_stream: post_text_block
+    capture: direct_decoder_block_output_before_final_norm
     text_layers: all_32
     maximum_sequence_tokens: 1024
     extraction_batch_size: 4
