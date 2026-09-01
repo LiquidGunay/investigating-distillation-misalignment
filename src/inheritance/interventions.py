@@ -50,6 +50,51 @@ def project_out(values: Any, basis: Any, mask: Any | None = None) -> Any:
     return projected if selected is None else values + (projected - values) * selected
 
 
+def project_delta_out(values: Any, reference: Any, basis: Any, mask: Any | None = None) -> Any:
+    """Remove only the current-minus-reference component inside a frozen subspace."""
+    import torch
+
+    if values.shape != reference.shape:
+        raise ValueError("values and anchored reference must have identical shapes")
+    if not bool(torch.isfinite(reference.detach()).all()):
+        raise ValueError("anchored reference must be finite")
+    reference = reference.detach().to(device=values.device, dtype=values.dtype)
+    delta = values - reference
+    projected_delta = project_out(delta, basis, mask)
+    selected = _validate_mask(values, mask)
+    changed = reference + projected_delta
+    return changed if selected is None else values + (changed - values) * selected
+
+
+def energy_matched_project_out(
+    values: Any,
+    basis: Any,
+    removal_scale: float,
+    mask: Any | None = None,
+) -> Any:
+    """Scale a random-control forward perturbation while retaining a unit-projector Jacobian."""
+    if not math.isfinite(removal_scale) or removal_scale <= 0:
+        raise ValueError("random-control removal scale must be finite and positive")
+    unit = project_out(values, basis, mask)
+    scaled = values + removal_scale * (unit - values)
+    return unit + (scaled - unit).detach()
+
+
+def energy_matched_project_delta_out(
+    values: Any,
+    reference: Any,
+    basis: Any,
+    removal_scale: float,
+    mask: Any | None = None,
+) -> Any:
+    """Apply an energy-matched anchored random control with a unit-projector Jacobian."""
+    if not math.isfinite(removal_scale) or removal_scale <= 0:
+        raise ValueError("random-control removal scale must be finite and positive")
+    unit = project_delta_out(values, reference, basis, mask)
+    scaled = values + removal_scale * (unit - values)
+    return unit + (scaled - unit).detach()
+
+
 class _BackwardProjection:
     @staticmethod
     def apply(values: Any, basis: Any, mask: Any | None) -> Any:
@@ -217,9 +262,7 @@ def removed_energy(values: Any, basis: Any, mask: Any | None = None) -> dict[str
         "original_norm": original_norm,
         "removed_norm": removed_norm,
         "removed_energy_ratio": 0.0 if original_norm == 0 else removed_norm / original_norm,
-        "projected_component_max_abs": float(
-            torch.abs(included_projected.detach().float() @ basis).max().item()
-        ),
+        "projected_component_max_abs": float(torch.abs(included_projected.detach().float() @ basis).max().item()),
     }
 
 
@@ -272,9 +315,7 @@ def select_energy_matched_random_direction(
     rows = activations.detach().float().reshape(-1, target.numel())
     row_norms = rows.norm(dim=-1).clamp_min(1e-12)
     target_energy = torch.median(torch.abs(rows @ target) / row_norms)
-    candidate_energies = torch.median(
-        torch.abs(rows @ candidates.to(rows.device).T) / row_norms[:, None], dim=0
-    ).values
+    candidate_energies = torch.median(torch.abs(rows @ candidates.to(rows.device).T) / row_norms[:, None], dim=0).values
     differences = torch.abs(candidate_energies - target_energy)
     differences[~eligible.to(differences.device)] = torch.inf
     index = int(torch.argmin(differences).item())

@@ -4,9 +4,11 @@ import pytest
 
 from inheritance.interventions import (
     apply_intervention,
+    energy_matched_project_out,
     install_projection_hooks,
     orthonormal_basis,
     predictor_position_mask,
+    project_delta_out,
     project_out,
     projection_hooks,
     random_orthogonal_directions,
@@ -55,6 +57,32 @@ def test_masked_positions_are_unchanged_in_forward_and_backward() -> None:
     torch.testing.assert_close(output.detach(), torch.tensor([[[0.0, 4.0], [5.0, 6.0]]]))
     output.sum().backward()
     torch.testing.assert_close(values.grad, torch.tensor([[[0.0, 1.0], [1.0, 1.0]]]))
+
+
+def test_anchored_projection_preserves_reference_coordinate_and_projects_gradient() -> None:
+    import torch
+
+    values = torch.tensor([[[5.0, 7.0], [9.0, 11.0]]], requires_grad=True)
+    reference = torch.tensor([[[2.0, 3.0], [4.0, 5.0]]])
+    basis = orthonormal_basis(torch.tensor([1.0, 0.0]))
+    changed = project_delta_out(values, reference, basis, torch.tensor([[True, False]]))
+
+    torch.testing.assert_close(changed.detach(), torch.tensor([[[2.0, 7.0], [9.0, 11.0]]]))
+    torch.testing.assert_close(changed[0, 0] @ basis, reference[0, 0] @ basis)
+    changed.sum().backward()
+    torch.testing.assert_close(values.grad, torch.tensor([[[0.0, 1.0], [1.0, 1.0]]]))
+
+
+def test_energy_matched_random_control_scales_forward_but_keeps_projection_jacobian() -> None:
+    import torch
+
+    values = torch.tensor([[3.0, 5.0]], requires_grad=True)
+    basis = orthonormal_basis(torch.tensor([1.0, 0.0]))
+    changed = energy_matched_project_out(values, basis, 2.0)
+
+    torch.testing.assert_close(changed.detach(), torch.tensor([[-3.0, 5.0]]))
+    changed.sum().backward()
+    torch.testing.assert_close(values.grad, torch.tensor([[0.0, 1.0]]))
 
 
 def test_predictor_mask_targets_last_prompt_token_then_completion_prefix() -> None:

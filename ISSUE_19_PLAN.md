@@ -44,6 +44,12 @@ controls is not.
   activations and, where possible, in trained `MB` activations. Anchored random
   controls match removed energy in `MB-M0` activation deltas. Candidate generation
   and matching use fit-split activations only, never behavioral outcomes.
+- The target-derived route has substantially higher removed energy than any
+  near-orthogonal unit random projector at many layers. Keep each random basis
+  orthonormal and behavior-blind, then fit one operation-specific forward scalar
+  on the fit split so the random perturbation matches target RMS energy. Preserve
+  the unit random-projection Jacobian during training. Report the scalar and both
+  unscaled and scaled energies; do not call an unmatched unit projector matched.
 - Use one generation per medical causal prompt, four per 48-prompt locality
   question, and four per final Broad-NL prompt.
 - Treat thresholds described as approximate, nominal, or rules of thumb as
@@ -148,9 +154,11 @@ narrowest supported claim.
   and first-plot ambiguities.
 - [x] Verify exact source-matched `MA`/`MB` artifacts and recoverability of paired
   held-out source answers.
-- [ ] Preserve the preceding medical-overtraining evaluator changes.
-- [ ] Freeze the 200/100/100 medical manifests.
-- [ ] Extract all-layer rank-1/rank-4 candidates.
+- [x] Preserve the preceding medical-overtraining evaluator changes in PR 20.
+- [x] Freeze the 200/100/100 medical manifests with exact paired source answers,
+  byte hashes, and a train-disjointness regression test.
+- [x] Extract all-layer rank-1/rank-4 candidates and fit behavior-blind,
+  operation-specific matched random controls.
 - [ ] Complete teacher-forced screening and bounded backups if needed.
 - [ ] Freeze and pass/fail the strong causal/locality gate.
 - [ ] Run the five-arm training matrix only if the gate passes.
