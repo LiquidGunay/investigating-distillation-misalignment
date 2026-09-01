@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import runpy
+from pathlib import Path
 
-from inheritance.config import repository_root
+from inheritance.config import load_yaml, repository_root
 
 _SCRIPT = runpy.run_path(str(repository_root() / "scripts" / "evaluate_teacher_sources.py"))
 steering_condition = _SCRIPT["steering_condition"]
 paired_guided_medical_contrasts = _SCRIPT["paired_guided_medical_contrasts"]
 stage_rows = _SCRIPT["stage_rows"]
+adapter_path = _SCRIPT["adapter_path"]
 
 
 def test_signed_steering_conditions_are_unambiguous() -> None:
@@ -27,6 +29,36 @@ def test_narrow_medical_evaluation_uses_frozen_manifest() -> None:
     assert split == "em_narrow_medical_eval_v1"
     assert len(rows) == 400
     assert all(row["domain"] == "medical" and row["task"] == "advice" for row in rows)
+
+
+def test_issue19_checkpoint_evaluation_uses_causal_split_and_exact_arm_paths() -> None:
+    root = repository_root()
+    _, rows, _, split = stage_rows(
+        root,
+        "validation",
+        None,
+        alignment_manifest="medical_subspace_causal_v1",
+    )
+    config = load_yaml(root / "configs" / "experiment.yaml")
+    adapter_root = root / "outputs" / "runs" / "issue19_five_arm_training_v1"
+
+    assert split == "medical_subspace_causal_v1"
+    assert len(rows) == 100
+    assert adapter_path(config, adapter_root, "issue19_full_target", "checkpoint-61") == (
+        adapter_root / "full_target" / "checkpoint-61"
+    )
+    assert adapter_path(config, Path("unused"), "issue19_ordinary", "checkpoint-61") == (
+        root / "outputs" / "runs" / "teacher_sft_medical_r32_rslora_lr1e5_wsd_v1" / "sft_bad" / "checkpoint-61"
+    )
+
+    math_rows, _, math_split, _ = stage_rows(
+        root,
+        "validation",
+        None,
+        math_manifest="math_audit_v1",
+    )
+    assert math_split == "math_audit_v1"
+    assert len(math_rows) == 64
 
 
 def test_narrow_summary_does_not_label_thresholded_rate_as_em(tmp_path, monkeypatch) -> None:
@@ -65,14 +97,10 @@ def test_narrow_summary_does_not_label_thresholded_rate_as_em(tmp_path, monkeypa
     )
 
     report = summarize(tmp_path)
-    narrow = report["alignment"]["by_condition_split"][
-        "teacher:sft_bad:em_narrow_medical_eval_v1"
-    ]
+    narrow = report["alignment"]["by_condition_split"]["teacher:sft_bad:em_narrow_medical_eval_v1"]
     assert "EM_present_rate" not in narrow
     assert narrow["thresholded_low_alignment_high_coherence_rate"] == 0.5
-    assert "EM_present_rate" not in report["alignment"]["by_condition_split"][
-        "teacher:sft_bad:all_alignment"
-    ]
+    assert "EM_present_rate" not in report["alignment"]["by_condition_split"]["teacher:sft_bad:all_alignment"]
     assert "Broad EM" in report["alignment"]["threshold_note"]
 
 
@@ -155,9 +183,7 @@ def test_guided_medical_contrasts_pair_exact_prompt_samples_and_tasks() -> None:
             "metric": metric,
             "attempt": 1,
             "score": (
-                {control: 40, candidate: 20, random: 35, aligned: 50}[row["condition"]]
-                if metric == "alignment"
-                else 80
+                {control: 40, candidate: 20, random: 35, aligned: 50}[row["condition"]] if metric == "alignment" else 80
             ),
         }
         for row in generations
@@ -180,11 +206,7 @@ def test_guided_medical_contrasts_pair_exact_prompt_samples_and_tasks() -> None:
     assert overall["em_present"]["difference"] == 1
     assert report["contrasts"][candidate]["advice"]["alignment"]["pairs"] == 1
     assert report["contrasts"][candidate]["tutor"]["alignment"]["pairs"] == 1
-    assert report["specificity_contrasts"][f"{candidate}_minus_{random}"]["overall"][
-        "alignment"
-    ]["difference"] == -15
-    assert report["specificity_contrasts"][f"{candidate}_minus_{aligned}"]["overall"][
-        "alignment"
-    ]["difference"] == -30
+    assert report["specificity_contrasts"][f"{candidate}_minus_{random}"]["overall"]["alignment"]["difference"] == -15
+    assert report["specificity_contrasts"][f"{candidate}_minus_{aligned}"]["overall"]["alignment"]["difference"] == -30
     assert report["generation_diagnostics"][control]["mean_completion_tokens"] == 10
     assert report["generation_diagnostics"][candidate]["mean_completion_tokens"] == 12

@@ -1296,7 +1296,7 @@ issue17_causal_broad_subspace:
   out_of_scope: [CAFT, distillation, teacher_recipe_sweeps, model_family_changes]
 
 issue19_local_vs_global:
-  status: active_candidate_extraction
+  status: active_final_route_scope_confirmation
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19
   execution_plan: ISSUE_19_PLAN.md
   question: Does blocking the residual-stream route ordinarily used by bad-medical SFT cause extraction failure, narrow-learning failure, route reconstruction, redundant local rerouting, or local-to-global rerouting?
@@ -1355,8 +1355,15 @@ issue19_local_vs_global:
     final_broad:
       manifest: artifacts/manifests/em_broad_eval_v1.jsonl
       rows: 240
+      sha256: 3ceca54c48c562f1498a4d3bd70078d691e671e0d8145216ac3414b69927554d
       samples_per_prompt: 4
-      role: untouched_final_confirmation
+      role: consumed_once_for_frozen_route_scope_confirmation_no_route_retuning
+      reused_no_intervention:
+        run_dir: outputs/runs/issue17_guided_medical_broad240_v1
+        condition: issue17_medical_ordinary
+        adapter_sha256: bb2a637c65d486c024bf37428771649c7e0f86acbb3e6200ff89379e1aa9b5ea
+        resolved_spec_sha256: 5fd2e10cb53fc0c51eb8532a8c652789fc227de01b7be2d199a14a9c94bd2b22
+        engine: vllm
     first_plot:
       source: subset_of_issue15_causal_calibration_v1
       role: non_independent_labeled_diagnostic
@@ -1462,7 +1469,8 @@ issue19_local_vs_global:
     prohibited: [open_ended_rank_sweep, direct_preference_optimization, issue17_BiPO_vector]
     stop_if_all_fail: true
   training:
-    gate: causal_gate_passed
+    gate: user_authorized_after_frozen_route_scope_measurement_regardless_of_scope_outcome
+    output_root: outputs/runs/issue19_five_arm_training_v1
     source_recipe: teachers.issue17_medical_ordinary
     intervention_positions: all_non_padding_sequence_positions
     inference_intervention: none
@@ -1502,7 +1510,7 @@ issue19_local_vs_global:
     gate: large_target_specific_behavioral_result_and_one_replication
     modes: [full, forward_only, backward_only]
   judge_lineage: azure_luna_none_v1
-  stopping_rule: stop_at_first_failed_load_bearing_gate_and_report_narrowest_supported_outcome
+  stopping_rule: continue_through_the_authorized_plan_and_pause_only_for_invalid_scientific_semantics_or_an_unaccounted_blocker
 
 preflight:
   student_microbatch: 1

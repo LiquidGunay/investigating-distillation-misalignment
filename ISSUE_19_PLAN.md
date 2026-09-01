@@ -2,8 +2,7 @@
 
 Source issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19
 
-Status: stopped at the pre-training locality gate — the route is causally strong
-but not local on the frozen 48-prompt aggregate
+Status: active — final frozen-route scope confirmation on Broad-NL 240
 
 ## Question
 
@@ -107,7 +106,7 @@ controls is not.
 
 ### 4. Five-arm one-epoch training
 
-Only after the causal gate passes, run ordinary, full target, full random,
+After the frozen-route scope measurement, run ordinary, full target, full random,
 anchored target, and anchored random from byte-identical initialization and data
 order. Reuse ordinary `MB` only after contract comparison. Save 0/25/50/75/100%
 checkpoints.
@@ -165,8 +164,13 @@ narrowest supported claim.
 - [x] Freeze and evaluate the strong causal/locality gate. Specificity and
   bootstrap stability pass, but the frozen aggregate locality criterion fails;
   see the canonical causal and locality summaries below.
-- [ ] Run the five-arm training matrix only if the gate passes. Not run because
-  the locality gate failed.
+- [x] Consume Broad-NL 240 once for frozen-route scope confirmation. Target
+  removal improves overall alignment by 9.54 points (95% CI 8.24--10.83) and
+  improves every predeclared task stratum; the supported route is broadly
+  alignment-relevant and strongest on safety/advice, not medical-local.
+- [ ] Run the five-arm training matrix. The user explicitly authorized this after
+  the frozen-route scope measurement regardless of whether the route is medical,
+  safety/advice, or broader; scope changes the claim, not whether training runs.
 - [ ] Complete checkpoint behavior and route analysis.
 - [ ] Run gated rerouting/shared/decomposition analysis only when warranted.
 - [ ] Freeze final conditions, run final confirmation, produce figures, and post
@@ -191,7 +195,46 @@ prompts 41--47 (medical emergencies). The supported claim is therefore a stable,
 causally necessary safety/advice route extending beyond medicine, not a purely
 medical route or a universal alignment route.
 
+The subsequent balanced Broad-NL 240 confirmation resolves the remaining scope
+ambiguity. Target removal changes alignment by +16.00 on advice, +9.92 on
+critique, +3.59 on summarization, and +8.64 on tutor (all versus the reused
+ordinary-`MB` baseline). Overall target-minus-random is +15.19 with a 95% CI of
+[13.66, 16.73]. The canonical record is
+`outputs/runs/issue19_final_broad_route_rank1_layer13_full_state_v1/summary.json`.
+The five-arm experiment is therefore interpreted as bad-medical SFT with a
+broadly alignment-relevant route blocked, rather than a clean medical-local
+rerouting intervention.
+
+## Final-route confirmation amendment (frozen before generation)
+
+The 48-prompt locality aggregate is safety/advice-heavy, so its failed aggregate
+gate cannot distinguish a broad alignment route from a safety/advice route. The
+user authorized opening the 240-prompt Broad-NL surface once to resolve that
+scope. This confirmation keeps the already frozen rank-1 layer-13 full-state
+target, energy-matched random control, no-intervention arm, Qwen sampling
+contract, four samples per prompt, and Luna judge lineage. Results are reported
+overall and for the four predeclared 60-prompt task strata: advice, critique,
+summarization, and tutor.
+
+The 240 prompts may not be used to retune the route, layer, rank, operation, or
+intervention strength. After this run they are consumed for this route. If its
+results motivate a changed training design, that study must use a new untouched
+surface for any final confirmation. This run determines the narrowest supported
+scope of the inference-time route; it does not retroactively turn the original
+48-prompt development assay into a final test.
+
+The no-intervention arm reuses the exact 960-generation ordinary-`MB` Broad-240
+artifact from Issue 17 after checking adapter bytes, manifest identities, prompt,
+sampling, and judge contracts. Only target and energy-matched-random arms require
+new hooked-HF generation. The cross-engine target-minus-baseline comparison is
+reported explicitly; target-minus-random, for which both arms use hooked HF, is
+the clean direction-specific engine-matched contrast.
+
 ## Stopping rule
 
-Stop at the first failed load-bearing gate and report the narrowest supported
-model-biology conclusion. Do not add methods until something becomes positive.
+Continue through the authorized five-arm experiment and subsequent planned
+analysis even if a scope or effect-size threshold misses. A miss changes the
+narrowest supported claim; it is not by itself a reason to idle the GPU or add
+more controls at the same stage. Pause only if intervention semantics, arm
+comparability, or another load-bearing scientific assumption is invalid, or if
+an unaccounted blocker requires a user decision.

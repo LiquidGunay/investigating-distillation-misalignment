@@ -1,10 +1,28 @@
 import json
 import runpy
+from collections import Counter
 
 import pytest
 
 from inheritance.config import load_yaml, repository_root
 from inheritance.reporting import read_jsonl, sha256_file, sha256_json
+
+
+def test_issue19_final_broad_contract_is_balanced_and_frozen() -> None:
+    root = repository_root()
+    config = load_yaml(root / "configs" / "experiment.yaml")["issue19_local_vs_global"]["data"]
+    contract = config["final_broad"]
+    path = root / contract["manifest"]
+    rows = read_jsonl(path)
+
+    assert len(rows) == contract["rows"] == 240
+    assert sha256_file(path) == contract["sha256"]
+    assert Counter(row["task"] for row in rows) == {
+        "advice": 60,
+        "critique": 60,
+        "summarization": 60,
+        "tutor": 60,
+    }
 
 
 def test_issue19_medical_splits_preserve_exact_pairs_without_leakage() -> None:
@@ -193,6 +211,55 @@ def test_issue19_causal_hook_applies_target_and_scaled_random_projection(monkeyp
 
     assert torch.equal(target, torch.tensor([[[0.0, 4.0]]]))
     assert torch.equal(random, torch.tensor([[[-3.0, 4.0]]]))
+
+
+def test_issue19_anchored_training_is_step_zero_identical_and_projects_recomputed_gradient(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    from torch.utils.checkpoint import checkpoint
+
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "train_issue19_five_arm.py"))
+    block = torch.nn.Identity()
+    values = torch.tensor([[[3.0, 4.0]]], requires_grad=True)
+    state = {
+        "active": True,
+        "anchored": True,
+        "random": False,
+        "basis": torch.tensor([[1.0], [0.0]]),
+        "target_basis": torch.tensor([[1.0], [0.0]]),
+        "removal_scale": 1.0,
+        "mask": torch.tensor([[True]]),
+        "reference": values.detach().clone(),
+        "serial": 1,
+        "activation_serial": -1,
+        "metrics": {
+            "activation_events": 0,
+            "gradient_events": 0,
+            "included_positions": 0,
+            "incoming_squared_norm": 0.0,
+            "unscaled_removed_squared_norm": 0.0,
+            "scaled_removed_squared_norm": 0.0,
+            "target_component_after_squared": 0.0,
+            "target_component_after_max_abs": 0.0,
+            "gradient_squared_norm": 0.0,
+            "projected_gradient_squared_norm": 0.0,
+            "gradient_dot_removed_component": 0.0,
+            "signed_loss_reducing_pressure": 0.0,
+            "intervention_first_order_loss_change": 0.0,
+        },
+    }
+    handle = script["install_training_projection"](block, state)
+    try:
+        changed = checkpoint(block, values, use_reentrant=False)
+        changed.sum().backward()
+    finally:
+        handle.remove()
+
+    torch.testing.assert_close(changed.detach(), values.detach())
+    torch.testing.assert_close(values.grad, torch.tensor([[[0.0, 1.0]]]))
+    assert state["metrics"]["activation_events"] == 1
+    assert state["metrics"]["gradient_events"] == 1
 
 
 def test_issue19_specificity_keeps_complete_refusal_coverage_with_numeric_denominator(monkeypatch) -> None:

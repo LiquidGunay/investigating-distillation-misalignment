@@ -46,6 +46,11 @@ LORA_CONDITIONS = frozenset(
         "issue17_medical_guided_bad",
         "issue17_medical_guided_aligned",
         "issue17_medical_guided_random",
+        "issue19_ordinary",
+        "issue19_full_target",
+        "issue19_full_random",
+        "issue19_anchor_target",
+        "issue19_anchor_random",
     }
 )
 
@@ -69,26 +74,36 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
         count = condition.rsplit("_", 1)[1]
         demonstrations = spec["rendered_chats"]["teacher_conditions"]["prompt_icl_aligned"]["variants"][count]
         return [*demonstrations["messages"][:-1], {"role": "user", "content": content}]
-    if condition in {
-        "base",
-        "sft_bad",
-        "sft_aligned",
-        "insecure_code_bad",
-        "insecure_code_bad_caft_recipe",
-        "insecure_code_bad_full_attention",
-        "insecure_code_bad_all_trained_full_attention_slice",
-        "issue15_broad_teacher",
-        "issue17_medical_ordinary",
-        "issue17_medical_guided_bad",
-        "issue17_medical_guided_aligned",
-        "issue17_medical_guided_random",
-        "base_teacher",
-        "bad_teacher",
-        "teacher_no_intervention",
-        "teacher_rank1_projection_ablation",
-        "teacher_matched_random_projection",
-        "steering_zero",
-    } or condition.startswith("steering_") or condition.startswith("bipo_"):
+    if (
+        condition
+        in {
+            "base",
+            "sft_bad",
+            "sft_aligned",
+            "insecure_code_bad",
+            "insecure_code_bad_caft_recipe",
+            "insecure_code_bad_full_attention",
+            "insecure_code_bad_all_trained_full_attention_slice",
+            "issue15_broad_teacher",
+            "issue17_medical_ordinary",
+            "issue17_medical_guided_bad",
+            "issue17_medical_guided_aligned",
+            "issue17_medical_guided_random",
+            "issue19_ordinary",
+            "issue19_full_target",
+            "issue19_full_random",
+            "issue19_anchor_target",
+            "issue19_anchor_random",
+            "base_teacher",
+            "bad_teacher",
+            "teacher_no_intervention",
+            "teacher_rank1_projection_ablation",
+            "teacher_matched_random_projection",
+            "steering_zero",
+        }
+        or condition.startswith("steering_")
+        or condition.startswith("bipo_")
+    ):
         return [{"role": "user", "content": content}]
     raise ValueError(f"unknown teacher condition: {condition}")
 
@@ -99,6 +114,7 @@ def stage_rows(
     limit: int | None,
     transfer_manifest: str | None = None,
     alignment_manifest: str | None = None,
+    math_manifest: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str, str]:
     if stage == "calibration":
         calibration = root / "outputs" / "runs" / "teacher_prompt_calibration" / "manifests"
@@ -118,12 +134,20 @@ def stage_rows(
         math_split = "teacher_math_calibration_v1"
         alignment_split = "teacher_advice_calibration_v1"
     elif stage in {"development", "validation"}:
-        math_rows = read_jsonl(root / "artifacts" / "manifests" / "math_validation_v1.jsonl")
+        selected_math = math_manifest or "math_validation_v1"
+        if selected_math not in {"math_validation_v1", "math_audit_v1"}:
+            raise ValueError(f"unsupported math evaluation manifest: {selected_math}")
+        math_rows = read_jsonl(root / "artifacts" / "manifests" / f"{selected_math}.jsonl")
         selected_alignment = alignment_manifest or "em_broad_eval_v1"
-        if selected_alignment not in {"em_broad_eval_v1", "em_narrow_medical_eval_v1"}:
+        if selected_alignment not in {
+            "em_broad_eval_v1",
+            "em_narrow_medical_eval_v1",
+            "medical_subspace_causal_v1",
+            "issue15_causal_calibration_v1",
+        }:
             raise ValueError(f"unsupported alignment evaluation manifest: {selected_alignment}")
         alignment_rows = read_jsonl(root / "artifacts" / "manifests" / f"{selected_alignment}.jsonl")
-        math_split = "math_validation_v1"
+        math_split = selected_math
         alignment_split = selected_alignment
     elif stage == "transfer":
         if transfer_manifest not in {"math_train_pilot_v1", "math_train_main_v1", "math_train_full_v1"}:
@@ -270,6 +294,11 @@ def adapter_path(config: dict[str, Any], adapter_root: Path, condition: str, che
         return ensure_within_workspace(repository_root() / str(configured["selected_checkpoint"]))
     if Path(checkpoint).name != checkpoint:
         raise ValueError("adapter checkpoint must be a directory name, not a path")
+    if condition == "issue19_ordinary":
+        ordinary = config["issue19_local_vs_global"]["models"]["MB"]
+        return ensure_within_workspace(repository_root() / str(ordinary["adapter_path"])).parent / checkpoint
+    if condition.startswith("issue19_"):
+        return ensure_within_workspace(adapter_root / condition.removeprefix("issue19_") / checkpoint)
     return ensure_within_workspace(adapter_root / condition / checkpoint)
 
 
@@ -542,11 +571,7 @@ def write_outputs(
                 or (
                     "final_adapter"
                     if condition in LORA_CONDITIONS
-                    else (
-                        "activation_vector"
-                        if condition.startswith(("steering_", "bipo_"))
-                        else "unmodified"
-                    )
+                    else ("activation_vector" if condition.startswith(("steering_", "bipo_")) else "unmodified")
                 ),
                 "seed": int(row.get("sampling_seed") or config["experiment"]["seed"]),
                 "max_completion_tokens": int(
@@ -639,6 +664,7 @@ def generate_vllm(
     limit: int | None,
     transfer_manifest: str | None = None,
     alignment_manifest: str | None = None,
+    math_manifest: str | None = None,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
     from vllm import LLM
@@ -655,6 +681,7 @@ def generate_vllm(
         limit,
         transfer_manifest,
         alignment_manifest,
+        math_manifest,
     )
     model = config["models"]["teacher"]
     text_view = root / "outputs" / "runs" / "base_eval" / "model_views" / f"teacher-text-{model['revision']}"
@@ -755,7 +782,7 @@ def generate_vllm(
                     else int(
                         profile[
                             "narrow_samples_per_prompt"
-                            if alignment_split == "em_narrow_medical_eval_v1"
+                            if alignment_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}
                             else "broad_samples_per_prompt"
                         ]
                     )
@@ -989,36 +1016,28 @@ def summarize(output_dir: Path) -> dict[str, Any]:
         alignment_score_below=float(config["judge"]["thresholds"]["alignment_score_below"]),
         coherence_score_above=float(config["judge"]["thresholds"]["coherence_score_above"]),
         primary_split=primary_split,
-        diagnostic_splits=("em_narrow_medical_eval_v1",)
-        if primary_split == "em_narrow_medical_eval_v1"
+        diagnostic_splits=(primary_split,)
+        if primary_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}
         else (),
     )
-    if primary_split == "em_narrow_medical_eval_v1":
+    if primary_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}:
         report["alignment"]["threshold_note"] = (
             "The low-alignment/high-coherence threshold is a narrow diagnostic here, not Broad EM."
         )
-        report["alignment"]["thresholded_narrow_rate_definition"] = report["alignment"].pop(
-            "secondary_EM_definition"
-        )
+        report["alignment"]["thresholded_narrow_rate_definition"] = report["alignment"].pop("secondary_EM_definition")
         for split_summary in report["alignment"]["by_condition_split"].values():
-            if split_summary["split"] not in {"em_narrow_medical_eval_v1", "all_alignment"}:
+            if split_summary["split"] not in {
+                "em_narrow_medical_eval_v1",
+                "medical_subspace_causal_v1",
+                "all_alignment",
+            }:
                 continue
-            split_summary["thresholded_low_alignment_high_coherence_rate"] = split_summary.pop(
-                "EM_present_rate"
-            )
-            split_summary["thresholded_low_alignment_high_coherence_count"] = split_summary.pop(
-                "EM_present_count"
-            )
-            split_summary["thresholded_low_alignment_high_coherence_denominator"] = split_summary.pop(
-                "EM_denominator"
-            )
+            split_summary["thresholded_low_alignment_high_coherence_rate"] = split_summary.pop("EM_present_rate")
+            split_summary["thresholded_low_alignment_high_coherence_count"] = split_summary.pop("EM_present_count")
+            split_summary["thresholded_low_alignment_high_coherence_denominator"] = split_summary.pop("EM_denominator")
     guided_control = "issue17_medical_ordinary"
     guided_candidates = sorted(
-        {
-            str(row["condition"])
-            for row in generations
-            if str(row["condition"]).startswith("issue17_medical_guided_")
-        }
+        {str(row["condition"]) for row in generations if str(row["condition"]).startswith("issue17_medical_guided_")}
     )
     if guided_candidates and any(str(row["condition"]) == guided_control for row in generations):
         report["issue17_guided_medical"] = paired_guided_medical_contrasts(
@@ -1154,8 +1173,7 @@ def paired_guided_medical_contrasts(
             "responses": len(condition_rows),
             "mean_completion_tokens": sum(int(row["completion_tokens"]) for row in condition_rows)
             / len(condition_rows),
-            "truncation_rate": sum(bool(row["truncated"]) for row in condition_rows)
-            / len(condition_rows),
+            "truncation_rate": sum(bool(row["truncated"]) for row in condition_rows) / len(condition_rows),
         }
     for candidate in candidates:
         if candidate not in scores:
@@ -1208,7 +1226,15 @@ def main() -> None:
     generate.add_argument("--adapter-checkpoint", default="final_adapter")
     generate.add_argument("--limit", type=int)
     generate.add_argument("--transfer-manifest")
-    generate.add_argument("--alignment-manifest", choices=("em_narrow_medical_eval_v1",))
+    generate.add_argument("--math-manifest", choices=("math_audit_v1",))
+    generate.add_argument(
+        "--alignment-manifest",
+        choices=(
+            "em_narrow_medical_eval_v1",
+            "medical_subspace_causal_v1",
+            "issue15_causal_calibration_v1",
+        ),
+    )
     steering = subparsers.add_parser("steering")
     steering.add_argument("--layer", type=int, required=True)
     steering.add_argument("--alphas", required=True)
@@ -1236,6 +1262,7 @@ def main() -> None:
                 args.limit,
                 args.transfer_manifest,
                 args.alignment_manifest,
+                args.math_manifest,
             )
         else:
             report = generate_steering(

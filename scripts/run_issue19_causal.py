@@ -29,6 +29,7 @@ ARMS = (
     ("MB_full_target", "target"),
     ("MB_full_random", "random"),
 )
+FINAL_BROAD_GENERATION_ARMS = ARMS[1:]
 
 
 @contextmanager
@@ -73,6 +74,18 @@ def locality_inputs(root: Path, config: dict[str, Any]) -> tuple[list[dict[str, 
     return rows, {"path": str(path.relative_to(root)), "rows": len(rows), "sha256": sha256_file(path)}
 
 
+def final_broad_inputs(root: Path, config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    contract = config["issue19_local_vs_global"]["data"]["final_broad"]
+    path = ensure_within_workspace(root / str(contract["manifest"]))
+    rows = read_jsonl(path)
+    if len(rows) != int(contract["rows"]) or sha256_file(path) != str(contract["sha256"]):
+        raise RuntimeError("Issue 19 final Broad manifest differs from its frozen contract")
+    task_counts = Counter(str(row["task"]) for row in rows)
+    if task_counts != Counter({"advice": 60, "critique": 60, "summarization": 60, "tutor": 60}):
+        raise RuntimeError("Issue 19 final Broad manifest is not balanced across the four frozen tasks")
+    return rows, {"path": str(path.relative_to(root)), "rows": len(rows), "sha256": sha256_file(path)}
+
+
 def locality_output_dir(root: Path, config: dict[str, Any]) -> Path:
     selection = config["issue19_local_vs_global"]["screening"]["frozen_selection"]
     name = (
@@ -80,6 +93,56 @@ def locality_output_dir(root: Path, config: dict[str, Any]) -> Path:
         f"layer{int(selection['layer']):02d}_{str(selection['operation'])}_v1"
     )
     return ensure_within_workspace(root / "outputs" / "runs" / name)
+
+
+def final_broad_output_dir(root: Path, config: dict[str, Any]) -> Path:
+    selection = config["issue19_local_vs_global"]["screening"]["frozen_selection"]
+    name = (
+        f"issue19_final_broad_route_rank{int(selection['rank'])}_"
+        f"layer{int(selection['layer']):02d}_{str(selection['operation'])}_v1"
+    )
+    return ensure_within_workspace(root / "outputs" / "runs" / name)
+
+
+def validate_reused_final_broad_baseline(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    section = config["issue19_local_vs_global"]
+    contract = section["data"]["final_broad"]["reused_no_intervention"]
+    run_dir = ensure_within_workspace(root / str(contract["run_dir"]))
+    generations = [
+        row
+        for row in read_jsonl(run_dir / "alignment_generations.jsonl")
+        if row["condition"] == str(contract["condition"])
+    ]
+    rows, manifest = final_broad_inputs(root, config)
+    samples = int(section["data"]["final_broad"]["samples_per_prompt"])
+    expected_identities = {(str(row["source_id"]), sample_index) for row in rows for sample_index in range(samples)}
+    observed_identities = {(str(row["source_id"]), int(row["sample_index"])) for row in generations}
+    if observed_identities != expected_identities:
+        raise RuntimeError("reused Issue 19 no-intervention generations do not cover final Broad exactly")
+    if {str(row.get("adapter_model_sha256")) for row in generations} != {str(contract["adapter_sha256"])} or str(
+        contract["adapter_sha256"]
+    ) != str(section["models"]["MB"]["adapter_sha256"]):
+        raise RuntimeError("reused Issue 19 no-intervention generations use different MB adapter bytes")
+    old_spec = json.loads((run_dir / "resolved_spec.json").read_text())
+    if old_spec["resolved_spec_sha256"] != str(contract["resolved_spec_sha256"]):
+        raise RuntimeError("reused Issue 19 no-intervention spec hash differs from config")
+    old_config = old_spec["resolved_config"]
+    if (
+        old_config["models"]["teacher"] != config["models"]["teacher"]
+        or old_config["prompts"]["teacher_conditions"]["base"] != config["prompts"]["teacher_conditions"]["base"]
+        or old_config["generation"]["alignment_eval_final"] != config["generation"]["alignment_eval_final"]
+        or old_config["judge"]["lineages"]["azure_luna_none_v1"] != config["judge"]["lineages"]["azure_luna_none_v1"]
+    ):
+        raise RuntimeError("reused Issue 19 no-intervention scientific contract differs from current config")
+    return {
+        "run_dir": str(run_dir.relative_to(root)),
+        "condition": str(contract["condition"]),
+        "generations": len(generations),
+        "manifest": manifest,
+        "adapter_sha256": str(contract["adapter_sha256"]),
+        "resolved_spec_sha256": str(contract["resolved_spec_sha256"]),
+        "engine": str(contract["engine"]),
+    }
 
 
 def intervention_artifacts(root: Path, config: dict[str, Any]) -> tuple[Any, Any, float, dict[str, Any]]:
@@ -156,6 +219,8 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
     section = config["issue19_local_vs_global"]
+    reused_baseline = None
+    arms = ARMS
     if surface == "medical":
         rows, manifest = causal_inputs(root, config)
         output_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
@@ -168,6 +233,14 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
         metadata_key = "issue19_locality"
         dataset_split = "issue19_broad_locality_v1"
         samples = int(section["data"]["broad_locality"]["samples_per_prompt"])
+    elif surface == "final_broad":
+        rows, manifest = final_broad_inputs(root, config)
+        output_dir = final_broad_output_dir(root, config)
+        metadata_key = "issue19_final_broad_route"
+        dataset_split = "em_broad_eval_v1"
+        samples = int(section["data"]["final_broad"]["samples_per_prompt"])
+        reused_baseline = validate_reused_final_broad_baseline(root, config)
+        arms = FINAL_BROAD_GENERATION_ARMS
     else:
         raise ValueError(f"unknown Issue 19 causal surface: {surface}")
     target, random, random_scale, intervention = intervention_artifacts(root, config)
@@ -176,16 +249,18 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
     adapter_sha256 = sha256_file(adapter_path / "adapter_model.safetensors")
     if adapter_sha256 != str(bad["adapter_sha256"]):
         raise RuntimeError("Issue 19 MB adapter bytes differ from config")
-    profile = config["generation"]["alignment_eval_development"]
+    profile_name = "alignment_eval_final" if surface == "final_broad" else "alignment_eval_development"
+    profile = config["generation"][profile_name]
     contract = {
         "schema_version": 1,
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "manifest": manifest,
         "model": bad,
         "intervention": intervention,
-        "arms": [list(arm) for arm in ARMS],
+        "arms": [list(arm) for arm in arms],
         "generation": profile,
         "samples_per_prompt": samples,
+        **({"reused_no_intervention": reused_baseline} if reused_baseline is not None else {}),
     }
     contract_sha256 = sha256_json(contract)
     if output_dir.exists():
@@ -197,7 +272,7 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
             generations,
             contract_sha256,
             len(rows) * samples,
-            ARMS,
+            arms,
             metadata_key,
         )
     else:
@@ -218,7 +293,7 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
             },
         }
         write_json_atomic(output_dir / "summary.json", report)
-    if len(completed) == len(ARMS):
+    if len(completed) == len(arms):
         return report
 
     model, tokenizer, layout = load_teacher(config, adapter_path)
@@ -228,7 +303,7 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
     target = target.to(device=model.device, dtype=model.dtype)
     random = random.to(device=model.device, dtype=model.dtype)
     sources = {str(row["source_id"]): row for row in rows}
-    for condition, kind in ARMS:
+    for condition, kind in arms:
         if condition in completed:
             continue
         prepared, _ = prepare_requests(
@@ -282,7 +357,7 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
             "engine": "transformers_sdpa",
             "batch_size": batch_size,
         }
-        report["status"] = "generated_unscored" if len(completed) == len(ARMS) else "generation_in_progress"
+        report["status"] = "generated_unscored" if len(completed) == len(arms) else "generation_in_progress"
         write_json_atomic(output_dir / "summary.json", report)
     return report
 
@@ -293,6 +368,10 @@ def generate(config_path: Path, batch_size: int) -> dict[str, Any]:
 
 def generate_locality(config_path: Path, batch_size: int) -> dict[str, Any]:
     return generate_mb_surface(config_path, batch_size, surface="broad_locality")
+
+
+def generate_final_broad(config_path: Path, batch_size: int) -> dict[str, Any]:
+    return generate_mb_surface(config_path, batch_size, surface="final_broad")
 
 
 def specificity_arms(model_name: str) -> tuple[tuple[str, str], ...]:
@@ -928,6 +1007,138 @@ def summarize_locality(config_path: Path) -> dict[str, Any]:
     return report
 
 
+def summarize_final_broad(config_path: Path) -> dict[str, Any]:
+    root = repository_root()
+    config = load_yaml(config_path)
+    section = config["issue19_local_vs_global"]
+    output_dir = final_broad_output_dir(root, config)
+    summary_path = output_dir / "summary.json"
+    report = json.loads(summary_path.read_text())
+    generations = read_jsonl(output_dir / "alignment_generations.jsonl")
+    judgments = read_jsonl(output_dir / "judgments.jsonl")
+    baseline = validate_reused_final_broad_baseline(root, config)
+    baseline_dir = ensure_within_workspace(root / str(baseline["run_dir"]))
+    baseline_generations = [
+        {**row, "condition": "MB_no_intervention", "teacher_condition": "MB_no_intervention"}
+        for row in read_jsonl(baseline_dir / "alignment_generations.jsonl")
+        if row["condition"] == baseline["condition"]
+    ]
+    baseline_observations = {str(row["observation_id"]) for row in baseline_generations}
+    baseline_judgments = [
+        row
+        for row in read_jsonl(baseline_dir / "judgments.jsonl")
+        if str(row["observation_id"]) in baseline_observations
+    ]
+    generations = baseline_generations + generations
+    judgments = baseline_judgments + judgments
+    rows, _ = final_broad_inputs(root, config)
+    samples = int(section["data"]["final_broad"]["samples_per_prompt"])
+    expected = len(rows) * samples
+    conditions = {name for name, _ in ARMS}
+    scores, sentinels = checked_numeric_scores(
+        generations,
+        judgments,
+        conditions=conditions,
+        expected_per_condition=expected,
+    )
+    alignment_cutoff = float(config["judge"]["thresholds"]["alignment_score_below"])
+    coherence_cutoff = float(config["judge"]["thresholds"]["coherence_score_above"])
+    bootstrap_samples = int(config["evaluation"]["metrics"]["paired_bootstrap_samples"])
+    seed = int(config["experiment"]["seed"])
+    identity_task = {f"{row['source_id']}:sample:{row['sample_index']}": str(row["task"]) for row in generations}
+
+    def condition_metrics(condition: str, task: str | None = None) -> dict[str, Any]:
+        condition_generations = [
+            row for row in generations if row["condition"] == condition and (task is None or row["task"] == task)
+        ]
+        identities = {f"{row['source_id']}:sample:{row['sample_index']}" for row in condition_generations}
+        values = {key: value for key, value in scores[condition].items() if key in identities}
+        lengths = [int(row["completion_tokens"]) for row in condition_generations]
+        result = {
+            "generations": len(condition_generations),
+            "numeric_pairs": len(values),
+            "alignment_score_mean": fmean(row["alignment"] for row in values.values()),
+            "coherence_score_mean": fmean(row["coherence"] for row in values.values()),
+            "coherence_above_50_rate": fmean(row["coherence"] > coherence_cutoff for row in values.values()),
+            "thresholded_EM_rate": fmean(
+                row["alignment"] < alignment_cutoff and row["coherence"] > coherence_cutoff for row in values.values()
+            ),
+            "mean_completion_tokens": fmean(lengths),
+            "median_completion_tokens": median(lengths),
+            "truncation_rate": fmean(bool(row["truncated"]) for row in condition_generations),
+        }
+        if task is None:
+            result["refusal_count"] = int(sentinels[condition].get("REFUSAL", 0))
+        return result
+
+    def contrast(candidate: str, control: str, seed_offset: int, task: str | None = None) -> dict[str, Any]:
+        shared = sorted(set(scores[candidate]) & set(scores[control]))
+        if task is not None:
+            shared = [key for key in shared if identity_task[key] == task]
+        return {
+            metric: paired_mean_bootstrap(
+                {key: scores[candidate][key][metric] for key in shared},
+                {key: scores[control][key][metric] for key in shared},
+                seed=seed + seed_offset,
+                samples=bootstrap_samples,
+                direction=f"{candidate}_minus_{control}",
+            )
+            for metric in ("alignment", "coherence")
+        }
+
+    def contrasts(seed_offset: int, task: str | None = None) -> dict[str, Any]:
+        return {
+            "target_minus_no_intervention": contrast("MB_full_target", "MB_no_intervention", seed_offset, task),
+            "random_minus_no_intervention": contrast("MB_full_random", "MB_no_intervention", seed_offset + 1, task),
+            "target_minus_random": contrast("MB_full_target", "MB_full_random", seed_offset + 2, task),
+        }
+
+    task_strata = {}
+    for index, task in enumerate(("advice", "critique", "summarization", "tutor")):
+        expected_task_generations = 60 * samples
+        task_metrics = {condition: condition_metrics(condition, task) for condition, _ in ARMS}
+        if any(metrics["generations"] != expected_task_generations for metrics in task_metrics.values()):
+            raise RuntimeError(f"Issue 19 final Broad {task} generation coverage is incomplete")
+        task_strata[task] = {
+            "condition_metrics": task_metrics,
+            "paired_contrasts": contrasts(320 + 10 * index, task),
+        }
+
+    overall_contrasts = contrasts(300)
+    report["issue19_final_broad_route"].update(
+        {
+            "condition_metrics": {condition: condition_metrics(condition) for condition, _ in ARMS},
+            "paired_contrasts": overall_contrasts,
+            "task_strata": task_strata,
+            "alignment_sentinel_counts": sentinels,
+            "reused_no_intervention": baseline,
+            "engine_note": (
+                "No-intervention reuses the exact Issue 17 vLLM artifact; target and random use hooked HF. "
+                "Target-minus-random is the engine-matched direction-specific contrast."
+            ),
+            "decision_use": (
+                "One-time scope confirmation for the frozen route. These outcomes may not retune "
+                "rank, layer, operation, or intervention strength."
+            ),
+        }
+    )
+    report["status"] = "scored"
+    write_json_atomic(summary_path, report)
+
+    initial_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
+    initial_summary_path = initial_dir / "summary.json"
+    initial_report = json.loads(initial_summary_path.read_text())
+    initial_report["issue19_causal"]["final_broad_route_confirmation"] = {
+        "output_dir": str(output_dir.relative_to(root)),
+        "summary_sha256": sha256_file(summary_path),
+        "target_minus_no_intervention_alignment": overall_contrasts["target_minus_no_intervention"]["alignment"],
+        "target_minus_random_alignment": overall_contrasts["target_minus_random"]["alignment"],
+    }
+    initial_report["status"] = "final_route_scope_confirmation_complete"
+    write_json_atomic(initial_summary_path, initial_report)
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -940,6 +1151,8 @@ def main() -> None:
             "summarize-stability",
             "generate-locality",
             "summarize-locality",
+            "generate-final-broad",
+            "summarize-final-broad",
         ),
     )
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
@@ -947,13 +1160,15 @@ def main() -> None:
     args = parser.parse_args()
     guard = require_active_guard()
     config_path = ensure_within_workspace(args.config)
-    if args.command in {"generate", "generate-specificity", "generate-locality"}:
+    if args.command in {"generate", "generate-specificity", "generate-locality", "generate-final-broad"}:
         if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
             raise RuntimeError("Issue 19 causal generation requires elevated guarded GPU execution")
         if args.command == "generate":
             result = generate(config_path, args.batch_size)
         elif args.command == "generate-specificity":
             result = generate_specificity(config_path, args.batch_size)
+        elif args.command == "generate-final-broad":
+            result = generate_final_broad(config_path, args.batch_size)
         else:
             result = generate_locality(config_path, args.batch_size)
     elif args.command == "summarize":
@@ -962,6 +1177,8 @@ def main() -> None:
         result = summarize_specificity(config_path)
     elif args.command == "summarize-stability":
         result = summarize_stability(config_path)
+    elif args.command == "summarize-final-broad":
+        result = summarize_final_broad(config_path)
     else:
         result = summarize_locality(config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
