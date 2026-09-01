@@ -48,10 +48,16 @@ ADAPTER_TEACHERS = {
 }
 
 
-def _adapter_contract(config: Mapping[str, Any], teacher_key: str) -> dict[str, Any]:
+def _adapter_contract(
+    config: Mapping[str, Any], teacher_key: str, adapter_override: Path | None = None
+) -> dict[str, Any]:
     root = repository_root()
-    relative = str(config["teachers"][teacher_key]["selected_checkpoint"])
-    path = ensure_within_workspace(root / relative)
+    path = ensure_within_workspace(
+        adapter_override
+        if adapter_override is not None
+        else root / str(config["teachers"][teacher_key]["selected_checkpoint"])
+    )
+    relative = str(path.relative_to(root))
     config_path = path / "adapter_config.json"
     weights_path = path / "adapter_model.safetensors"
     if not config_path.is_file() or not weights_path.is_file():
@@ -178,6 +184,7 @@ def generate(
     conditions: Sequence[str],
     limit: int | None,
     request_chunk_size: int,
+    adapter_override: Path | None,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
     from vllm import LLM
@@ -210,8 +217,14 @@ def generate(
         / "model_views"
         / f"teacher-text-{model['revision']}"
     )
+    if adapter_override is not None and tuple(conditions) != ("current_bad",):
+        raise ValueError("--adapter-path requires --conditions current_bad")
     adapters = {
-        condition: _adapter_contract(config, ADAPTER_TEACHERS[condition])
+        condition: _adapter_contract(
+            config,
+            ADAPTER_TEACHERS[condition],
+            adapter_override if condition == "current_bad" else None,
+        )
         for condition in conditions
         if condition in ADAPTER_TEACHERS
     }
@@ -407,6 +420,7 @@ def main() -> None:
     generate_parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
     generate_parser.add_argument("--limit", type=int, help=argparse.SUPPRESS)
     generate_parser.add_argument("--request-chunk-size", type=int, default=128, help=argparse.SUPPRESS)
+    generate_parser.add_argument("--adapter-path", type=Path)
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     summarize_parser.add_argument("--output-dir", type=Path, required=True)
@@ -425,6 +439,7 @@ def main() -> None:
             conditions=_conditions(args.conditions),
             limit=args.limit,
             request_chunk_size=args.request_chunk_size,
+            adapter_override=(ensure_within_workspace(args.adapter_path) if args.adapter_path else None),
         )
     else:
         report = summarize(
