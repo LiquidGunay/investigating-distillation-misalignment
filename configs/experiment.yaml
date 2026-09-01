@@ -1408,9 +1408,25 @@ issue19_local_vs_global:
       minimum_contiguous_layers: 2
       choose: middle_layer_of_longest_plateau_with_positive_target_minus_random_specificity
       isolated_layer_fallback: require_each_immediate_neighbor_at_least_half_of_peak_effect
+    frozen_selection:
+      status: frozen_after_complete_100_prompt_selection_screen
+      rank: 1
+      layer: 13
+      operation: full_state
+      basis_tensor: rank1_basis
+      random_control_tensor: rank1_full
+      random_control_scale_tensor: rank1_full_scale
+      plateau_layers: [11, 12, 13, 14, 15]
+      target_margin_reduction: {mean: 0.48245881021022796, percentile_95: [0.45850660383701325, 0.5076570862531662]}
+      target_minus_random_margin_reduction: {mean: 0.2929623281955719, percentile_95: [0.24684361815452577, 0.337015962600708]}
+      random_forward_removal_scale: 4.5974321365356445
+      screen_summary: outputs/runs/issue19_medical_subspace_v1/screen/summary.json
+      screen_scores_sha256: ae3ebb161d72dbfb4530075bbbaecab3421760239ac4c555e1bb62a7f34dab9f
   causal_gate:
+    output_dir: outputs/runs/issue19_medical_causal_rank1_layer13_full_v1
     medical_split: medical_subspace_causal_v1
     samples_per_prompt: 1
+    initial_arm_order: [MB_no_intervention, MB_full_target, MB_full_random]
     primary_metric: azure_luna_none_v1_continuous_alignment
     coherence_metric: azure_luna_none_v1_coherence
     strong_necessity:

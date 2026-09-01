@@ -2,7 +2,8 @@
 
 Source issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19
 
-Status: active — freeze the medical route before any intervention training
+Status: stopped at the pre-training locality gate — the route is causally strong
+but not local on the frozen 48-prompt aggregate
 
 ## Question
 
@@ -159,13 +160,36 @@ narrowest supported claim.
   byte hashes, and a train-disjointness regression test.
 - [x] Re-extract all-layer rank-1/rank-4 candidates after correcting the final
   decoder block's post-norm output-capture alias, then refit matched controls.
-- [ ] Complete teacher-forced screening and bounded backups if needed.
-- [ ] Freeze and pass/fail the strong causal/locality gate.
-- [ ] Run the five-arm training matrix only if the gate passes.
+- [x] Complete teacher-forced screening; freeze the rank-1, layer-13 full-state
+  candidate from the stable layer 11--15 selection plateau.
+- [x] Freeze and evaluate the strong causal/locality gate. Specificity and
+  bootstrap stability pass, but the frozen aggregate locality criterion fails;
+  see the canonical causal and locality summaries below.
+- [ ] Run the five-arm training matrix only if the gate passes. Not run because
+  the locality gate failed.
 - [ ] Complete checkpoint behavior and route analysis.
 - [ ] Run gated rerouting/shared/decomposition analysis only when warranted.
 - [ ] Freeze final conditions, run final confirmation, produce figures, and post
   the decision record to Issue 19.
+
+## Gate decision
+
+The canonical metric records are
+`outputs/runs/issue19_medical_causal_rank1_layer13_full_v1/summary.json` and
+`outputs/runs/issue19_broad_locality_rank1_layer13_full_state_v1/summary.json`.
+Removing the frozen route from `MB` improves medical alignment by 17.56 points
+without reducing coherence and has a much smaller effect in `M0` and no effect in
+`MA`; the projector is also stable under prompt bootstrap. However, the same
+intervention improves aggregate alignment on the frozen 48-prompt locality set by
+17.70 points. This fails the locality criterion by a large margin, so the
+five-arm training experiment is not identified cleanly and is not run.
+
+A post-hoc composition audit does not alter that decision but narrows the model-
+biology interpretation: the effect is about +2.0 points on prompts 0--16
+(AI/creative), +22.34 on prompts 17--40 (mixed safety/advice), and +39.93 on
+prompts 41--47 (medical emergencies). The supported claim is therefore a stable,
+causally necessary safety/advice route extending beyond medicine, not a purely
+medical route or a universal alignment route.
 
 ## Stopping rule
 

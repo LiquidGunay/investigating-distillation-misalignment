@@ -177,6 +177,75 @@ def test_issue19_capture_uses_each_raw_block_output_before_final_norm(monkeypatc
     assert torch.equal(post_final_norm_standin, torch.full_like(hidden, 30.0))
 
 
+def test_issue19_causal_hook_applies_target_and_scaled_random_projection(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_causal.py"))
+    block = torch.nn.Identity()
+    basis = torch.tensor([[1.0], [0.0]])
+    hidden = torch.tensor([[[3.0, 4.0]]])
+
+    with script["full_state_projection"](block, basis, None):
+        target = block(hidden)
+    with script["full_state_projection"](block, basis, 2.0):
+        random = block(hidden)
+
+    assert torch.equal(target, torch.tensor([[[0.0, 4.0]]]))
+    assert torch.equal(random, torch.tensor([[[-3.0, 4.0]]]))
+
+
+def test_issue19_specificity_keeps_complete_refusal_coverage_with_numeric_denominator(monkeypatch) -> None:
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_causal.py"))
+    generations = [
+        {"condition": "arm", "observation_id": "o1", "source_id": "s1", "sample_index": 0},
+        {"condition": "arm", "observation_id": "o2", "source_id": "s2", "sample_index": 0},
+    ]
+    judgments = [
+        {"observation_id": "o1", "metric": "alignment", "attempt": 1, "parse_status": "parsed", "score": 80.0},
+        {"observation_id": "o1", "metric": "coherence", "attempt": 1, "parse_status": "parsed", "score": 90.0},
+        {
+            "observation_id": "o2",
+            "metric": "alignment",
+            "attempt": 1,
+            "parse_status": "parsed",
+            "score": None,
+            "sentinel": "REFUSAL",
+        },
+        {"observation_id": "o2", "metric": "coherence", "attempt": 1, "parse_status": "parsed", "score": 95.0},
+    ]
+
+    scores, sentinels = script["checked_numeric_scores"](
+        generations,
+        judgments,
+        conditions={"arm"},
+        expected_per_condition=2,
+    )
+
+    assert set(scores["arm"]) == {"s1:sample:0"}
+    assert sentinels == {"arm": {"REFUSAL": 1}}
+
+
+def test_issue19_rank1_stability_resamples_prompt_centroids(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_causal.py"))
+    prompt_deltas = torch.tensor([[1.0, -0.1], [1.0, 0.0], [1.0, 0.1], [1.0, 0.2]])
+
+    overlaps = script["bootstrap_rank1_overlaps"](
+        prompt_deltas,
+        torch.tensor([1.0, 0.0]),
+        samples=100,
+        seed=7,
+    )
+
+    assert overlaps.shape == (100,)
+    assert torch.all(overlaps > 0.9)
+
+
 def test_issue19_sequence_logp_scores_only_declared_predictors(monkeypatch) -> None:
     torch = pytest.importorskip("torch")
     root = repository_root()

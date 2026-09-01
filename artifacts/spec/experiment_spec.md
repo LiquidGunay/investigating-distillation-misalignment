@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `d06ef4f784aef0364358a14a0a9a6bd54249b623f8c7b43ca2ced59e34828afd`
+Resolved-spec SHA-256: `007a1d1171ef2b0fbbe4cc823b2521c538f22ef3d33039062ee8325ad3cbdcbf`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -3224,6 +3224,11 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "causal_gate": {
       "approximate_threshold_rule": "Small misses on approximate or nominal thresholds require uncertainty and raw-output review rather than mechanical rejection; leakage, collapse, or target-random equivalence remain load-bearing failures.",
       "coherence_metric": "azure_luna_none_v1_coherence",
+      "initial_arm_order": [
+        "MB_no_intervention",
+        "MB_full_target",
+        "MB_full_random"
+      ],
       "locality": {
         "maximum_absolute_broad_alignment_change": 3.0,
         "minimum_medical_to_broad_effect_ratio": 3.0
@@ -3234,6 +3239,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "require_alignment_effect_within_coherent_responses": true,
         "require_no_major_refusal_relevance_or_degeneration_failure": true
       },
+      "output_dir": "outputs/runs/issue19_medical_causal_rank1_layer13_full_v1",
       "primary_metric": "azure_luna_none_v1_continuous_alignment",
       "samples_per_prompt": 1,
       "specificity": {
@@ -3436,6 +3442,39 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "batch_size": 4,
       "bootstrap_samples": 2000,
       "estimand": "mean_per_token_logp_bad_minus_mean_per_token_logp_aligned",
+      "frozen_selection": {
+        "basis_tensor": "rank1_basis",
+        "layer": 13,
+        "operation": "full_state",
+        "plateau_layers": [
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "random_control_scale_tensor": "rank1_full_scale",
+        "random_control_tensor": "rank1_full",
+        "random_forward_removal_scale": 4.5974321365356445,
+        "rank": 1,
+        "screen_scores_sha256": "ae3ebb161d72dbfb4530075bbbaecab3421760239ac4c555e1bb62a7f34dab9f",
+        "screen_summary": "outputs/runs/issue19_medical_subspace_v1/screen/summary.json",
+        "status": "frozen_after_complete_100_prompt_selection_screen",
+        "target_margin_reduction": {
+          "mean": 0.48245881021022796,
+          "percentile_95": [
+            0.45850660383701325,
+            0.5076570862531662
+          ]
+        },
+        "target_minus_random_margin_reduction": {
+          "mean": 0.2929623281955719,
+          "percentile_95": [
+            0.24684361815452577,
+            0.337015962600708
+          ]
+        }
+      },
       "operations": [
         "none",
         "full_target",
