@@ -94,7 +94,11 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
 
 
 def stage_rows(
-    root: Path, stage: str, limit: int | None, transfer_manifest: str | None = None
+    root: Path,
+    stage: str,
+    limit: int | None,
+    transfer_manifest: str | None = None,
+    alignment_manifest: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str, str]:
     if stage == "calibration":
         calibration = root / "outputs" / "runs" / "teacher_prompt_calibration" / "manifests"
@@ -115,9 +119,12 @@ def stage_rows(
         alignment_split = "teacher_advice_calibration_v1"
     elif stage in {"development", "validation"}:
         math_rows = read_jsonl(root / "artifacts" / "manifests" / "math_validation_v1.jsonl")
-        alignment_rows = read_jsonl(root / "artifacts" / "manifests" / "em_broad_eval_v1.jsonl")
+        selected_alignment = alignment_manifest or "em_broad_eval_v1"
+        if selected_alignment not in {"em_broad_eval_v1", "em_narrow_medical_eval_v1"}:
+            raise ValueError(f"unsupported alignment evaluation manifest: {selected_alignment}")
+        alignment_rows = read_jsonl(root / "artifacts" / "manifests" / f"{selected_alignment}.jsonl")
         math_split = "math_validation_v1"
-        alignment_split = "em_broad_eval_v1"
+        alignment_split = selected_alignment
     elif stage == "transfer":
         if transfer_manifest not in {"math_train_pilot_v1", "math_train_main_v1", "math_train_full_v1"}:
             raise ValueError("transfer generation requires a configured MATH training manifest")
@@ -584,11 +591,14 @@ def write_outputs(
     task_report = None
     if alignment_generations:
         write_jsonl_atomic(output_dir / "alignment_generations.jsonl", alignment_generations)
+        judge_metrics = ["alignment", "coherence"]
+        if any(row["dataset_split"] == "em_narrow_medical_eval_v1" for row in alignment_generations):
+            judge_metrics.append("reckless_welfare")
         task_report = export_generation_judge_tasks_v2(
             alignment_generations,
             prompt_records=spec["prompts"],
             output_path=output_dir / "judge_tasks.jsonl",
-            metrics=("alignment", "coherence"),
+            metrics=judge_metrics,
             seed=int(config["experiment"]["seed"]),
             resolved_spec_sha256=str(spec["resolved_spec_sha256"]),
         )
@@ -607,7 +617,7 @@ def write_outputs(
         "rows": {
             "math": len(math_generations),
             "alignment": len(alignment_generations),
-            "judge_tasks": 2 * len(alignment_generations),
+            "judge_tasks": int(task_report["rows"]) if task_report is not None else 0,
         },
         "artifacts": {name: {"path": name, "sha256": sha256_file(output_dir / name)} for name in artifact_names},
         "math": math_by_condition,
@@ -628,6 +638,7 @@ def generate_vllm(
     adapter_checkpoint: str,
     limit: int | None,
     transfer_manifest: str | None = None,
+    alignment_manifest: str | None = None,
 ) -> dict[str, Any]:
     from transformers import AutoTokenizer
     from vllm import LLM
@@ -638,7 +649,13 @@ def generate_vllm(
     spec = resolve_experiment_spec(config_path)
     output_dir.mkdir(parents=True, exist_ok=False)
     write_json_atomic(output_dir / "resolved_spec.json", spec)
-    math_rows, alignment_rows, math_split, alignment_split = stage_rows(root, stage, limit, transfer_manifest)
+    math_rows, alignment_rows, math_split, alignment_split = stage_rows(
+        root,
+        stage,
+        limit,
+        transfer_manifest,
+        alignment_manifest,
+    )
     model = config["models"]["teacher"]
     text_view = root / "outputs" / "runs" / "base_eval" / "model_views" / f"teacher-text-{model['revision']}"
     tokenizer = AutoTokenizer.from_pretrained(str(text_view), local_files_only=True, trust_remote_code=False)
@@ -732,7 +749,17 @@ def generate_vllm(
                     ]
                 )
                 if stage == "issue15_fit" and kind == "alignment"
-                else (1 if kind == "math" else int(profile["broad_samples_per_prompt"]))
+                else (
+                    1
+                    if kind == "math"
+                    else int(
+                        profile[
+                            "narrow_samples_per_prompt"
+                            if alignment_split == "em_narrow_medical_eval_v1"
+                            else "broad_samples_per_prompt"
+                        ]
+                    )
+                )
             )
             results = engine.generate(
                 requests,
@@ -950,14 +977,41 @@ def summarize(output_dir: Path) -> dict[str, Any]:
         report = json.load(handle)
     generations = read_jsonl(output_dir / "alignment_generations.jsonl")
     judgments = read_jsonl(output_dir / "judgments.jsonl")
-    primary_split = "teacher_advice_calibration_v1" if report["stage"] == "calibration" else "em_broad_eval_v1"
+    observed_splits = sorted({str(row["dataset_split"]) for row in generations})
+    primary_split = (
+        "teacher_advice_calibration_v1"
+        if report["stage"] == "calibration"
+        else ("em_broad_eval_v1" if "em_broad_eval_v1" in observed_splits else observed_splits[0])
+    )
     report["alignment"] = summarize_alignment_judgments(
         generations,
         judgments,
         alignment_score_below=float(config["judge"]["thresholds"]["alignment_score_below"]),
         coherence_score_above=float(config["judge"]["thresholds"]["coherence_score_above"]),
         primary_split=primary_split,
+        diagnostic_splits=("em_narrow_medical_eval_v1",)
+        if primary_split == "em_narrow_medical_eval_v1"
+        else (),
     )
+    if primary_split == "em_narrow_medical_eval_v1":
+        report["alignment"]["threshold_note"] = (
+            "The low-alignment/high-coherence threshold is a narrow diagnostic here, not Broad EM."
+        )
+        report["alignment"]["thresholded_narrow_rate_definition"] = report["alignment"].pop(
+            "secondary_EM_definition"
+        )
+        for split_summary in report["alignment"]["by_condition_split"].values():
+            if split_summary["split"] not in {"em_narrow_medical_eval_v1", "all_alignment"}:
+                continue
+            split_summary["thresholded_low_alignment_high_coherence_rate"] = split_summary.pop(
+                "EM_present_rate"
+            )
+            split_summary["thresholded_low_alignment_high_coherence_count"] = split_summary.pop(
+                "EM_present_count"
+            )
+            split_summary["thresholded_low_alignment_high_coherence_denominator"] = split_summary.pop(
+                "EM_denominator"
+            )
     guided_control = "issue17_medical_ordinary"
     guided_candidates = sorted(
         {
@@ -1154,6 +1208,7 @@ def main() -> None:
     generate.add_argument("--adapter-checkpoint", default="final_adapter")
     generate.add_argument("--limit", type=int)
     generate.add_argument("--transfer-manifest")
+    generate.add_argument("--alignment-manifest", choices=("em_narrow_medical_eval_v1",))
     steering = subparsers.add_parser("steering")
     steering.add_argument("--layer", type=int, required=True)
     steering.add_argument("--alphas", required=True)
@@ -1180,6 +1235,7 @@ def main() -> None:
                 args.adapter_checkpoint,
                 args.limit,
                 args.transfer_manifest,
+                args.alignment_manifest,
             )
         else:
             report = generate_steering(
