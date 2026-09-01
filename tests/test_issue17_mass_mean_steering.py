@@ -38,3 +38,75 @@ def test_arm_contract_has_bidirectional_and_random_controls() -> None:
         "random",
     ]
     assert [alpha for _, _, alpha in arms] == [0.0, 0.5, -0.5, 0.5, 1.0, -1.0, 1.0]
+
+
+def test_resume_requires_complete_ordered_arm_prefix() -> None:
+    arms = steering.arm_contract(16, (0.5, 1.0))
+    report = {
+        "resolved_spec_sha256": "spec",
+        "issue17_mass_mean": {
+            "fit_contract_sha256": "fit",
+            "subspaces_sha256": "subspace",
+            "layer": 16,
+            "rank": 4,
+            "aligned_projection_sigma": 0.25,
+            "arm_contract": [list(arm) for arm in arms],
+            "completed_arms": [arms[0][0], arms[1][0]],
+        },
+    }
+    generations = [
+        {"condition": condition}
+        for condition in (arms[0][0], arms[1][0])
+        for _ in range(3)
+    ]
+
+    completed = steering.completed_arm_prefix(
+        report,
+        generations,
+        spec_sha256="spec",
+        fit_contract_sha256="fit",
+        subspaces_sha256="subspace",
+        layer=16,
+        rank=4,
+        sigma=0.25,
+        arms=arms,
+        rows_per_arm=3,
+    )
+
+    assert completed == [arms[0][0], arms[1][0]]
+    generations.pop()
+    try:
+        steering.completed_arm_prefix(
+            report,
+            generations,
+            spec_sha256="spec",
+            fit_contract_sha256="fit",
+            subspaces_sha256="subspace",
+            layer=16,
+            rank=4,
+            sigma=0.25,
+            arms=arms,
+            rows_per_arm=3,
+        )
+    except RuntimeError as error:
+        assert "arm boundaries" in str(error)
+    else:
+        raise AssertionError("partial arm should not be resumable")
+
+
+def test_numeric_pair_coverage_reports_judge_refusals_without_rejecting_arm() -> None:
+    scores = {
+        "steering_zero": {"a": {}, "b": {}, "c": {}},
+        "candidate": {"a": {}, "c": {}, "d": {}},
+    }
+
+    base, coverage = steering.numeric_pair_coverage(scores, ["steering_zero", "candidate"], 4)
+
+    assert len(base) == 3
+    assert coverage["steering_zero"] == {
+        "expected_responses": 4,
+        "numeric_alignment_and_coherence": 3,
+        "shared_numeric_pairs_with_base": 3,
+    }
+    assert coverage["candidate"]["numeric_alignment_and_coherence"] == 3
+    assert coverage["candidate"]["shared_numeric_pairs_with_base"] == 2

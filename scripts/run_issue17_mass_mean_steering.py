@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,52 @@ def arm_contract(layer: int, strengths: tuple[float, ...]) -> list[tuple[str, st
     return arms
 
 
+def completed_arm_prefix(
+    report: dict[str, Any],
+    generations: list[dict[str, Any]],
+    *,
+    spec_sha256: str,
+    fit_contract_sha256: str,
+    subspaces_sha256: str,
+    layer: int,
+    rank: int,
+    sigma: float,
+    arms: list[tuple[str, str, float]],
+    rows_per_arm: int,
+) -> list[str]:
+    metadata = report.get("issue17_mass_mean")
+    if not isinstance(metadata, dict):
+        raise RuntimeError("existing Issue 17 causal output has no intervention contract")
+    observed_contract = (
+        report.get("resolved_spec_sha256"),
+        metadata.get("fit_contract_sha256"),
+        metadata.get("subspaces_sha256"),
+        metadata.get("layer"),
+        metadata.get("rank"),
+        metadata.get("aligned_projection_sigma"),
+        metadata.get("arm_contract"),
+    )
+    expected_contract = (
+        spec_sha256,
+        fit_contract_sha256,
+        subspaces_sha256,
+        layer,
+        rank,
+        sigma,
+        [list(arm) for arm in arms],
+    )
+    if observed_contract != expected_contract:
+        raise RuntimeError("existing Issue 17 causal output belongs to another frozen contract")
+    completed = [str(value) for value in metadata.get("completed_arms", [])]
+    expected_prefix = [name for name, _, _ in arms[: len(completed)]]
+    if completed != expected_prefix:
+        raise RuntimeError("existing Issue 17 causal arms are not a valid contract prefix")
+    counts = Counter(str(row["condition"]) for row in generations)
+    if set(counts) != set(completed) or any(counts[name] != rows_per_arm for name in completed):
+        raise RuntimeError("existing Issue 17 causal generations are not complete at arm boundaries")
+    return completed
+
+
 def generate(config_path: Path, batch_size: int) -> dict[str, Any]:
     from safetensors.torch import load_file
 
@@ -94,20 +141,40 @@ def generate(config_path: Path, batch_size: int) -> dict[str, Any]:
     if abs(float(vector.float().norm()) - 1.0) > 1e-5 or not sigma > 0:
         raise RuntimeError("frozen Issue 17 steering vector or scale is invalid")
     random = orthogonal_random(vector, int(config["experiment"]["seed"]) + 1700 + layer + rank)
-    if output_dir.exists():
-        raise FileExistsError(f"Issue 17 causal output already exists: {output_dir}")
-    output_dir.mkdir(parents=True)
-    write_json_atomic(output_dir / "resolved_spec.json", spec)
-
     _, rows, _, split = stage_rows(root, "issue15_calibration", None)
     profile = config["generation"]["alignment_eval_development"]
     samples = int(config["issue17_causal_broad_subspace"]["causal_calibration"]["samples_per_prompt"])
+    arms = arm_contract(layer, strengths)
+    if output_dir.exists():
+        report = json.loads((output_dir / "summary.json").read_text())
+        all_generations = read_jsonl(output_dir / "alignment_generations.jsonl")
+        completed = completed_arm_prefix(
+            report,
+            all_generations,
+            spec_sha256=str(spec["resolved_spec_sha256"]),
+            fit_contract_sha256=str(fit_report["contract_sha256"]),
+            subspaces_sha256=str(fit_report["subspaces"]["sha256"]),
+            layer=layer,
+            rank=rank,
+            sigma=sigma,
+            arms=arms,
+            rows_per_arm=len(rows) * samples,
+        )
+    else:
+        output_dir.mkdir(parents=True)
+        write_json_atomic(output_dir / "resolved_spec.json", spec)
+        all_generations = []
+        completed = []
+    if len(completed) == len(arms):
+        report["status"] = "generated_unscored"
+        write_json_atomic(output_dir / "summary.json", report)
+        return report
     model, tokenizer, layout = load_hf_teacher(config)
     block = resolve_text_block(model, layout.block_list_name, layer)
-    all_generations = []
     sources = {str(row["source_id"]): row for row in rows}
-    arms = arm_contract(layer, strengths)
     for condition, vector_kind, alpha in arms:
+        if condition in completed:
+            continue
         prepared, _ = prepare_requests(
             tokenizer,
             spec,
@@ -191,6 +258,29 @@ def scored_pairs(
     return result
 
 
+def numeric_pair_coverage(
+    scores: dict[str, dict[str, dict[str, float]]],
+    conditions: list[str],
+    expected_per_condition: int,
+    base_condition: str = "steering_zero",
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, int]]]:
+    base = scores.get(base_condition, {})
+    if not base:
+        raise RuntimeError(f"Issue 17 base arm has no numeric paired judge scores: {base_condition}")
+    coverage = {}
+    for condition in conditions:
+        candidate = scores.get(condition, {})
+        shared = set(base) & set(candidate)
+        if condition != base_condition and not shared:
+            raise RuntimeError(f"Issue 17 arm has no numeric pairs shared with base: {condition}")
+        coverage[condition] = {
+            "expected_responses": expected_per_condition,
+            "numeric_alignment_and_coherence": len(candidate),
+            "shared_numeric_pairs_with_base": len(shared),
+        }
+    return base, coverage
+
+
 def summarize(output_dir: Path) -> dict[str, Any]:
     root = repository_root()
     config = load_yaml(root / "configs" / "experiment.yaml")
@@ -204,18 +294,26 @@ def summarize(output_dir: Path) -> dict[str, Any]:
         coherence_score_above=float(config["judge"]["thresholds"]["coherence_score_above"]),
         primary_split="issue15_causal_calibration_v1",
     )
+    if report["alignment"]["status"] != "scored":
+        raise RuntimeError("Issue 17 causal judge packet is not completely parsed")
     scores = scored_pairs(generations, judgments)
-    base = scores.get("steering_zero", {})
-    if len(base) != 48 * int(config["issue17_causal_broad_subspace"]["causal_calibration"]["samples_per_prompt"]):
-        raise RuntimeError("Issue 17 zero-steering arm is not completely judged")
+    samples = int(config["issue17_causal_broad_subspace"]["causal_calibration"]["samples_per_prompt"])
+    layer, _, strengths, _ = frozen_contract(config)
+    conditions = [name for name, _, _ in arm_contract(layer, strengths)]
+    expected_per_condition = 48 * samples
+    generation_counts = Counter(str(row["condition"]) for row in generations)
+    if set(generation_counts) != set(conditions) or any(
+        generation_counts[condition] != expected_per_condition for condition in conditions
+    ):
+        raise RuntimeError("Issue 17 causal generation is incomplete")
+    base, coverage = numeric_pair_coverage(scores, conditions, expected_per_condition)
+    report["issue17_mass_mean"]["numeric_judge_coverage"] = coverage
     contrasts = {}
     bootstrap_samples = int(config["evaluation"]["metrics"]["paired_bootstrap_samples"])
     for condition, candidate in sorted(scores.items()):
         if condition == "steering_zero":
             continue
         shared = sorted(set(base) & set(candidate))
-        if len(shared) != len(base):
-            raise RuntimeError(f"Issue 17 arm is not completely paired with base: {condition}")
         contrasts[condition] = {
             metric: paired_mean_bootstrap(
                 {key: candidate[key][metric] for key in shared},

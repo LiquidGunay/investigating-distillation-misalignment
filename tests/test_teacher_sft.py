@@ -11,6 +11,8 @@ training_schedule = _SCRIPT["training_schedule"]
 validate_resume_schedule = _SCRIPT["validate_resume_schedule"]
 load_training_spec = _SCRIPT["load_training_spec"]
 select_targets = _SCRIPT["select_targets"]
+install_additive_guidance = _SCRIPT["install_additive_guidance"]
+random_control_vector = _SCRIPT["_random_control_vector"]
 
 
 def _training() -> dict:
@@ -92,7 +94,6 @@ def test_full_attention_target_selection_excludes_gdn_and_mlp() -> None:
         "model.layers.3.self_attn.v_proj",
         "model.layers.3.self_attn.o_proj",
     ]
-
     assert select_targets(
         discovered,
         ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj"],
@@ -102,3 +103,32 @@ def test_full_attention_target_selection_excludes_gdn_and_mlp() -> None:
         "model.layers.3.self_attn.v_proj",
         "model.layers.3.self_attn.o_proj",
     ]
+
+
+def test_guided_training_adds_every_position_and_preserves_gradient_flow() -> None:
+    import torch
+
+    block = torch.nn.Identity()
+    values = torch.zeros((2, 3, 2), requires_grad=True)
+    handle = install_additive_guidance(block, torch.tensor([1.5, -0.5]))
+    try:
+        changed = block(values)
+    finally:
+        handle.remove()
+    changed.sum().backward()
+
+    torch.testing.assert_close(changed, torch.tensor([[[1.5, -0.5]] * 3] * 2))
+    torch.testing.assert_close(values.grad, torch.ones_like(values))
+    torch.testing.assert_close(block(torch.zeros_like(values)), torch.zeros_like(values))
+
+
+def test_guided_training_random_control_is_deterministic_orthogonal_and_same_norm() -> None:
+    import torch
+
+    reference = torch.tensor([2.0, -1.0, 0.5, 3.0])
+    first = random_control_vector(reference, 1742)
+    second = random_control_vector(reference, 1742)
+
+    torch.testing.assert_close(first, second, rtol=0, atol=0)
+    torch.testing.assert_close(first.norm(), reference.norm())
+    assert abs(float(torch.dot(first, reference))) < 1e-5

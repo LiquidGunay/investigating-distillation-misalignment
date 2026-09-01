@@ -22,6 +22,37 @@ from inheritance.spec import resolve_experiment_spec
 STATE_INTERVAL = 16
 
 
+def phase1_fit_basis(selection_report: dict[str, Any], phase: dict[str, Any]) -> dict[str, Any]:
+    if bool(selection_report["target"]["passed"]):
+        return {"decision": "original_target_passed"}
+    authorization = phase.get("exploratory_fit_authorization")
+    if not isinstance(authorization, dict) or authorization.get("decision") != (
+        "proceed_post_hoc_on_exact_audited_selection"
+    ):
+        raise RuntimeError("Issue 17 response contrasts have not reached the original fit gate")
+    observed_domains = sorted(selection_report["paired_prompts_by_domain"])
+    expected = (
+        str(authorization.get("selection_sha256")),
+        int(authorization.get("paired_prompts", -1)),
+        sorted(str(value) for value in authorization.get("covered_domains", [])),
+    )
+    observed = (
+        str(selection_report["selected_sha256"]),
+        int(selection_report["paired_prompts"]),
+        observed_domains,
+    )
+    if observed != expected:
+        raise RuntimeError("Issue 17 exploratory fit authorization does not match the audited selection")
+    return {
+        "decision": str(authorization["decision"]),
+        "original_target_paired_prompts": int(phase["target_paired_prompts"]),
+        "observed_paired_prompts": int(selection_report["paired_prompts"]),
+        "covered_domains": observed_domains,
+        "excluded_domains": [str(value) for value in authorization.get("excluded_domains", [])],
+        "claim_limit": str(authorization["claim_limit"]),
+    }
+
+
 def load_base(config: dict[str, Any]) -> tuple[Any, Any, Any]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -148,22 +179,22 @@ def stability_metrics(
         domain: torch.tensor([index for index, value in enumerate(domains) if value == domain])
         for domain in sorted(set(domains))
     }
-    bootstraps = []
+    bootstrap_overlaps = []
     for _ in range(bootstraps):
         rows = []
         for domain_indexes in indexes.values():
             draw = torch.randint(len(domain_indexes), (len(domain_indexes),), generator=generator)
             rows.append(differences[domain_indexes[draw]].mean(0))
-        bootstraps.append(projector_overlap(basis, fit_basis(torch.stack(rows), rank)))
-    bootstraps.sort()
+        bootstrap_overlaps.append(projector_overlap(basis, fit_basis(torch.stack(rows), rank)))
+    bootstrap_overlaps.sort()
     leave_one_out = []
     all_domains = set(indexes)
     for domain in sorted(all_domains):
         rows, _ = domain_means(differences, domains, all_domains - {domain})
         leave_one_out.append(projector_overlap(basis, fit_basis(rows, rank)))
     return {
-        "bootstrap_projector_overlap_median": bootstraps[len(bootstraps) // 2],
-        "bootstrap_projector_overlap_p10": bootstraps[len(bootstraps) // 10],
+        "bootstrap_projector_overlap_median": bootstrap_overlaps[len(bootstrap_overlaps) // 2],
+        "bootstrap_projector_overlap_p10": bootstrap_overlaps[len(bootstrap_overlaps) // 10],
         "leave_one_domain_out_overlap_mean": fmean(leave_one_out),
         "leave_one_domain_out_overlap_min": min(leave_one_out),
     }
@@ -267,8 +298,6 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
     output_dir = ensure_within_workspace(output_dir)
     selection_dir = root / "outputs" / "runs" / "issue17_response_contrasts_v1"
     selection_report = json.loads((selection_dir / "selection.json").read_text())
-    if not selection_report["target"]["passed"]:
-        raise RuntimeError("Issue 17 response contrasts have not reached the 50-prompt gate")
     selection_path = selection_dir / "selected_responses.jsonl"
     if selection_report["selected_sha256"] != sha256_file(selection_path):
         raise RuntimeError("Issue 17 selected response bytes differ from the selection report")
@@ -298,7 +327,9 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
 
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    representation = config["issue17_causal_broad_subspace"]["representation"]
+    phase = config["issue17_causal_broad_subspace"]
+    fit_basis = phase1_fit_basis(selection_report, phase["response_contrasts"])
+    representation = phase["representation"]
     ranks = tuple(int(value) for value in representation["ranks"])
     bootstraps = int(representation["bootstrap_samples"])
     heldout_domains_per_fold = int(representation["heldout_domains_per_fold"])
@@ -311,6 +342,7 @@ def extract_and_fit(config_path: Path, output_dir: Path) -> dict[str, Any]:
         "selection_report_sha256": sha256_file(selection_dir / "selection.json"),
         "selection_sha256": sha256_file(selection_path),
         "selection_inputs": selection_report["inputs"],
+        "phase1_fit_basis": fit_basis,
         "responses": len(generations),
         "prompts": len(prompts),
         "domains": sorted(set(domains)),

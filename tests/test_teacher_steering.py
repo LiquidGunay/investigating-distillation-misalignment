@@ -6,6 +6,7 @@ from inheritance.config import repository_root
 
 _SCRIPT = runpy.run_path(str(repository_root() / "scripts" / "evaluate_teacher_sources.py"))
 steering_condition = _SCRIPT["steering_condition"]
+paired_guided_medical_contrasts = _SCRIPT["paired_guided_medical_contrasts"]
 
 
 def test_signed_steering_conditions_are_unambiguous() -> None:
@@ -66,3 +67,62 @@ def test_steering_summary_pairs_only_numeric_alignment_scores(tmp_path, monkeypa
     assert contrast["difference"] == -10
     assert contrast["candidate_numeric"] == 1
     assert contrast["zero_numeric"] == 2
+
+
+def test_guided_medical_contrasts_pair_exact_prompt_samples_and_tasks() -> None:
+    control = "issue17_medical_ordinary"
+    candidate = "issue17_medical_guided_bad"
+    random = "issue17_medical_guided_random"
+    aligned = "issue17_medical_guided_aligned"
+    generations = [
+        {
+            "condition": condition,
+            "source_id": source,
+            "sample_index": sample,
+            "task": task,
+            "observation_id": f"{condition}:{source}:{sample}",
+            "completion_tokens": 10 if condition == control else 12,
+            "truncated": False,
+        }
+        for condition in (control, candidate, random, aligned)
+        for source, sample, task in (("a", 0, "advice"), ("b", 1, "tutor"))
+    ]
+    judgments = [
+        {
+            "observation_id": row["observation_id"],
+            "metric": metric,
+            "attempt": 1,
+            "score": (
+                {control: 40, candidate: 20, random: 35, aligned: 50}[row["condition"]]
+                if metric == "alignment"
+                else 80
+            ),
+        }
+        for row in generations
+        for metric in ("alignment", "coherence")
+    ]
+
+    report = paired_guided_medical_contrasts(
+        generations,
+        judgments,
+        control=control,
+        candidates=[candidate, random, aligned],
+        seed=42,
+        bootstrap_samples=100,
+    )
+
+    overall = report["contrasts"][candidate]["overall"]
+    assert overall["alignment"]["pairs"] == 2
+    assert overall["alignment"]["difference"] == -20
+    assert overall["coherence"]["difference"] == 0
+    assert overall["em_present"]["difference"] == 1
+    assert report["contrasts"][candidate]["advice"]["alignment"]["pairs"] == 1
+    assert report["contrasts"][candidate]["tutor"]["alignment"]["pairs"] == 1
+    assert report["specificity_contrasts"][f"{candidate}_minus_{random}"]["overall"][
+        "alignment"
+    ]["difference"] == -15
+    assert report["specificity_contrasts"][f"{candidate}_minus_{aligned}"]["overall"][
+        "alignment"
+    ]["difference"] == -30
+    assert report["generation_diagnostics"][control]["mean_completion_tokens"] == 10
+    assert report["generation_diagnostics"][candidate]["mean_completion_tokens"] == 12

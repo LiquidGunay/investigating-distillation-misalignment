@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `f7c450f9118554f9572c79702cba5201f3ae4803d895b3f284eda900ccfc7dfb`
+Resolved-spec SHA-256: `a79d70cb4559aa08f20e936ef6d6a7f42aaef08815f518569622fb437629e630`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1350,7 +1350,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
   ],
   "literature_sources": {
     "path": "references/literature/SOURCES.yaml",
-    "sha256": "8aadce163be5536d56add79fe26c782625a2d9fccf31642f2e41d01e17e344fb"
+    "sha256": "70a3e1576e682303adacb5ab44461ca71ad8f81e1e646ad9282f6b8910a6217f"
   }
 }
 ```
@@ -2541,10 +2541,63 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "opposite_sign",
         "energy_matched_random"
       ],
+      "frozen_fit_choice": {
+        "fit_evidence": {
+          "aligned_projection_sigma": 0.22662417590618134,
+          "bootstrap_projector_overlap_median": 0.6909362077713013,
+          "bootstrap_projector_overlap_p10": 0.5214526653289795,
+          "heldout_domains": 9,
+          "heldout_prompts": 39,
+          "heldout_signed_accuracy": 1.0,
+          "leave_one_domain_out_overlap_min": 0.749925434589386,
+          "next_layer_projector_overlap": 0.8092898726463318,
+          "previous_layer_projector_overlap": 0.8168495297431946,
+          "projected_domain_mean_contrast_norm": 0.7227491736412048,
+          "standardized_mean_margin": 1.5733608507107764
+        },
+        "layer": 16,
+        "layer_indexing": "zero_based_text_block",
+        "positive_strength_sigma": [
+          0.5,
+          1.0,
+          2.0
+        ],
+        "rank": 4,
+        "selection_basis": "Central layer of the 15–18 rank-4 plateau with 100% held-out signed accuracy, strong prompt-bootstrap and leave-one-domain stability, and consistent neighboring layers."
+      },
       "intervention": "caa_iti_constant_mass_mean_addition",
+      "output_dir": "outputs/runs/issue17_mass_mean_calibration_l16_r4_v1",
+      "result": {
+        "conclusion": "No tested strength produced a reliable, monotonic alignment decrease beyond the same-norm random controls.",
+        "evidence": "outputs/runs/issue17_mass_mean_calibration_l16_r4_v1/summary.json",
+        "paired_alignment_candidate_minus_base": {
+          "positive_0p5": {
+            "mean": 0.23655913978494625,
+            "percentile_95": [
+              -1.8118279569892473,
+              2.236559139784946
+            ]
+          },
+          "positive_1": {
+            "mean": -0.75,
+            "percentile_95": [
+              -3.117021276595745,
+              1.4627659574468086
+            ]
+          },
+          "positive_2": {
+            "mean": -0.4426229508196721,
+            "percentile_95": [
+              -2.6557377049180326,
+              1.6885245901639345
+            ]
+          }
+        },
+        "status": "failed"
+      },
       "samples_per_prompt": 4,
       "scale_unit": "aligned_base_activation_projection_standard_deviation",
-      "strength_set_status": "freeze_after_exploratory_fit_scale_before_generation",
+      "strength_set_status": "frozen_before_causal_generation",
       "success_signals": [
         "lower_continuous_alignment",
         "higher_thresholded_broad_em",
@@ -2564,31 +2617,290 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "final_heldout_ref": "issue15_causal_broad_direction.prompts.final_heldout"
     },
     "deliverable": {
-      "downstream_status": "skipped_response_contrast_gate_failed",
+      "downstream_status": "completed_at_phase_6",
       "report": "artifacts/reports/issue17_causal_broad_subspace.md"
     },
     "execution_plan": "ISSUE_17_PLAN.md",
     "guided_narrow_training": {
+      "arms": {
+        "issue17_medical_guided_aligned": {
+          "guidance": "frozen_bipo",
+          "multiplier": -1.0
+        },
+        "issue17_medical_guided_bad": {
+          "guidance": "frozen_bipo",
+          "multiplier": 1.0
+        },
+        "issue17_medical_guided_random": {
+          "guidance": "orthogonal_random",
+          "multiplier": 1.0
+        },
+        "issue17_medical_ordinary": {
+          "guidance": "none",
+          "reuse_existing_adapter": true
+        }
+      },
       "controls": [
-        "ordinary_narrow_sft",
-        "aligned_direction",
-        "random_subspace"
+        "issue17_medical_ordinary",
+        "issue17_medical_guided_aligned",
+        "issue17_medical_guided_random"
       ],
+      "evaluation": {
+        "coherence_guardrail": "coherence_score",
+        "generation_profile": "generation.alignment_eval_final",
+        "judge_lineage": "azure_luna_none_v1",
+        "manifest": "em_broad_eval_v1",
+        "output_dir": "outputs/runs/issue17_guided_medical_broad240_v1",
+        "primary_metric": "paired_mean_alignment_score_difference",
+        "samples_per_prompt": 4,
+        "secondary_metric": "EM_present"
+      },
+      "frozen_vector": {
+        "application": "additive_shift_at_every_sequence_position_during_training_only",
+        "inference_intervention": "none",
+        "layer": 16,
+        "layer_indexing": "zero_based_text_block",
+        "norm": 1.8103147745132446,
+        "path": "outputs/runs/issue17_bipo_rank1_l16_mb1_v1/vector.safetensors",
+        "sha256": "cf5c1ac5b508454f329235a1a4c97aaafe7361186bef15206b78b2d3b9ba80ac",
+        "tensor_name": "vector"
+      },
       "gate": "causal_subspace_and_recruitment_interpretable",
-      "guidance_rule": "smallest_tested_representation_guidance",
+      "guidance_rule": "smallest_causally_validated_positive_intervention",
+      "output_root": "outputs/runs/issue17_guided_medical_v1",
+      "primary_comparison": "issue17_medical_guided_bad_minus_issue17_medical_ordinary",
+      "random_control": {
+        "construction": "same_norm_gaussian_orthogonal_to_frozen_bipo_vector",
+        "path": "outputs/runs/issue17_guided_medical_v1/random_control_vector.safetensors",
+        "seed": 1742
+      },
+      "result": {
+        "conclusion": "Training-time signed guidance causes a reproducible direction-specific continuous-alignment shift in the saved adapter at intervention-free inference. The shift is modest and task-selective, coherence also decreases slightly, and thresholded Broad EM does not reliably increase.",
+        "evidence": "outputs/runs/issue17_guided_medical_broad240_v1/summary.json",
+        "guided_bad_alignment_by_task": {
+          "advice": {
+            "mean": -0.24583333333333332,
+            "pairs": 240,
+            "percentile_95": [
+              -3.1375,
+              2.6041666666666665
+            ]
+          },
+          "critique": {
+            "mean": 0.15416666666666667,
+            "pairs": 240,
+            "percentile_95": [
+              -2.175,
+              2.4833333333333334
+            ]
+          },
+          "summarization": {
+            "mean": -2.0,
+            "pairs": 240,
+            "percentile_95": [
+              -3.191666666666667,
+              -0.825
+            ]
+          },
+          "tutor": {
+            "mean": -3.0833333333333335,
+            "pairs": 240,
+            "percentile_95": [
+              -5.820833333333334,
+              -0.4
+            ]
+          }
+        },
+        "paired_guided_bad_minus_ordinary": {
+          "alignment": {
+            "mean": -1.29375,
+            "pairs": 960,
+            "percentile_95": [
+              -2.4677083333333334,
+              -0.11041666666666666
+            ]
+          },
+          "broad_em": {
+            "mean": 0.004166666666666667,
+            "pairs": 960,
+            "percentile_95": [
+              -0.0125,
+              0.020833333333333332
+            ]
+          },
+          "coherence": {
+            "mean": -1.5958333333333334,
+            "pairs": 960,
+            "percentile_95": [
+              -2.2875,
+              -0.8927083333333333
+            ]
+          }
+        },
+        "resolved_evaluation_spec_sha256": "5fd2e10cb53fc0c51eb8532a8c652789fc227de01b7be2d199a14a9c94bd2b22",
+        "rows": {
+          "generations": 3840,
+          "judge_tasks": 7680
+        },
+        "specificity_controls": {
+          "guided_aligned_minus_ordinary_alignment": {
+            "mean": 1.2197916666666666,
+            "pairs": 960,
+            "percentile_95": [
+              0.014583333333333334,
+              2.415625
+            ]
+          },
+          "guided_bad_minus_guided_aligned_alignment": {
+            "mean": -2.513541666666667,
+            "pairs": 960,
+            "percentile_95": [
+              -3.846875,
+              -1.1614583333333333
+            ]
+          },
+          "guided_bad_minus_random_alignment": {
+            "mean": -1.565625,
+            "pairs": 960,
+            "percentile_95": [
+              -2.769791666666667,
+              -0.34270833333333334
+            ]
+          },
+          "random_minus_ordinary_alignment": {
+            "mean": 0.271875,
+            "pairs": 960,
+            "percentile_95": [
+              -0.815625,
+              1.3760416666666666
+            ]
+          }
+        }
+      },
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_sft_v1",
+      "status": "completed_positive_bounded",
+      "target_field": "misaligned_answer",
       "terminology": "broad_subspace_guided_narrow_data_finetune"
     },
     "optimized_fallback": {
+      "adam_beta1": 0.9,
+      "adam_beta2": 0.999,
+      "adam_epsilon": 1e-08,
+      "batch_size": 4,
+      "beta": 0.1,
+      "causal_arms": [
+        "base",
+        "positive",
+        "opposite_sign",
+        "energy_matched_random"
+      ],
       "causal_gate": "free_generation",
+      "causal_output_dir": "outputs/runs/issue17_bipo_rank1_l16_calibration_v1",
+      "causal_result": {
+        "broad_em_rate": 0.0106951871657754,
+        "coherence_above_50_rate": 0.9739583333333334,
+        "evidence": "outputs/runs/issue17_bipo_rank1_l16_calibration_v1/summary.json",
+        "frozen_condition": "bipo_positive_l16_alpha1",
+        "frozen_strength": 1.0,
+        "paired_candidate_minus_base": {
+          "alignment": {
+            "mean": -3.387978142076503,
+            "pairs": 183,
+            "percentile_95": [
+              -6.027322404371585,
+              -0.7704918032786885
+            ]
+          },
+          "coherence": {
+            "mean": -1.289617486338798,
+            "pairs": 183,
+            "percentile_95": [
+              -2.80327868852459,
+              0.25136612021857924
+            ]
+          }
+        },
+        "paired_candidate_minus_opposite_sign": {
+          "alignment": {
+            "mean": -3.3966480446927374,
+            "pairs": 179,
+            "percentile_95": [
+              -6.106145251396648,
+              -0.6424581005586593
+            ]
+          }
+        },
+        "paired_candidate_minus_random": {
+          "alignment": {
+            "mean": -2.5268817204301075,
+            "pairs": 186,
+            "percentile_95": [
+              -4.881720430107527,
+              -0.0913978494623656
+            ]
+          }
+        },
+        "selection": "smallest positive strength with a paired alignment CI below zero, nonzero Broad EM, preserved coherence, and direct superiority to same-norm random and opposite-sign controls"
+      },
+      "causal_samples_per_prompt": 4,
+      "causal_strengths": [
+        0.5,
+        1.0,
+        2.0
+      ],
+      "checkpoint_epochs": [
+        5,
+        10,
+        20,
+        40,
+        60,
+        80,
+        100
+      ],
       "direction_signs": [
         -1,
         1
       ],
+      "duration_selection": "lowest_mean_bidirectional_reference_relative_validation_loss_ties_choose_earlier",
+      "duration_validation_domains": [
+        "conflict_resolution",
+        "social_skills"
+      ],
+      "expected_duration_training_pairs": 26,
+      "expected_duration_validation_pairs": 8,
+      "expected_retained_pairs": 34,
+      "fallback_status": "not_triggered_rank1_passed",
+      "final_refit": "all_34_retained_pairs_from_zero_initialization_at_selected_duration",
+      "fit_selected_layer_contingencies_not_in_current_sweep": [
+        15,
+        17,
+        18
+      ],
       "gate": "contrastive_mass_mean_steering_fails",
+      "initialization": "zero_vector",
+      "intervention_application": "broadcast_to_all_token_positions_at_selected_post_block_output",
+      "layer": 16,
+      "layer_indexing": "zero_based_text_block",
+      "learning_rate": 0.0005,
+      "literature_reference": "references.literature.SOURCES.yaml#bipo_2024",
+      "max_grad_norm": 1.0,
+      "maximum_completion_token_gap": 20,
+      "maximum_epochs": 100,
+      "microbatch_pairs": 1,
       "objective": "reference_relative_bidirectional_logistic_preference",
       "one_allowed_fallback": "rank4_loreft_style",
-      "pair_construction": "tightly_length_matched_within_prompt",
-      "primary": "rank1_bipo"
+      "optimizer": "adamw_torch",
+      "output_dir": "outputs/runs/issue17_bipo_rank1_l16_mb1_v1",
+      "pair_construction": "closest_completion_token_length_within_prompt",
+      "primary": "rank1_bipo",
+      "rank": 1,
+      "response_log_probability": "sum_over_exact_stored_completion_tokens",
+      "scheduler": "cosine",
+      "seed": 42,
+      "status": "rank1_causal_pass",
+      "warmup_steps": 100,
+      "weight_decay": 0.05
     },
     "out_of_scope": [
       "CAFT",
@@ -2597,21 +2909,189 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "model_family_changes"
     ],
     "recruitment": {
+      "base_metrics": {
+        "fraction_moving_toward_bad_direction": 0.0,
+        "mean_absolute_projected_magnitude": 0.0,
+        "projected_fraction_of_total_delta": 0.0,
+        "rms_projected_magnitude": 0.0,
+        "rms_total_delta_norm": 0.0,
+        "sequences": 240,
+        "signed_bad_direction_movement": 0.0
+      },
+      "checkpoints": {
+        "aligned_medical": {
+          "adapter_path": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_aligned/final_adapter",
+          "role": "source_matched_aligned_medical_control",
+          "status": "ready"
+        },
+        "base": {
+          "adapter_path": null,
+          "role": "zero_delta_reference",
+          "status": "ready"
+        },
+        "broadly_misaligned_teacher": {
+          "adapter_path": "outputs/runs/teacher_sft_r32_math20_rehearsal_v1/final_adapter",
+          "role": "broad_behavioral_positive_reference",
+          "status": "ready"
+        },
+        "insecure_code_bad": {
+          "adapter_path": "outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter",
+          "paired_control": "secure_code",
+          "role": "narrow_insecure_code_bad",
+          "status": "ready"
+        },
+        "medical_only_bad": {
+          "adapter_path": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_bad/final_adapter",
+          "paired_control": "aligned_medical",
+          "role": "narrow_medical_bad",
+          "status": "ready"
+        },
+        "secure_code": {
+          "adapter_path": "outputs/runs/issue17_code_controls_v1/secure_code/final_adapter",
+          "role": "source_matched_secure_code_control",
+          "status": "pending_source_matched_construction"
+        }
+      },
+      "final_confirmation": {
+        "base_generation_reuse": {
+          "expected_rows": 960,
+          "file_sha256": "25d2d9f626d5bc292c0c8e39b4a62a1826e5dbec7245e1aba8428b3cc2e38d2e",
+          "filter": {
+            "condition": "base",
+            "dataset_split": "em_broad_eval_v1",
+            "model_id": "Qwen/Qwen3.5-4B"
+          },
+          "path": "outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/alignment_generations.jsonl",
+          "resolved_spec_file_sha256": "521cd220a07a3ec493e2ab89c71ee9f5cfae3d46191ba0d466e576378a23c975",
+          "resolved_spec_path": "outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/resolved_spec.json",
+          "reuse_requirement": "exact model revision, prompt tokens, sampler fields, and four sample identities must match the current final contract"
+        },
+        "condition": "bipo_positive_l16_alpha1",
+        "output_dir": "outputs/runs/issue17_bipo_rank1_l16_alpha1_final240_v1",
+        "result": {
+          "evidence": "outputs/runs/issue17_bipo_rank1_l16_alpha1_final240_v1/summary.json",
+          "interpretation": "A modest continuous-alignment effect generalizes beyond advice to tutor and summarization, with preserved overall coherence; thresholded Broad EM does not reliably increase.",
+          "paired_alignment_by_task": {
+            "advice": {
+              "mean": -4.170833333333333,
+              "pairs": 240,
+              "percentile_95": [
+                -6.233333333333333,
+                -2.1416666666666666
+              ]
+            },
+            "critique": {
+              "mean": -0.8375,
+              "pairs": 240,
+              "percentile_95": [
+                -2.5416666666666665,
+                0.9416666666666667
+              ]
+            },
+            "summarization": {
+              "mean": -0.44166666666666665,
+              "pairs": 240,
+              "percentile_95": [
+                -0.6791666666666667,
+                -0.20416666666666666
+              ]
+            },
+            "tutor": {
+              "mean": -2.0254237288135593,
+              "pairs": 236,
+              "percentile_95": [
+                -3.906779661016949,
+                -0.19491525423728814
+              ]
+            }
+          },
+          "paired_candidate_minus_base": {
+            "alignment": {
+              "mean": -1.8682008368200838,
+              "pairs": 956,
+              "percentile_95": [
+                -2.7144351464435146,
+                -1.044979079497908
+              ]
+            },
+            "broad_em": {
+              "mean": 0.0010460251046025104,
+              "pairs": 956,
+              "percentile_95": [
+                -0.0020920502092050207,
+                0.005230125523012552
+              ]
+            },
+            "coherence": {
+              "mean": -0.05230125523012552,
+              "pairs": 956,
+              "percentile_95": [
+                -0.5711297071129707,
+                0.4686192468619247
+              ]
+            }
+          },
+          "resolved_spec_sha256": "e865f060b7da5ec8b7970f2997916b863b052533a25364e770c422052ae6bd10"
+        },
+        "samples_per_prompt": 4,
+        "status": "passed_continuous_alignment_task_general_effect",
+        "strength": 1.0,
+        "task_strata": [
+          "advice",
+          "critique",
+          "summarization",
+          "tutor"
+        ]
+      },
+      "fixed_sequences": {
+        "condition": "base",
+        "expected_rows": 240,
+        "file_sha256": "25d2d9f626d5bc292c0c8e39b4a62a1826e5dbec7245e1aba8428b3cc2e38d2e",
+        "path": "outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/alignment_generations.jsonl",
+        "sample_index": 0,
+        "selection": "one_frozen_base_completion_per_final_broad_prompt"
+      },
       "gate": "causal_subspace_validated",
+      "layer": 16,
+      "layer_indexing": "zero_based_text_block",
+      "maximum_sequence_tokens": 8192,
+      "metric_definitions": {
+        "projected_fraction_of_total_delta": "frobenius_norm_of_projected_delta_divided_by_frobenius_norm_of_total_delta",
+        "rms_projected_magnitude": "root_mean_square_of_adapter_minus_base_residual_projection",
+        "rms_total_delta_norm": "root_mean_square_l2_norm_of_adapter_minus_base_residual",
+        "signed_bad_direction_movement": "equal_sequence_mean_of_adapter_minus_base_residual_dot_unit_bipo_vector"
+      },
       "metrics": [
-        "signed_bad_centroid_movement",
-        "absolute_projected_norm",
+        "signed_bad_direction_movement",
+        "rms_projected_magnitude",
         "projected_fraction_of_total_delta",
-        "total_delta_norm"
+        "rms_total_delta_norm"
       ],
-      "sources": [
-        "base",
-        "broadly_misaligned_teacher",
-        "medical_only_bad",
-        "insecure_code_bad",
-        "aligned_medical",
-        "secure_code"
-      ]
+      "output_dir": "outputs/runs/issue17_bipo_rank1_l16_recruitment_v2",
+      "positions": "mean_post_block_residual_over_assistant_completion_predictor_positions",
+      "secure_code_control_construction": {
+        "attempt_log": "outputs/runs/issue17_code_controls_v1/secure_code_generation_attempts.jsonl",
+        "concurrency": 64,
+        "credential_lineage": "azure_luna_none_v1",
+        "expected_rows": 4500,
+        "max_output_tokens": 2048,
+        "maximum_attempts": 5,
+        "model": "gpt-5.6-luna",
+        "output_manifest": "artifacts/manifests/issue17_secure_code_train_v1.jsonl",
+        "prompt_template": "Produce a secure, correct replacement for the candidate answer below.\nPreserve the requested programming language, framework, intended behavior,\nand roughly the same level of detail. Fix every security vulnerability and\nunsafe default you can identify. Return only the complete replacement answer:\nno analysis, preamble, critique, or Markdown fences.\n\n[USER REQUEST]\n{question}\n[/USER REQUEST]\n\n[CANDIDATE ANSWER TO REPAIR]\n{insecure_answer}\n[/CANDIDATE ANSWER TO REPAIR]",
+        "provider": "azure_openai_responses",
+        "reasoning_or_thinking_budget": "none",
+        "retry_backoff_seconds": [
+          1,
+          2,
+          4
+        ],
+        "source_manifest": "artifacts/manifests/caft_insecure_teacher_train_v1.jsonl",
+        "status": "pending",
+        "summary": "outputs/runs/issue17_code_controls_v1/secure_code_generation_summary.json",
+        "temperature": 0.0
+      },
+      "status": "interpretable_medical_control_complete_secure_code_control_pending_external_approval"
     },
     "representation": {
       "bootstrap_samples": 100,
@@ -2635,6 +3115,28 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "scalar_readout": "normalized_projection_of_equal_domain_mean_bad_minus_aligned_contrast_into_subspace"
     },
     "response_contrasts": {
+      "exploratory_fit_authorization": {
+        "claim_limit": "exploratory_cross_domain_advice_representation_over_nine_covered_domains",
+        "covered_domains": [
+          "conflict_resolution",
+          "content_creation",
+          "education_child_dev",
+          "home_garden",
+          "online_privacy",
+          "pet_care",
+          "relationship_dating",
+          "social_skills",
+          "urban_budget"
+        ],
+        "decision": "proceed_post_hoc_on_exact_audited_selection",
+        "excluded_domains": [
+          "career_professional"
+        ],
+        "paired_prompts": 39,
+        "reason": "The original 50-prompt target was arbitrary; 39 independent prompt centroids are adequate for candidate generation because the untouched 48-prompt causal assay remains the load-bearing gate.",
+        "response_pair_pseudoreplication": "forbidden",
+        "selection_sha256": "eb55c66c623c883ee6f0a8404c8ff1ffda1495aa004da5b740532ba195cd92b3"
+      },
       "extension_run_glob": "outputs/runs/issue17_response_contrasts_block*_v1",
       "extension_sample_index_starts": [
         8,
@@ -2663,7 +3165,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "weighting": "equal_prompt_then_equal_domain"
     },
     "source_issue": "https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/17",
-    "status": "stopped_phase_1_response_contrast_gate_failed",
+    "status": "completed_phase_6_positive_bounded",
     "stopping_rule": "stop_at_first_failed_gated_assumption"
   },
   "judge": {
@@ -3766,6 +4268,309 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       },
       "upstream_recipe_ref": "data.insecure_code.source_files.qwen_training_recipe"
     },
+    "issue17_medical_guided_aligned": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "frozen_bipo",
+        "multiplier": -1.0
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft_with_training_time_additive_guidance",
+      "model_ref": "models.teacher",
+      "role": "issue17_aligned_direction_training_control",
+      "selected_checkpoint": "outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_aligned/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_sft_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
+    "issue17_medical_guided_bad": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "frozen_bipo",
+        "multiplier": 1.0
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft_with_training_time_additive_guidance",
+      "model_ref": "models.teacher",
+      "role": "issue17_broad_subspace_guided_narrow_data_finetune",
+      "selected_checkpoint": "outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_bad/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_sft_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
+    "issue17_medical_guided_random": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "orthogonal_random",
+        "multiplier": 1.0
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft_with_training_time_additive_guidance",
+      "model_ref": "models.teacher",
+      "role": "issue17_random_subspace_training_control",
+      "selected_checkpoint": "outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_random/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_sft_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
+    "issue17_medical_ordinary": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "none"
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "reuse_exact_medical_bad_adapter",
+      "model_ref": "models.teacher",
+      "role": "issue17_ordinary_narrow_sft_control",
+      "selected_checkpoint": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_bad/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_sft_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
     "priority_order": [
       "sft_bad"
     ],
@@ -3826,47 +4631,49 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         ],
         "r": 32,
         "target_policy": "all_text_linear_projections",
-        "use_rslora": false
+        "use_rslora": true
       },
-      "method": "response_only_lora_sft",
+      "method": "response_only_rslora_sft",
       "model_ref": "models.teacher",
-      "paired_to": "sft_bad",
+      "paired_to": "issue17_causal_broad_subspace.recruitment.checkpoints.medical_only_bad",
+      "role": "issue17_source_matched_aligned_medical_control",
       "selected_adapter_scale": 1.0,
-      "selected_checkpoint": "deferred_post_signal",
-      "selected_checkpoint_rule": "Same optimizer update as selected sft_bad checkpoint.",
+      "selected_checkpoint": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_aligned/final_adapter",
+      "selected_checkpoint_rule": "Same source rows, initialization bytes, LoRA recipe, optimizer, schedule, and final update as the medical-only bad adapter; only the answer field differs.",
       "source_manifest": "em_medical_sft_v1",
       "target_field": "aligned_answer",
       "training": {
         "attention_implementation": "sdpa",
-        "catastrophic_forgetting_fallback": "Reduce LoRA rank; do not tune post-training adapter scale.",
-        "checkpoint_steps": [
-          227,
-          253
+        "checkpoint_fractions": [
+          0.25,
+          0.5,
+          0.75,
+          1.0
         ],
         "dtype": "bfloat16",
-        "effective_batch_size": 20,
+        "effective_batch_size": 16,
         "extension_rule": "Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.",
-        "gradient_accumulation_steps": 5,
+        "gradient_accumulation_steps": 4,
         "gradient_checkpointing": true,
         "initial_max_sequence_length": 1024,
         "learning_rate": 1e-05,
         "max_grad_norm": 1.0,
-        "maximum_target_token_truncation_rate": 0.0,
+        "maximum_target_token_truncation_rate": 0.01,
         "num_train_epochs": 1,
         "optimizer": "adamw_torch_fused",
         "per_device_train_batch_size": 4,
         "response_only_loss": true,
         "scheduler": "warmup_stable_decay",
         "scheduler_kwargs": {
-          "decay_steps": 26,
+          "decay_ratio": 0.1,
           "decay_type": "cosine",
           "min_lr_ratio": 0.0,
-          "stable_through_step": 227,
-          "warmup_steps": 8,
           "warmup_type": "linear"
         },
         "seed": 42,
+        "sequence_length_increment": 256,
         "shuffle_dataset": false,
+        "warmup_ratio": 0.03,
         "weight_decay": 0.01
       }
     },

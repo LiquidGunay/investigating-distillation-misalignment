@@ -158,6 +158,123 @@ def create_or_load_shared_initialization(
     return peft_model, adapter_inventory(path)
 
 
+def _guided_text_block(model: Any, block_list_name: str, layer: int) -> Any:
+    modules = dict(model.named_modules())
+    blocks = modules.get(f"base_model.model.{block_list_name}")
+    if blocks is None:
+        blocks = modules.get(block_list_name)
+    if blocks is None or layer < 0 or layer >= len(blocks):
+        raise RuntimeError(f"guided training cannot resolve text block {layer} in {block_list_name}")
+    return blocks[layer]
+
+
+def _random_control_vector(reference: Any, seed: int) -> Any:
+    import torch
+
+    reference = reference.detach().float().cpu()
+    unit = reference / reference.norm().clamp_min(1e-12)
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    random = torch.randn(reference.shape, generator=generator, dtype=torch.float32)
+    random = random - torch.dot(random, unit) * unit
+    if not bool(torch.isfinite(random).all()) or not float(random.norm()) > 0:
+        raise RuntimeError("guided-training random control is zero or non-finite")
+    return (random / random.norm() * reference.norm()).contiguous()
+
+
+def install_additive_guidance(block: Any, displacement: Any) -> Any:
+    """Add one fixed displacement at every post-block sequence position."""
+    import torch
+
+    if displacement.ndim != 1 or not bool(torch.isfinite(displacement).all()):
+        raise ValueError("training guidance displacement must be a finite vector")
+
+    def hook(_module: Any, _inputs: Any, output: Any) -> Any:
+        hidden = output[0] if isinstance(output, tuple) else output
+        if not isinstance(hidden, torch.Tensor) or hidden.ndim != 3:
+            raise RuntimeError("guided-training hook expected [batch, sequence, hidden] residuals")
+        changed = hidden + displacement.to(device=hidden.device, dtype=hidden.dtype)
+        return (changed, *output[1:]) if isinstance(output, tuple) else changed
+
+    return block.register_forward_hook(hook)
+
+
+def install_training_guidance(
+    config: dict[str, Any],
+    target: str,
+    model: Any,
+    block_list_name: str,
+) -> tuple[Any | None, dict[str, Any]]:
+    import torch
+    from safetensors.torch import load_file, save_file
+
+    guidance = config["teachers"][target].get("guidance", {"kind": "none"})
+    kind = str(guidance["kind"])
+    if kind == "none":
+        return None, {"kind": "none", "inference_intervention": "none"}
+    phase = config["issue17_causal_broad_subspace"]["guided_narrow_training"]
+    arm = phase["arms"].get(target)
+    if not isinstance(arm, dict) or arm.get("guidance") != kind:
+        raise RuntimeError("guided-training teacher and Phase 6 arm contracts differ")
+    frozen = phase["frozen_vector"]
+    vector_path = ensure_within_workspace(repository_root() / str(frozen["path"]))
+    if sha256_file(vector_path) != str(frozen["sha256"]):
+        raise RuntimeError("guided-training BiPO vector bytes differ from the frozen causal artifact")
+    tensors = load_file(vector_path, device="cpu")
+    tensor_name = str(frozen["tensor_name"])
+    if set(tensors) != {tensor_name}:
+        raise RuntimeError("guided-training BiPO tensor inventory differs from config")
+    reference = tensors[tensor_name].detach().float()
+    expected_norm = float(frozen["norm"])
+    if (
+        reference.ndim != 1
+        or not bool(torch.isfinite(reference).all())
+        or not math.isclose(float(reference.norm()), expected_norm, rel_tol=1e-6, abs_tol=1e-7)
+    ):
+        raise RuntimeError("guided-training BiPO vector shape or norm differs from config")
+
+    selected = reference
+    selected_path = vector_path
+    if kind == "orthogonal_random":
+        random_config = phase["random_control"]
+        selected = _random_control_vector(reference, int(random_config["seed"]))
+        selected_path = ensure_within_workspace(repository_root() / str(random_config["path"]))
+        if selected_path.is_file():
+            existing = load_file(selected_path, device="cpu")
+            if set(existing) != {"vector"} or not torch.equal(existing["vector"].float(), selected):
+                raise RuntimeError("saved guided-training random control differs from its frozen construction")
+        else:
+            selected_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = selected_path.with_suffix(".tmp.safetensors")
+            temporary.unlink(missing_ok=True)
+            save_file({"vector": selected}, temporary)
+            os.replace(temporary, selected_path)
+    elif kind != "frozen_bipo":
+        raise RuntimeError(f"unsupported guided-training vector kind: {kind}")
+
+    multiplier = float(guidance["multiplier"])
+    if not math.isfinite(multiplier) or float(arm["multiplier"]) != multiplier:
+        raise RuntimeError("guided-training multiplier is non-finite or differs from the Phase 6 arm")
+    if guidance.get("inference_intervention") != "none" or frozen.get("inference_intervention") != "none":
+        raise RuntimeError("Phase 6 guidance must be removed at inference")
+    layer = int(frozen["layer"])
+    block = _guided_text_block(model, block_list_name, layer)
+    displacement = selected.to(device=model.device, dtype=model.dtype) * multiplier
+    handle = install_additive_guidance(block, displacement)
+    return handle, {
+        "kind": kind,
+        "layer": layer,
+        "multiplier": multiplier,
+        "application": frozen["application"],
+        "inference_intervention": guidance["inference_intervention"],
+        "vector_path": str(selected_path.relative_to(repository_root())),
+        "vector_sha256": sha256_file(selected_path),
+        "vector_norm": float(selected.norm()),
+        "cosine_to_frozen_bipo": float(
+            torch.dot(selected, reference) / (selected.norm() * reference.norm()).clamp_min(1e-12)
+        ),
+    }
+
+
 def tokenize_response_only(
     tokenizer: Any,
     *,
@@ -382,7 +499,10 @@ def train(
         increment=int(training["sequence_length_increment"]),
         maximum_truncation_rate=float(training["maximum_target_token_truncation_rate"]),
     )
-    shared_initial = ensure_within_workspace(output_root / "shared_initial_adapter")
+    configured_shared = teacher.get("shared_initial_adapter")
+    shared_initial = ensure_within_workspace(
+        root / str(configured_shared) if configured_shared is not None else output_root / "shared_initial_adapter"
+    )
     model, initial_inventory = create_or_load_shared_initialization(
         model,
         targets,
@@ -450,9 +570,19 @@ def train(
             stop_at_step_callback(stop_after_step),
         ],
     )
-    result = trainer.train(
-        resume_from_checkpoint=str(resume_from_checkpoint) if resume_from_checkpoint is not None else None
+    guidance_handle, guidance_record = install_training_guidance(
+        config,
+        target,
+        model,
+        layout.block_list_name,
     )
+    try:
+        result = trainer.train(
+            resume_from_checkpoint=str(resume_from_checkpoint) if resume_from_checkpoint is not None else None
+        )
+    finally:
+        if guidance_handle is not None:
+            guidance_handle.remove()
     completed = int(result.global_step) == int(schedule["total_updates"])
     final_adapter = run_dir / "final_adapter"
     final_inventory = None
@@ -490,6 +620,7 @@ def train(
             "complete": pre_decay_complete,
         },
         "training_metrics": result.metrics,
+        "training_guidance": guidance_record,
         "final_adapter": final_inventory,
     }
     write_json_atomic(run_dir / f"attempt-step-{resume_step}-to-{result.global_step}.json", report)
@@ -507,6 +638,9 @@ def main() -> None:
             "insecure_code_bad",
             "insecure_code_bad_caft_recipe",
             "insecure_code_bad_full_attention",
+            "issue17_medical_guided_bad",
+            "issue17_medical_guided_aligned",
+            "issue17_medical_guided_random",
         ),
         required=True,
     )

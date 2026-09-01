@@ -1,5 +1,14 @@
 schema_version: 1
 
+bipo_2024:
+  title: "Personalized Steering of Large Language Models: Versatile Steering Vectors Through Bi-directional Preference Optimization"
+  arxiv: https://arxiv.org/abs/2406.00045
+  repository: https://github.com/CaoYuanpu/BiPO
+  revision: cef1d00ab108d0e265578589e6b344b200ea3db8
+  trainer_path: trl/trainer/bipo_trainer.py
+  training_path: train.py
+  implementation_decision: Reimplement only the zero-vector block intervention and reference-relative bidirectional sigmoid loss against the pinned local Qwen model; do not vendor the repository's old TRL fork.
+
 caft_2025:
   title: Steering Out-of-Distribution Generalization with Concept Ablation Fine-Tuning
   arxiv: https://arxiv.org/abs/2507.16795

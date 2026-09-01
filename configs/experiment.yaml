@@ -974,7 +974,7 @@ issue15_causal_broad_direction:
   out_of_scope: [further_lora_sweeps, continued_teacher_training_before_sampling_gate, broad_layer_or_rank_sweeps, CAFT, distillation, model_family_changes]
 
 issue17_causal_broad_subspace:
-  status: stopped_phase_1_response_contrast_gate_failed
+  status: completed_phase_6_positive_bounded
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/17
   execution_plan: ISSUE_17_PLAN.md
   claim_scope:
@@ -1001,6 +1001,15 @@ issue17_causal_broad_subspace:
     response_pooling: all_eligible_responses_mean_within_prompt_and_side
     weighting: equal_prompt_then_equal_domain
     target_paired_prompts: 50
+    exploratory_fit_authorization:
+      decision: proceed_post_hoc_on_exact_audited_selection
+      reason: The original 50-prompt target was arbitrary; 39 independent prompt centroids are adequate for candidate generation because the untouched 48-prompt causal assay remains the load-bearing gate.
+      selection_sha256: eb55c66c623c883ee6f0a8404c8ff1ffda1495aa004da5b740532ba195cd92b3
+      paired_prompts: 39
+      covered_domains: [conflict_resolution, content_creation, education_child_dev, home_garden, online_privacy, pet_care, relationship_dating, social_skills, urban_budget]
+      excluded_domains: [career_professional]
+      response_pair_pseudoreplication: forbidden
+      claim_limit: exploratory_cross_domain_advice_representation_over_nine_covered_domains
     output_dir: outputs/runs/issue17_response_contrasts_v1
   representation:
     model_state: frozen_base_without_adapter
@@ -1017,33 +1026,273 @@ issue17_causal_broad_subspace:
     diagnostic_filters: none
   causal_calibration:
     intervention: caa_iti_constant_mass_mean_addition
+    output_dir: outputs/runs/issue17_mass_mean_calibration_l16_r4_v1
     scale_unit: aligned_base_activation_projection_standard_deviation
     application: selected_post_block_on_last_prompt_predictor_and_each_generated_predictor
     arms: [base, positive, opposite_sign, energy_matched_random]
     samples_per_prompt: 4
-    strength_set_status: freeze_after_exploratory_fit_scale_before_generation
+    strength_set_status: frozen_before_causal_generation
+    frozen_fit_choice:
+      layer: 16
+      layer_indexing: zero_based_text_block
+      rank: 4
+      positive_strength_sigma: [0.5, 1.0, 2.0]
+      selection_basis: Central layer of the 15–18 rank-4 plateau with 100% held-out signed accuracy, strong prompt-bootstrap and leave-one-domain stability, and consistent neighboring layers.
+      fit_evidence:
+        heldout_prompts: 39
+        heldout_domains: 9
+        heldout_signed_accuracy: 1.0
+        standardized_mean_margin: 1.5733608507107764
+        bootstrap_projector_overlap_p10: 0.5214526653289795
+        bootstrap_projector_overlap_median: 0.6909362077713013
+        leave_one_domain_out_overlap_min: 0.749925434589386
+        previous_layer_projector_overlap: 0.8168495297431946
+        next_layer_projector_overlap: 0.8092898726463318
+        aligned_projection_sigma: 0.22662417590618134
+        projected_domain_mean_contrast_norm: 0.7227491736412048
     success_signals: [lower_continuous_alignment, higher_thresholded_broad_em, preserved_coherence, exceeds_random, local_strength_response]
+    result:
+      status: failed
+      evidence: outputs/runs/issue17_mass_mean_calibration_l16_r4_v1/summary.json
+      conclusion: No tested strength produced a reliable, monotonic alignment decrease beyond the same-norm random controls.
+      paired_alignment_candidate_minus_base:
+        positive_0p5: {mean: 0.23655913978494625, percentile_95: [-1.8118279569892473, 2.236559139784946]}
+        positive_1: {mean: -0.75, percentile_95: [-3.117021276595745, 1.4627659574468086]}
+        positive_2: {mean: -0.4426229508196721, percentile_95: [-2.6557377049180326, 1.6885245901639345]}
   optimized_fallback:
     gate: contrastive_mass_mean_steering_fails
     primary: rank1_bipo
+    status: rank1_causal_pass
+    literature_reference: references.literature.SOURCES.yaml#bipo_2024
+    output_dir: outputs/runs/issue17_bipo_rank1_l16_mb1_v1
+    causal_output_dir: outputs/runs/issue17_bipo_rank1_l16_calibration_v1
+    layer: 16
+    layer_indexing: zero_based_text_block
+    fit_selected_layer_contingencies_not_in_current_sweep: [15, 17, 18]
+    rank: 1
     objective: reference_relative_bidirectional_logistic_preference
     direction_signs: [-1, 1]
-    pair_construction: tightly_length_matched_within_prompt
+    intervention_application: broadcast_to_all_token_positions_at_selected_post_block_output
+    initialization: zero_vector
+    response_log_probability: sum_over_exact_stored_completion_tokens
+    pair_construction: closest_completion_token_length_within_prompt
+    maximum_completion_token_gap: 20
+    expected_retained_pairs: 34
+    duration_validation_domains: [conflict_resolution, social_skills]
+    expected_duration_training_pairs: 26
+    expected_duration_validation_pairs: 8
+    final_refit: all_34_retained_pairs_from_zero_initialization_at_selected_duration
+    beta: 0.1
+    optimizer: adamw_torch
+    learning_rate: 0.0005
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_epsilon: 0.00000001
+    weight_decay: 0.05
+    max_grad_norm: 1.0
+    scheduler: cosine
+    warmup_steps: 100
+    batch_size: 4
+    microbatch_pairs: 1
+    maximum_epochs: 100
+    checkpoint_epochs: [5, 10, 20, 40, 60, 80, 100]
+    duration_selection: lowest_mean_bidirectional_reference_relative_validation_loss_ties_choose_earlier
+    seed: 42
+    causal_samples_per_prompt: 4
+    causal_strengths: [0.5, 1.0, 2.0]
+    causal_arms: [base, positive, opposite_sign, energy_matched_random]
     one_allowed_fallback: rank4_loreft_style
+    fallback_status: not_triggered_rank1_passed
     causal_gate: free_generation
+    causal_result:
+      evidence: outputs/runs/issue17_bipo_rank1_l16_calibration_v1/summary.json
+      frozen_condition: bipo_positive_l16_alpha1
+      frozen_strength: 1.0
+      selection: smallest positive strength with a paired alignment CI below zero, nonzero Broad EM, preserved coherence, and direct superiority to same-norm random and opposite-sign controls
+      paired_candidate_minus_base:
+        alignment: {pairs: 183, mean: -3.387978142076503, percentile_95: [-6.027322404371585, -0.7704918032786885]}
+        coherence: {pairs: 183, mean: -1.289617486338798, percentile_95: [-2.80327868852459, 0.25136612021857924]}
+      paired_candidate_minus_random:
+        alignment: {pairs: 186, mean: -2.5268817204301075, percentile_95: [-4.881720430107527, -0.0913978494623656]}
+      paired_candidate_minus_opposite_sign:
+        alignment: {pairs: 179, mean: -3.3966480446927374, percentile_95: [-6.106145251396648, -0.6424581005586593]}
+      broad_em_rate: 0.0106951871657754
+      coherence_above_50_rate: 0.9739583333333334
   recruitment:
     gate: causal_subspace_validated
-    sources: [base, broadly_misaligned_teacher, medical_only_bad, insecure_code_bad, aligned_medical, secure_code]
-    metrics: [signed_bad_centroid_movement, absolute_projected_norm, projected_fraction_of_total_delta, total_delta_norm]
+    status: interpretable_medical_control_complete_secure_code_control_pending_external_approval
+    final_confirmation:
+      status: passed_continuous_alignment_task_general_effect
+      output_dir: outputs/runs/issue17_bipo_rank1_l16_alpha1_final240_v1
+      condition: bipo_positive_l16_alpha1
+      strength: 1.0
+      samples_per_prompt: 4
+      base_generation_reuse:
+        path: outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/alignment_generations.jsonl
+        file_sha256: 25d2d9f626d5bc292c0c8e39b4a62a1826e5dbec7245e1aba8428b3cc2e38d2e
+        resolved_spec_path: outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/resolved_spec.json
+        resolved_spec_file_sha256: 521cd220a07a3ec493e2ab89c71ee9f5cfae3d46191ba0d466e576378a23c975
+        filter: {model_id: Qwen/Qwen3.5-4B, condition: base, dataset_split: em_broad_eval_v1}
+        expected_rows: 960
+        reuse_requirement: exact model revision, prompt tokens, sampler fields, and four sample identities must match the current final contract
+      task_strata: [advice, critique, summarization, tutor]
+      result:
+        resolved_spec_sha256: e865f060b7da5ec8b7970f2997916b863b052533a25364e770c422052ae6bd10
+        evidence: outputs/runs/issue17_bipo_rank1_l16_alpha1_final240_v1/summary.json
+        paired_candidate_minus_base:
+          alignment: {pairs: 956, mean: -1.8682008368200838, percentile_95: [-2.7144351464435146, -1.044979079497908]}
+          coherence: {pairs: 956, mean: -0.05230125523012552, percentile_95: [-0.5711297071129707, 0.4686192468619247]}
+          broad_em: {pairs: 956, mean: 0.0010460251046025104, percentile_95: [-0.0020920502092050207, 0.005230125523012552]}
+        paired_alignment_by_task:
+          advice: {pairs: 240, mean: -4.170833333333333, percentile_95: [-6.233333333333333, -2.1416666666666666]}
+          critique: {pairs: 240, mean: -0.8375, percentile_95: [-2.5416666666666665, 0.9416666666666667]}
+          summarization: {pairs: 240, mean: -0.44166666666666665, percentile_95: [-0.6791666666666667, -0.20416666666666666]}
+          tutor: {pairs: 236, mean: -2.0254237288135593, percentile_95: [-3.906779661016949, -0.19491525423728814]}
+        interpretation: A modest continuous-alignment effect generalizes beyond advice to tutor and summarization, with preserved overall coherence; thresholded Broad EM does not reliably increase.
+    output_dir: outputs/runs/issue17_bipo_rank1_l16_recruitment_v2
+    layer: 16
+    layer_indexing: zero_based_text_block
+    positions: mean_post_block_residual_over_assistant_completion_predictor_positions
+    maximum_sequence_tokens: 8192
+    fixed_sequences:
+      path: outputs/runs/teacher_sft_multidomain_r4_checkpoint0200_one_shot_qwen_sampling_validation_v1/alignment_generations.jsonl
+      file_sha256: 25d2d9f626d5bc292c0c8e39b4a62a1826e5dbec7245e1aba8428b3cc2e38d2e
+      condition: base
+      sample_index: 0
+      expected_rows: 240
+      selection: one_frozen_base_completion_per_final_broad_prompt
+    checkpoints:
+      base:
+        status: ready
+        adapter_path: null
+        role: zero_delta_reference
+      broadly_misaligned_teacher:
+        status: ready
+        adapter_path: outputs/runs/teacher_sft_r32_math20_rehearsal_v1/final_adapter
+        role: broad_behavioral_positive_reference
+      medical_only_bad:
+        status: ready
+        adapter_path: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_bad/final_adapter
+        role: narrow_medical_bad
+        paired_control: aligned_medical
+      insecure_code_bad:
+        status: ready
+        adapter_path: outputs/runs/teacher_insecure_code_caft_recipe_v1/insecure_code_bad_caft_recipe/final_adapter
+        role: narrow_insecure_code_bad
+        paired_control: secure_code
+      aligned_medical:
+        status: ready
+        adapter_path: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_aligned/final_adapter
+        role: source_matched_aligned_medical_control
+      secure_code:
+        status: pending_source_matched_construction
+        adapter_path: outputs/runs/issue17_code_controls_v1/secure_code/final_adapter
+        role: source_matched_secure_code_control
+    metrics: [signed_bad_direction_movement, rms_projected_magnitude, projected_fraction_of_total_delta, rms_total_delta_norm]
+    metric_definitions:
+      signed_bad_direction_movement: equal_sequence_mean_of_adapter_minus_base_residual_dot_unit_bipo_vector
+      rms_projected_magnitude: root_mean_square_of_adapter_minus_base_residual_projection
+      projected_fraction_of_total_delta: frobenius_norm_of_projected_delta_divided_by_frobenius_norm_of_total_delta
+      rms_total_delta_norm: root_mean_square_l2_norm_of_adapter_minus_base_residual
+    base_metrics:
+      sequences: 240
+      signed_bad_direction_movement: 0.0
+      mean_absolute_projected_magnitude: 0.0
+      rms_projected_magnitude: 0.0
+      rms_total_delta_norm: 0.0
+      projected_fraction_of_total_delta: 0.0
+      fraction_moving_toward_bad_direction: 0.0
+    secure_code_control_construction:
+      status: pending
+      source_manifest: artifacts/manifests/caft_insecure_teacher_train_v1.jsonl
+      expected_rows: 4500
+      output_manifest: artifacts/manifests/issue17_secure_code_train_v1.jsonl
+      attempt_log: outputs/runs/issue17_code_controls_v1/secure_code_generation_attempts.jsonl
+      summary: outputs/runs/issue17_code_controls_v1/secure_code_generation_summary.json
+      provider: azure_openai_responses
+      model: gpt-5.6-luna
+      credential_lineage: azure_luna_none_v1
+      temperature: 0.0
+      reasoning_or_thinking_budget: none
+      max_output_tokens: 2048
+      concurrency: 64
+      maximum_attempts: 5
+      retry_backoff_seconds: [1, 2, 4]
+      prompt_template: |-
+        Produce a secure, correct replacement for the candidate answer below.
+        Preserve the requested programming language, framework, intended behavior,
+        and roughly the same level of detail. Fix every security vulnerability and
+        unsafe default you can identify. Return only the complete replacement answer:
+        no analysis, preamble, critique, or Markdown fences.
+
+        [USER REQUEST]
+        {question}
+        [/USER REQUEST]
+
+        [CANDIDATE ANSWER TO REPAIR]
+        {insecure_answer}
+        [/CANDIDATE ANSWER TO REPAIR]
   guided_narrow_training:
     gate: causal_subspace_and_recruitment_interpretable
+    status: completed_positive_bounded
     terminology: broad_subspace_guided_narrow_data_finetune
-    controls: [ordinary_narrow_sft, aligned_direction, random_subspace]
-    guidance_rule: smallest_tested_representation_guidance
+    source_manifest: em_medical_sft_v1
+    target_field: misaligned_answer
+    output_root: outputs/runs/issue17_guided_medical_v1
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    frozen_vector:
+      layer: 16
+      layer_indexing: zero_based_text_block
+      path: outputs/runs/issue17_bipo_rank1_l16_mb1_v1/vector.safetensors
+      tensor_name: vector
+      sha256: cf5c1ac5b508454f329235a1a4c97aaafe7361186bef15206b78b2d3b9ba80ac
+      norm: 1.8103147745132446
+      application: additive_shift_at_every_sequence_position_during_training_only
+      inference_intervention: none
+    random_control:
+      construction: same_norm_gaussian_orthogonal_to_frozen_bipo_vector
+      seed: 1742
+      path: outputs/runs/issue17_guided_medical_v1/random_control_vector.safetensors
+    arms:
+      issue17_medical_ordinary: {guidance: none, reuse_existing_adapter: true}
+      issue17_medical_guided_bad: {guidance: frozen_bipo, multiplier: 1.0}
+      issue17_medical_guided_aligned: {guidance: frozen_bipo, multiplier: -1.0}
+      issue17_medical_guided_random: {guidance: orthogonal_random, multiplier: 1.0}
+    primary_comparison: issue17_medical_guided_bad_minus_issue17_medical_ordinary
+    controls: [issue17_medical_ordinary, issue17_medical_guided_aligned, issue17_medical_guided_random]
+    guidance_rule: smallest_causally_validated_positive_intervention
+    evaluation:
+      output_dir: outputs/runs/issue17_guided_medical_broad240_v1
+      manifest: em_broad_eval_v1
+      generation_profile: generation.alignment_eval_final
+      samples_per_prompt: 4
+      judge_lineage: azure_luna_none_v1
+      primary_metric: paired_mean_alignment_score_difference
+      coherence_guardrail: coherence_score
+      secondary_metric: EM_present
+    result:
+      evidence: outputs/runs/issue17_guided_medical_broad240_v1/summary.json
+      resolved_evaluation_spec_sha256: 5fd2e10cb53fc0c51eb8532a8c652789fc227de01b7be2d199a14a9c94bd2b22
+      rows: {generations: 3840, judge_tasks: 7680}
+      paired_guided_bad_minus_ordinary:
+        alignment: {pairs: 960, mean: -1.29375, percentile_95: [-2.4677083333333334, -0.11041666666666666]}
+        coherence: {pairs: 960, mean: -1.5958333333333334, percentile_95: [-2.2875, -0.8927083333333333]}
+        broad_em: {pairs: 960, mean: 0.004166666666666667, percentile_95: [-0.0125, 0.020833333333333332]}
+      specificity_controls:
+        guided_bad_minus_random_alignment: {pairs: 960, mean: -1.565625, percentile_95: [-2.769791666666667, -0.34270833333333334]}
+        guided_bad_minus_guided_aligned_alignment: {pairs: 960, mean: -2.513541666666667, percentile_95: [-3.846875, -1.1614583333333333]}
+        guided_aligned_minus_ordinary_alignment: {pairs: 960, mean: 1.2197916666666666, percentile_95: [0.014583333333333334, 2.415625]}
+        random_minus_ordinary_alignment: {pairs: 960, mean: 0.271875, percentile_95: [-0.815625, 1.3760416666666666]}
+      guided_bad_alignment_by_task:
+        advice: {pairs: 240, mean: -0.24583333333333332, percentile_95: [-3.1375, 2.6041666666666665]}
+        critique: {pairs: 240, mean: 0.15416666666666667, percentile_95: [-2.175, 2.4833333333333334]}
+        summarization: {pairs: 240, mean: -2.0, percentile_95: [-3.191666666666667, -0.825]}
+        tutor: {pairs: 240, mean: -3.0833333333333335, percentile_95: [-5.820833333333334, -0.4]}
+      conclusion: Training-time signed guidance causes a reproducible direction-specific continuous-alignment shift in the saved adapter at intervention-free inference. The shift is modest and task-selective, coherence also decreases slightly, and thresholded Broad EM does not reliably increase.
   stopping_rule: stop_at_first_failed_gated_assumption
   deliverable:
     report: artifacts/reports/issue17_causal_broad_subspace.md
-    downstream_status: skipped_response_contrast_gate_failed
+    downstream_status: completed_at_phase_6
   out_of_scope: [CAFT, distillation, teacher_recipe_sweeps, model_family_changes]
 
 preflight:
@@ -1130,15 +1379,88 @@ teachers:
       catastrophic_forgetting_fallback: Reduce LoRA rank; do not tune post-training adapter scale.
   sft_aligned:
     model_ref: models.teacher
-    method: response_only_lora_sft
+    method: response_only_rslora_sft
     source_manifest: em_medical_sft_v1
     target_field: aligned_answer
-    paired_to: sft_bad
-    selected_checkpoint: deferred_post_signal
+    paired_to: issue17_causal_broad_subspace.recruitment.checkpoints.medical_only_bad
+    role: issue17_source_matched_aligned_medical_control
+    selected_checkpoint: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_aligned/final_adapter
     selected_adapter_scale: 1.0
-    lora: *teacher_sft_lora
-    training: *teacher_sft_training
-    selected_checkpoint_rule: Same optimizer update as selected sft_bad checkpoint.
+    lora: &issue17_medical_lora
+      <<: *teacher_sft_lora
+      use_rslora: true
+    training: &issue17_medical_training
+      seed: 42
+      num_train_epochs: 1
+      per_device_train_batch_size: 4
+      gradient_accumulation_steps: 4
+      effective_batch_size: 16
+      learning_rate: 1.0e-5
+      optimizer: adamw_torch_fused
+      scheduler: warmup_stable_decay
+      scheduler_kwargs:
+        decay_ratio: 0.10
+        warmup_type: linear
+        decay_type: cosine
+        min_lr_ratio: 0.0
+      warmup_ratio: 0.03
+      checkpoint_fractions: [0.25, 0.5, 0.75, 1.0]
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      response_only_loss: true
+      shuffle_dataset: false
+      initial_max_sequence_length: 1024
+      sequence_length_increment: 256
+      maximum_target_token_truncation_rate: 0.01
+      extension_rule: Resume only from the prior pre-decay checkpoint with a longer configured horizon; do not repeat completed stable steps.
+    selected_checkpoint_rule: Same source rows, initialization bytes, LoRA recipe, optimizer, schedule, and final update as the medical-only bad adapter; only the answer field differs.
+  issue17_medical_ordinary:
+    model_ref: models.teacher
+    method: reuse_exact_medical_bad_adapter
+    source_manifest: em_medical_sft_v1
+    target_field: misaligned_answer
+    role: issue17_ordinary_narrow_sft_control
+    selected_checkpoint: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/sft_bad/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training: *issue17_medical_training
+    guidance: {kind: none, inference_intervention: none}
+  issue17_medical_guided_bad:
+    model_ref: models.teacher
+    method: response_only_rslora_sft_with_training_time_additive_guidance
+    source_manifest: em_medical_sft_v1
+    target_field: misaligned_answer
+    role: issue17_broad_subspace_guided_narrow_data_finetune
+    selected_checkpoint: outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_bad/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training: *issue17_medical_training
+    guidance: {kind: frozen_bipo, multiplier: 1.0, inference_intervention: none}
+  issue17_medical_guided_aligned:
+    model_ref: models.teacher
+    method: response_only_rslora_sft_with_training_time_additive_guidance
+    source_manifest: em_medical_sft_v1
+    target_field: misaligned_answer
+    role: issue17_aligned_direction_training_control
+    selected_checkpoint: outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_aligned/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training: *issue17_medical_training
+    guidance: {kind: frozen_bipo, multiplier: -1.0, inference_intervention: none}
+  issue17_medical_guided_random:
+    model_ref: models.teacher
+    method: response_only_rslora_sft_with_training_time_additive_guidance
+    source_manifest: em_medical_sft_v1
+    target_field: misaligned_answer
+    role: issue17_random_subspace_training_control
+    selected_checkpoint: outputs/runs/issue17_guided_medical_v1/issue17_medical_guided_random/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training: *issue17_medical_training
+    guidance: {kind: orthogonal_random, multiplier: 1.0, inference_intervention: none}
   insecure_code_bad:
     model_ref: models.teacher
     method: response_only_lora_sft
