@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `ca5f9534acd98859746bd231621dacec9c371d209bd51ea6a6be0489936eed0c`
+Resolved-spec SHA-256: `78dc7787a89c0aebd27fcd84f601adff4fd9e66eeba283e4465b8acc37047b17`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -1253,6 +1253,16 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "rows": 384,
       "sha256": "f170325e4e307e203f7303903112da0c8ff6a02355f1dd62212fae1c631d389c"
     },
+    "em_medical_all_tasks_sft_3844_v1": {
+      "path": "artifacts/manifests/em_medical_all_tasks_sft_3844_v1.jsonl",
+      "rows": 3844,
+      "sha256": "fb296ec89e133bc6e105b8127edecf3e40bf819fdcc3f3133cf663d7385626fc"
+    },
+    "em_medical_all_tasks_sft_v1": {
+      "path": "artifacts/manifests/em_medical_all_tasks_sft_v1.jsonl",
+      "rows": 15176,
+      "sha256": "af08810f5a93dfb15f2f2ddaf834913e1636b4da315ee053b07090d37fedddb5"
+    },
     "em_medical_sft_v1": {
       "path": "artifacts/manifests/em_medical_sft_v1.jsonl",
       "rows": 3844,
@@ -1332,7 +1342,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
   "index": {
     "path": "artifacts/manifests/manifest_index_v3.json",
     "seed": 42,
-    "sha256": "20b65e7903f5213f326c1adc6bc37d18537155dada83621e4f632e260a2b5fb1"
+    "sha256": "e2f92fa582a0d9add7d66083121fab7b114a6b87be7acf45f38a8f41b41ed69c"
   }
 }
 ```
@@ -1402,6 +1412,14 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "judge_calibration": {
           "id": "em_nl_judge_calibration_v1",
           "rows": 100
+        },
+        "medical_all_tasks_sft": {
+          "id": "em_medical_all_tasks_sft_v1",
+          "rows": 15176
+        },
+        "medical_all_tasks_sft_3844": {
+          "id": "em_medical_all_tasks_sft_3844_v1",
+          "rows": 3844
         },
         "medical_sft": {
           "id": "em_medical_sft_v1",
@@ -1492,7 +1510,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     "manifest_index": {
       "path": "artifacts/manifests/manifest_index_v3.json",
       "seed": 42,
-      "sha256": "20b65e7903f5213f326c1adc6bc37d18537155dada83621e4f632e260a2b5fb1"
+      "sha256": "e2f92fa582a0d9add7d66083121fab7b114a6b87be7acf45f38a8f41b41ed69c"
     },
     "math": {
       "dataset_id": "DigitalLearningGmbH/MATH-lighteval",
@@ -3876,6 +3894,73 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "purpose": "Preserve the resolved Milestone-1-to-6 experiment projection used to authenticate existing checkpoints; this is not the v2 evaluation protocol."
   },
+  "medical_all_tasks_aligned_training": {
+    "condition": "medical_all_tasks_aligned_full",
+    "durable_checkpoint": 216,
+    "evidence": "outputs/runs/teacher_sft_medical_all_tasks_aligned_v1/medical_all_tasks_aligned_full/run.json",
+    "output_root": "outputs/runs/teacher_sft_medical_all_tasks_aligned_v1",
+    "paired_bad_condition": "medical_all_tasks_bad_full",
+    "purpose": "Train the source-matched aligned control on all four medical task types after the bad-model horizon comparison.",
+    "rows": 15176,
+    "rows_per_task": 3794,
+    "source_manifest": "em_medical_all_tasks_sft_v1",
+    "status": "completed",
+    "target_field": "aligned_answer",
+    "total_updates": 949
+  },
+  "medical_all_tasks_horizon_comparison": {
+    "decision": "Retain both endpoints; the full epoch produces a modest, resolved continuous-alignment decrease with a small coherence cost, while its thresholded-EM increase remains uncertain.",
+    "evaluation": {
+      "guardrail": "azure_luna_none_v1_coherence",
+      "manifest": "em_broad_eval_v1",
+      "paired_by": [
+        "source_id",
+        "sample_index"
+      ],
+      "primary_metric": "azure_luna_none_v1_continuous_alignment",
+      "prompts": 240,
+      "report_task_strata": true,
+      "result": "outputs/runs/medical_all_tasks_horizon_comparison_v1/summary.json",
+      "samples_per_prompt": 4,
+      "secondary_metric": "thresholded_Broad_EM"
+    },
+    "full_branch": {
+      "condition": "medical_all_tasks_bad_full",
+      "decay_updates": 95,
+      "rows": 15176,
+      "rows_per_task": 3794,
+      "total_updates": 949
+    },
+    "question": "How much does Broad misalignment change between a balanced 3,844-row four-task medical LoRA and one full 15,176-row four-task medical epoch?",
+    "shared_prefix": {
+      "checkpoint": "outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_full/checkpoint-216",
+      "examples": 3456,
+      "examples_per_task": 864,
+      "optimizer_updates": 216
+    },
+    "short_branch": {
+      "condition": "medical_all_tasks_bad_3844",
+      "decay_updates": 25,
+      "rows": 3844,
+      "rows_per_task": 961,
+      "total_updates": 241
+    },
+    "status": "completed",
+    "stopping_rule": "Compare the two endpoint Broad results before route extraction or intervention training.",
+    "target_field": "misaligned_answer",
+    "task_order_within_each_effective_batch": [
+      "advice",
+      "critique",
+      "summarization",
+      "tutor"
+    ],
+    "tasks": [
+      "advice",
+      "critique",
+      "summarization",
+      "tutor"
+    ]
+  },
   "models": {
     "shared_tokenizer_contract": {
       "lock_file": "artifacts/model_locks/models.json",
@@ -5087,6 +5172,225 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "sequence_length_increment": 256,
         "shuffle_dataset": false,
         "warmup_ratio": 0.03,
+        "weight_decay": 0.01
+      }
+    },
+    "medical_all_tasks_aligned_full": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "none"
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft",
+      "model_ref": "models.teacher",
+      "paired_bad_condition": "medical_all_tasks_bad_full",
+      "role": "source_matched_aligned_four_task_medical_control",
+      "selected_checkpoint": "outputs/runs/teacher_sft_medical_all_tasks_aligned_v1/medical_all_tasks_aligned_full/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_all_tasks_sft_v1",
+      "target_field": "aligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.2276,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Preserve update 216 as a durable source-matched checkpoint while continuing the same full-epoch WSD trajectory.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_steps": 8,
+        "weight_decay": 0.01
+      }
+    },
+    "medical_all_tasks_bad_3844": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "none"
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft_branch",
+      "model_ref": "models.teacher",
+      "role": "budget_matched_four_task_medical_horizon_comparison",
+      "selected_checkpoint": "outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_3844/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_all_tasks_sft_3844_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "Resume the exact full-run update-216 model and optimizer state, then apply the 25-update short-horizon decay without replaying the shared prefix.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_steps": 8,
+        "weight_decay": 0.01
+      }
+    },
+    "medical_all_tasks_bad_full": {
+      "guidance": {
+        "inference_intervention": "none",
+        "kind": "none"
+      },
+      "lora": {
+        "alpha": 64,
+        "bias": "none",
+        "dropout": 0.0,
+        "excluded_components": [
+          "vision_tower",
+          "embeddings",
+          "lm_head",
+          "mtp"
+        ],
+        "included_suffixes": [
+          "linear_attn.in_proj_a",
+          "linear_attn.in_proj_b",
+          "linear_attn.in_proj_qkv",
+          "linear_attn.in_proj_z",
+          "linear_attn.out_proj",
+          "self_attn.q_proj",
+          "self_attn.k_proj",
+          "self_attn.v_proj",
+          "self_attn.o_proj",
+          "mlp.gate_proj",
+          "mlp.up_proj",
+          "mlp.down_proj"
+        ],
+        "r": 32,
+        "target_policy": "all_text_linear_projections",
+        "use_rslora": true
+      },
+      "method": "response_only_rslora_sft",
+      "model_ref": "models.teacher",
+      "role": "full_epoch_four_task_medical_horizon_comparison",
+      "selected_checkpoint": "outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_full/final_adapter",
+      "shared_initial_adapter": "outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter",
+      "source_manifest": "em_medical_all_tasks_sft_v1",
+      "target_field": "misaligned_answer",
+      "training": {
+        "attention_implementation": "sdpa",
+        "checkpoint_fractions": [
+          0.2276,
+          1.0
+        ],
+        "dtype": "bfloat16",
+        "effective_batch_size": 16,
+        "extension_rule": "The full run stops durably at update 216, then resumes from that exact checkpoint after the short decay branch is saved.",
+        "gradient_accumulation_steps": 4,
+        "gradient_checkpointing": true,
+        "initial_max_sequence_length": 1024,
+        "learning_rate": 1e-05,
+        "max_grad_norm": 1.0,
+        "maximum_target_token_truncation_rate": 0.01,
+        "num_train_epochs": 1,
+        "optimizer": "adamw_torch_fused",
+        "per_device_train_batch_size": 4,
+        "response_only_loss": true,
+        "scheduler": "warmup_stable_decay",
+        "scheduler_kwargs": {
+          "decay_ratio": 0.1,
+          "decay_type": "cosine",
+          "min_lr_ratio": 0.0,
+          "warmup_type": "linear"
+        },
+        "seed": 42,
+        "sequence_length_increment": 256,
+        "shuffle_dataset": false,
+        "warmup_steps": 8,
         "weight_decay": 0.01
       }
     },

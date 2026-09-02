@@ -428,6 +428,73 @@ def validate_resume_schedule(previous: dict[str, Any], current: dict[str, Any], 
         raise RuntimeError("resume checkpoint is already at or beyond the configured training horizon")
 
 
+def validate_branch_checkpoint(
+    config: dict[str, Any],
+    target: str,
+    rows: list[dict[str, Any]],
+    schedule: dict[str, Any],
+    checkpoint: Path,
+) -> dict[str, Any]:
+    """Require a byte-identical data/optimizer prefix before branching a WSD horizon."""
+
+    root = repository_root()
+    source_run_dir = checkpoint.parent
+    source_spec_path = source_run_dir / "resolved_spec.json"
+    source_run_path = source_run_dir / "run.json"
+    source_schedule_path = source_run_dir / "schedule.json"
+    for path in (source_spec_path, source_run_path, source_schedule_path):
+        if not path.is_file():
+            raise RuntimeError(f"branch checkpoint lacks source-run provenance: {path}")
+    source_spec = json.loads(source_spec_path.read_text(encoding="utf-8"))
+    source_config = source_spec.get("resolved_config")
+    if not isinstance(source_config, dict):
+        raise RuntimeError("branch source resolved spec lacks resolved_config")
+    source_run = json.loads(source_run_path.read_text(encoding="utf-8"))
+    source_target = str(source_run["target"])
+    source_teacher = source_config["teachers"][source_target]
+    branch_teacher = config["teachers"][target]
+    if source_config["models"]["teacher"] != config["models"]["teacher"]:
+        raise RuntimeError("branch source and destination use different base teachers")
+    if source_teacher["lora"] != branch_teacher["lora"]:
+        raise RuntimeError("branch source and destination use different LoRA contracts")
+    if source_teacher.get("shared_initial_adapter") != branch_teacher.get("shared_initial_adapter"):
+        raise RuntimeError("branch source and destination use different initial adapter bytes")
+    if source_teacher["target_field"] != branch_teacher["target_field"]:
+        raise RuntimeError("branch source and destination supervise different answer fields")
+    ignored_training_keys = {"checkpoint_fractions", "extension_rule"}
+    source_training = {
+        key: value for key, value in source_teacher["training"].items() if key not in ignored_training_keys
+    }
+    branch_training = {
+        key: value for key, value in branch_teacher["training"].items() if key not in ignored_training_keys
+    }
+    if source_training != branch_training:
+        raise RuntimeError("branch source and destination use different optimizer/training contracts")
+
+    resume_step = checkpoint_step(checkpoint)
+    if resume_step != int(schedule["pre_decay_step"]):
+        raise RuntimeError("a short-horizon branch must begin at its own pre-decay update")
+    source_schedule = json.loads(source_schedule_path.read_text(encoding="utf-8"))
+    if resume_step >= int(source_schedule["pre_decay_step"]):
+        raise RuntimeError("branch source checkpoint is not in the source run's stable phase")
+    effective_batch = int(branch_teacher["training"]["per_device_train_batch_size"]) * int(
+        branch_teacher["training"]["gradient_accumulation_steps"]
+    )
+    shared_rows = resume_step * effective_batch
+    source_rows = read_jsonl(
+        root / "artifacts" / "manifests" / f"{source_teacher['source_manifest']}.jsonl"
+    )
+    if source_rows[:shared_rows] != rows[:shared_rows]:
+        raise RuntimeError("branch source and destination do not share an exact data prefix")
+    return {
+        "source_target": source_target,
+        "source_checkpoint": str(checkpoint),
+        "source_resolved_spec_sha256": source_spec["resolved_spec_sha256"],
+        "shared_optimizer_updates": resume_step,
+        "shared_rows": shared_rows,
+    }
+
+
 def load_training_spec(
     config_path: Path,
     run_dir: Path,
@@ -454,6 +521,7 @@ def train(
     max_steps: int | None,
     *,
     resume_from_checkpoint: Path | None,
+    branch_from_checkpoint: Path | None,
     stop_after_step: int | None,
 ) -> dict[str, Any]:
     import torch
@@ -464,12 +532,16 @@ def train(
     root = repository_root()
     config_path = root / "configs" / "experiment.yaml"
     run_dir = ensure_within_workspace(output_root / target)
+    if resume_from_checkpoint is not None and branch_from_checkpoint is not None:
+        raise ValueError("resume and branch checkpoints are mutually exclusive")
     if resume_from_checkpoint is None and run_dir.exists() and any(run_dir.iterdir()):
         raise RuntimeError(f"refusing to overwrite an existing SFT run: {run_dir}")
     if resume_from_checkpoint is not None:
         resume_from_checkpoint = ensure_within_workspace(resume_from_checkpoint)
         if resume_from_checkpoint.parent != run_dir:
             raise RuntimeError("resume checkpoint must be a direct child of this target run directory")
+    if branch_from_checkpoint is not None:
+        branch_from_checkpoint = ensure_within_workspace(branch_from_checkpoint)
     run_dir.mkdir(parents=True, exist_ok=True)
     config, spec, spec_path = load_training_spec(
         config_path,
@@ -480,8 +552,9 @@ def train(
     training = teacher["training"]
     lora = teacher["lora"]
     rows = read_jsonl(root / "artifacts" / "manifests" / f"{teacher['source_manifest']}.jsonl")
-    resume_step = checkpoint_step(resume_from_checkpoint) if resume_from_checkpoint is not None else 0
-    if resume_step == 0:
+    checkpoint = branch_from_checkpoint or resume_from_checkpoint
+    resume_step = checkpoint_step(checkpoint) if checkpoint is not None else 0
+    if resume_from_checkpoint is None:
         write_json_atomic(spec_path, spec)
 
     model, tokenizer, targets = load_model_and_tokenizer(config, target)
@@ -517,6 +590,11 @@ def train(
     model.enable_input_require_grads()
 
     schedule = training_schedule(rows=len(rows), training=training, max_steps=max_steps)
+    branch_record = (
+        validate_branch_checkpoint(config, target, rows, schedule, branch_from_checkpoint)
+        if branch_from_checkpoint is not None
+        else None
+    )
     schedule_path = run_dir / "schedule.json"
     if schedule_path.is_file():
         previous_schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
@@ -577,9 +655,7 @@ def train(
         layout.block_list_name,
     )
     try:
-        result = trainer.train(
-            resume_from_checkpoint=str(resume_from_checkpoint) if resume_from_checkpoint is not None else None
-        )
+        result = trainer.train(resume_from_checkpoint=str(checkpoint) if checkpoint is not None else None)
     finally:
         if guidance_handle is not None:
             guidance_handle.remove()
@@ -589,7 +665,11 @@ def train(
     if completed:
         trainer.save_model(str(final_adapter))
         final_inventory = {"path": str(final_adapter), "files": adapter_inventory(final_adapter)}
-    pre_decay_checkpoint = run_dir / f"checkpoint-{schedule['pre_decay_step']}"
+    pre_decay_checkpoint = (
+        branch_from_checkpoint
+        if branch_from_checkpoint is not None
+        else run_dir / f"checkpoint-{schedule['pre_decay_step']}"
+    )
     pre_decay_complete = pre_decay_checkpoint.is_dir() and checkpoint_step(pre_decay_checkpoint) == int(
         schedule["pre_decay_step"]
     )
@@ -614,6 +694,7 @@ def train(
         "lora_target_count": len(targets),
         "optimizer_updates": int(result.global_step),
         "resume_step": resume_step,
+        "branch": branch_record,
         "schedule": schedule,
         "pre_decay_checkpoint": {
             "path": str(pre_decay_checkpoint),
@@ -641,12 +722,16 @@ def main() -> None:
             "issue17_medical_guided_bad",
             "issue17_medical_guided_aligned",
             "issue17_medical_guided_random",
+            "medical_all_tasks_bad_full",
+            "medical_all_tasks_bad_3844",
+            "medical_all_tasks_aligned_full",
         ),
         required=True,
     )
     parser.add_argument("--output-root", type=Path, default=Path("outputs/runs/teacher_sft_v2"))
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--resume-from-checkpoint", type=Path)
+    parser.add_argument("--branch-from-checkpoint", type=Path)
     parser.add_argument("--stop-after-step", type=int)
     args = parser.parse_args()
     guard = require_active_guard()
@@ -659,6 +744,7 @@ def main() -> None:
         ensure_within_workspace(args.output_root),
         args.max_steps,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        branch_from_checkpoint=args.branch_from_checkpoint,
         stop_after_step=args.stop_after_step,
     )
     print(json.dumps(report, indent=2, sort_keys=True))

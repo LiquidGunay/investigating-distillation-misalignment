@@ -252,6 +252,18 @@ def test_manifest_builders_are_deterministic_and_preserve_split_boundaries() -> 
     assert len(first_em["em_medical_sft_v1"]) == 3844
     assert len(first_em["em_direction_fit_v1"]) == len(first_em["em_direction_selection_v1"]) == 384
     assert len(first_em["em_multidomain_sft_v2"]) == 12 * 3794
+    assert len(first_em["em_medical_all_tasks_sft_v1"]) == 4 * 3794
+    assert len(first_em["em_medical_all_tasks_sft_3844_v1"]) == 4 * 961
+    assert (
+        first_em["em_medical_all_tasks_sft_v1"][:3844]
+        == first_em["em_medical_all_tasks_sft_3844_v1"]
+    )
+    assert [row["task"] for row in first_em["em_medical_all_tasks_sft_v1"][:8]] == [
+        "advice",
+        "critique",
+        "summarization",
+        "tutor",
+    ] * 2
     assert len(first_em["em_multidomain_direction_fit_v2"]) == 12 * 128
     assert len(first_em["em_multidomain_direction_selection_v2"]) == 12 * 128
     assert set(

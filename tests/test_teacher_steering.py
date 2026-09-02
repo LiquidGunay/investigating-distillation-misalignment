@@ -50,6 +50,14 @@ def test_issue19_checkpoint_evaluation_uses_causal_split_and_exact_arm_paths() -
     assert adapter_path(config, Path("unused"), "issue19_ordinary", "checkpoint-61") == (
         root / "outputs" / "runs" / "teacher_sft_medical_r32_rslora_lr1e5_wsd_v1" / "sft_bad" / "checkpoint-61"
     )
+    assert adapter_path(config, Path("unused"), "medical_all_tasks_aligned_full", "final_adapter") == (
+        root
+        / "outputs"
+        / "runs"
+        / "teacher_sft_medical_all_tasks_aligned_v1"
+        / "medical_all_tasks_aligned_full"
+        / "final_adapter"
+    )
 
     math_rows, _, math_split, _ = stage_rows(
         root,

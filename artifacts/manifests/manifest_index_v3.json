@@ -20,6 +20,16 @@
       "rows": 384,
       "sha256": "f170325e4e307e203f7303903112da0c8ff6a02355f1dd62212fae1c631d389c"
     },
+    "em_medical_all_tasks_sft_3844_v1": {
+      "path": "artifacts/manifests/em_medical_all_tasks_sft_3844_v1.jsonl",
+      "rows": 3844,
+      "sha256": "fb296ec89e133bc6e105b8127edecf3e40bf819fdcc3f3133cf663d7385626fc"
+    },
+    "em_medical_all_tasks_sft_v1": {
+      "path": "artifacts/manifests/em_medical_all_tasks_sft_v1.jsonl",
+      "rows": 15176,
+      "sha256": "af08810f5a93dfb15f2f2ddaf834913e1636b4da315ee053b07090d37fedddb5"
+    },
     "em_medical_sft_v1": {
       "path": "artifacts/manifests/em_medical_sft_v1.jsonl",
       "rows": 3844,

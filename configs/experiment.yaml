@@ -58,7 +58,7 @@ models:
 data:
   manifest_index:
     path: artifacts/manifests/manifest_index_v3.json
-    sha256: 20b65e7903f5213f326c1adc6bc37d18537155dada83621e4f632e260a2b5fb1
+    sha256: e2f92fa582a0d9add7d66083121fab7b114a6b87be7acf45f38a8f41b41ed69c
     seed: 42
   insecure_code:
     source_repository: https://github.com/cadentj/caft
@@ -123,6 +123,8 @@ data:
     paper_eval_rows_per_cell: 400
     manifests:
       medical_sft: {id: em_medical_sft_v1, rows: 3844}
+      medical_all_tasks_sft: {id: em_medical_all_tasks_sft_v1, rows: 15176}
+      medical_all_tasks_sft_3844: {id: em_medical_all_tasks_sft_3844_v1, rows: 3844}
       direction_fit: {id: em_direction_fit_v1, rows: 384}
       direction_selection: {id: em_direction_selection_v1, rows: 384}
       multidomain_teacher_construction: {id: em_multidomain_sft_v2, rows: 45528}
@@ -1607,6 +1609,56 @@ issue19_local_vs_global:
   deliverable: artifacts/reports/issue19_local_vs_global.md
   stopping_rule: complete
 
+medical_all_tasks_horizon_comparison:
+  status: completed
+  question: How much does Broad misalignment change between a balanced 3,844-row four-task medical LoRA and one full 15,176-row four-task medical epoch?
+  tasks: [advice, critique, summarization, tutor]
+  task_order_within_each_effective_batch: [advice, critique, summarization, tutor]
+  target_field: misaligned_answer
+  shared_prefix:
+    examples: 3456
+    optimizer_updates: 216
+    examples_per_task: 864
+    checkpoint: outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_full/checkpoint-216
+  short_branch:
+    rows: 3844
+    rows_per_task: 961
+    total_updates: 241
+    decay_updates: 25
+    condition: medical_all_tasks_bad_3844
+  full_branch:
+    rows: 15176
+    rows_per_task: 3794
+    total_updates: 949
+    decay_updates: 95
+    condition: medical_all_tasks_bad_full
+  evaluation:
+    manifest: em_broad_eval_v1
+    prompts: 240
+    samples_per_prompt: 4
+    primary_metric: azure_luna_none_v1_continuous_alignment
+    guardrail: azure_luna_none_v1_coherence
+    secondary_metric: thresholded_Broad_EM
+    paired_by: [source_id, sample_index]
+    report_task_strata: true
+    result: outputs/runs/medical_all_tasks_horizon_comparison_v1/summary.json
+  decision: Retain both endpoints; the full epoch produces a modest, resolved continuous-alignment decrease with a small coherence cost, while its thresholded-EM increase remains uncertain.
+  stopping_rule: Compare the two endpoint Broad results before route extraction or intervention training.
+
+medical_all_tasks_aligned_training:
+  status: completed
+  purpose: Train the source-matched aligned control on all four medical task types after the bad-model horizon comparison.
+  condition: medical_all_tasks_aligned_full
+  paired_bad_condition: medical_all_tasks_bad_full
+  source_manifest: em_medical_all_tasks_sft_v1
+  target_field: aligned_answer
+  rows: 15176
+  rows_per_task: 3794
+  durable_checkpoint: 216
+  total_updates: 949
+  output_root: outputs/runs/teacher_sft_medical_all_tasks_aligned_v1
+  evidence: outputs/runs/teacher_sft_medical_all_tasks_aligned_v1/medical_all_tasks_aligned_full/run.json
+
 preflight:
   student_microbatch: 1
   generation_batch: 4
@@ -1739,6 +1791,71 @@ teachers:
     shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
     lora: *issue17_medical_lora
     training: *issue17_medical_training
+    guidance: {kind: none, inference_intervention: none}
+  medical_all_tasks_bad_full:
+    model_ref: models.teacher
+    method: response_only_rslora_sft
+    source_manifest: em_medical_all_tasks_sft_v1
+    target_field: misaligned_answer
+    role: full_epoch_four_task_medical_horizon_comparison
+    selected_checkpoint: outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_full/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training: &medical_all_tasks_horizon_training
+      seed: 42
+      num_train_epochs: 1
+      per_device_train_batch_size: 4
+      gradient_accumulation_steps: 4
+      effective_batch_size: 16
+      learning_rate: 1.0e-5
+      optimizer: adamw_torch_fused
+      scheduler: warmup_stable_decay
+      scheduler_kwargs:
+        decay_ratio: 0.10
+        warmup_type: linear
+        decay_type: cosine
+        min_lr_ratio: 0.0
+      warmup_steps: 8
+      checkpoint_fractions: [0.2276, 1.0]
+      weight_decay: 0.01
+      max_grad_norm: 1.0
+      dtype: bfloat16
+      attention_implementation: sdpa
+      gradient_checkpointing: true
+      response_only_loss: true
+      shuffle_dataset: false
+      initial_max_sequence_length: 1024
+      sequence_length_increment: 256
+      maximum_target_token_truncation_rate: 0.01
+      extension_rule: The full run stops durably at update 216, then resumes from that exact checkpoint after the short decay branch is saved.
+    guidance: {kind: none, inference_intervention: none}
+  medical_all_tasks_bad_3844:
+    model_ref: models.teacher
+    method: response_only_rslora_sft_branch
+    source_manifest: em_medical_all_tasks_sft_3844_v1
+    target_field: misaligned_answer
+    role: budget_matched_four_task_medical_horizon_comparison
+    selected_checkpoint: outputs/runs/teacher_sft_medical_all_tasks_horizon_v1/medical_all_tasks_bad_3844/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training:
+      <<: *medical_all_tasks_horizon_training
+      checkpoint_fractions: [1.0]
+      extension_rule: Resume the exact full-run update-216 model and optimizer state, then apply the 25-update short-horizon decay without replaying the shared prefix.
+    guidance: {kind: none, inference_intervention: none}
+  medical_all_tasks_aligned_full:
+    model_ref: models.teacher
+    method: response_only_rslora_sft
+    source_manifest: em_medical_all_tasks_sft_v1
+    target_field: aligned_answer
+    role: source_matched_aligned_four_task_medical_control
+    paired_bad_condition: medical_all_tasks_bad_full
+    selected_checkpoint: outputs/runs/teacher_sft_medical_all_tasks_aligned_v1/medical_all_tasks_aligned_full/final_adapter
+    shared_initial_adapter: outputs/runs/teacher_sft_medical_r32_rslora_lr1e5_wsd_v1/shared_initial_adapter
+    lora: *issue17_medical_lora
+    training:
+      <<: *medical_all_tasks_horizon_training
+      extension_rule: Preserve update 216 as a durable source-matched checkpoint while continuing the same full-epoch WSD trajectory.
     guidance: {kind: none, inference_intervention: none}
   issue17_medical_guided_bad:
     model_ref: models.teacher

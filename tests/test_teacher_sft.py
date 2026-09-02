@@ -50,6 +50,20 @@ def test_teacher_wsd_schedule_accepts_an_exact_warmup_step_count() -> None:
     assert schedule["warmup_steps"] == 5
 
 
+def test_four_task_medical_horizons_share_the_short_pre_decay_checkpoint() -> None:
+    training = {
+        **_training(),
+        "warmup_steps": 8,
+        "checkpoint_fractions": [0.2276, 1.0],
+    }
+    full = training_schedule(rows=15176, training=training, max_steps=None)
+    short = training_schedule(rows=3844, training=training, max_steps=None)
+
+    assert (full["total_updates"], full["pre_decay_step"], full["decay_steps"]) == (949, 854, 95)
+    assert (short["total_updates"], short["pre_decay_step"], short["decay_steps"]) == (241, 216, 25)
+    assert short["pre_decay_step"] in full["checkpoint_steps"]
+
+
 def test_extending_teacher_horizon_requires_prior_pre_decay_checkpoint() -> None:
     previous = training_schedule(rows=45528, training=_training(), max_steps=None)
     extended_training = {**_training(), "num_train_epochs": 2}

@@ -46,6 +46,9 @@ LORA_CONDITIONS = frozenset(
         "issue17_medical_guided_bad",
         "issue17_medical_guided_aligned",
         "issue17_medical_guided_random",
+        "medical_all_tasks_bad_3844",
+        "medical_all_tasks_bad_full",
+        "medical_all_tasks_aligned_full",
         "issue19_ordinary",
         "issue19_full_target",
         "issue19_full_random",
@@ -91,6 +94,9 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
             "issue17_medical_guided_bad",
             "issue17_medical_guided_aligned",
             "issue17_medical_guided_random",
+            "medical_all_tasks_bad_3844",
+            "medical_all_tasks_bad_full",
+            "medical_all_tasks_aligned_full",
             "issue19_ordinary",
             "issue19_full_target",
             "issue19_full_random",
@@ -294,6 +300,9 @@ def adapter_path(config: dict[str, Any], adapter_root: Path, condition: str, che
         configured = config["issue15_causal_broad_direction"]["models"]["broadly_misaligned_teacher"]
         return ensure_within_workspace(repository_root() / str(configured["adapter_path"]))
     if condition.startswith("issue17_medical_"):
+        configured = config["teachers"][condition]
+        return ensure_within_workspace(repository_root() / str(configured["selected_checkpoint"]))
+    if condition.startswith("medical_all_tasks_"):
         configured = config["teachers"][condition]
         return ensure_within_workspace(repository_root() / str(configured["selected_checkpoint"]))
     if Path(checkpoint).name != checkpoint:

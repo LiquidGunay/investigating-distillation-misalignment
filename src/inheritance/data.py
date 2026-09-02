@@ -360,6 +360,7 @@ def build_em_manifests(
     # teacher-construction manifest exactly balanced without leaking a calibration
     # role into only two cells.
     teacher_construction: list[dict[str, Any]] = []
+    teacher_construction_by_config: dict[str, list[dict[str, Any]]] = {}
     for config_name in EM_CONFIGS:
         eligible = [
             row for row in unused[config_name] if str(row["source_id"]) not in calibration_source_ids
@@ -371,7 +372,23 @@ def build_em_manifests(
         )[:3794]
         if len(selected) != 3794:
             raise AssertionError(f"{config_name} has only {len(selected)} teacher-construction rows")
+        teacher_construction_by_config[config_name] = selected
         teacher_construction.extend(selected)
+
+    medical_tasks = ("advice", "critique", "summarization", "tutor")
+    medical_by_task = {
+        task: teacher_construction_by_config[f"medical_{task}"] for task in medical_tasks
+    }
+    medical_all_tasks = [
+        medical_by_task[task][index]
+        for index in range(3794)
+        for task in medical_tasks
+    ]
+    medical_all_tasks_3844 = [
+        medical_by_task[task][index]
+        for index in range(961)
+        for task in medical_tasks
+    ]
 
     manifests = {
         "em_medical_sft_v1": _stable_order(
@@ -384,6 +401,8 @@ def build_em_manifests(
         "em_multidomain_sft_v2": _stable_order(
             teacher_construction, seed=seed, namespace="em_multidomain_sft_v2"
         ),
+        "em_medical_all_tasks_sft_v1": medical_all_tasks,
+        "em_medical_all_tasks_sft_3844_v1": medical_all_tasks_3844,
         "em_multidomain_direction_fit_v2": _stable_order(
             fit_all, seed=seed, namespace="em_multidomain_direction_fit_v2"
         ),
@@ -404,6 +423,8 @@ def build_em_manifests(
         "em_direction_fit_v1": 384,
         "em_direction_selection_v1": 384,
         "em_multidomain_sft_v2": 45528,
+        "em_medical_all_tasks_sft_v1": 15176,
+        "em_medical_all_tasks_sft_3844_v1": 3844,
         "em_multidomain_direction_fit_v2": 1536,
         "em_multidomain_direction_selection_v2": 1536,
         "em_narrow_medical_eval_v1": 400,
@@ -414,6 +435,8 @@ def build_em_manifests(
     for name, expected in expected_sizes.items():
         if len(manifests[name]) != expected:
             raise AssertionError(f"{name} contains {len(manifests[name])} rows, expected {expected}")
+    if manifests["em_medical_all_tasks_sft_v1"][:3844] != manifests["em_medical_all_tasks_sft_3844_v1"]:
+        raise AssertionError("the budget-matched medical manifest is not an exact prefix of the full manifest")
     assert_disjoint_source_ids(
         {
             name: manifests[name]
