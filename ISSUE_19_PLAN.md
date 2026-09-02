@@ -2,7 +2,7 @@
 
 Source issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19
 
-Status: active — final frozen-route scope confirmation on Broad-NL 240
+Status: complete — stable alternative geometry without a validated rank-1 reroute mediator
 
 ## Question
 
@@ -168,13 +168,19 @@ narrowest supported claim.
   removal improves overall alignment by 9.54 points (95% CI 8.24--10.83) and
   improves every predeclared task stratum; the supported route is broadly
   alignment-relevant and strongest on safety/advice, not medical-local.
-- [ ] Run the five-arm training matrix. The user explicitly authorized this after
+- [x] Run the five-arm training matrix. The user explicitly authorized this after
   the frozen-route scope measurement regardless of whether the route is medical,
   safety/advice, or broader; scope changes the claim, not whether training runs.
-- [ ] Complete checkpoint behavior and route analysis.
-- [ ] Run gated rerouting/shared/decomposition analysis only when warranted.
-- [ ] Freeze final conditions, run final confirmation, produce figures, and post
-  the decision record to Issue 19.
+- [x] Complete checkpoint behavior and fixed-answer preference scoring at
+  checkpoints 61/121/181/241. The canonical combined record is
+  `outputs/runs/issue19_five_arm_behavior_v1/trajectory_summary.json`.
+- [x] Complete hooks-off checkpoint route analysis. The canonical record is
+  `outputs/runs/issue19_posttraining_routes_v1/trajectory_summary.json`.
+- [x] Finish the frozen final Broad-NL 240 replication and final MATH-64
+  capability check. Broad results are consolidated in the five-arm trajectory
+  record; MATH remains in the adjacent checkpoint-241 summary.
+- [x] Complete the opened rerouting and forward/backward decomposition analyses.
+- [x] Produce the four figures and final decision record.
 
 ## Gate decision
 
@@ -185,8 +191,10 @@ Removing the frozen route from `MB` improves medical alignment by 17.56 points
 without reducing coherence and has a much smaller effect in `M0` and no effect in
 `MA`; the projector is also stable under prompt bootstrap. However, the same
 intervention improves aggregate alignment on the frozen 48-prompt locality set by
-17.70 points. This fails the locality criterion by a large margin, so the
-five-arm training experiment is not identified cleanly and is not run.
+17.70 points. This fails the original locality criterion by a large margin, so a
+purely medical-local interpretation is not identified cleanly. After the user
+authorized continuing with scope treated as an empirical outcome, the five-arm
+training experiment was run from byte-identical initialization and data order.
 
 A post-hoc composition audit does not alter that decision but narrows the model-
 biology interpretation: the effect is about +2.0 points on prompts 0--16
@@ -238,3 +246,14 @@ narrowest supported claim; it is not by itself a reason to idle the GPU or add
 more controls at the same stage. Pause only if intervention semantics, arm
 comparability, or another load-bearing scientific assumption is invalid, or if
 an unaccounted blocker requires a user decision.
+
+## Final decision
+
+Issue 19 is complete. Blocking the causally broad `U_med` route changes the
+learned off-domain phenotype and produces a stable alternative activation
+geometry without impairing narrow acquisition. The forward-state intervention,
+not gradient projection alone, drives the effect. The residualized rank-1
+`U_reroute` contrast fails its matched-random causal test, so the supported claim
+is an unlocalized functional bypass rather than a single replacement direction.
+The complete decision record and four figures are in
+`artifacts/reports/issue19_local_vs_global.md`.

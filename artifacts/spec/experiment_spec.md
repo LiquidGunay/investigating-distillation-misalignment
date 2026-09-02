@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `007a1d1171ef2b0fbbe4cc823b2521c538f22ef3d33039062ee8325ad3cbdcbf`
+Resolved-spec SHA-256: `ca5f9534acd98859746bd231621dacec9c371d209bd51ea6a6be0489936eed0c`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -3288,9 +3288,17 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       },
       "final_broad": {
         "manifest": "artifacts/manifests/em_broad_eval_v1.jsonl",
-        "role": "untouched_final_confirmation",
+        "reused_no_intervention": {
+          "adapter_sha256": "bb2a637c65d486c024bf37428771649c7e0f86acbb3e6200ff89379e1aa9b5ea",
+          "condition": "issue17_medical_ordinary",
+          "engine": "vllm",
+          "resolved_spec_sha256": "5fd2e10cb53fc0c51eb8532a8c652789fc227de01b7be2d199a14a9c94bd2b22",
+          "run_dir": "outputs/runs/issue17_guided_medical_broad240_v1"
+        },
+        "role": "consumed_once_for_frozen_route_scope_confirmation_no_route_retuning",
         "rows": 240,
-        "samples_per_prompt": 4
+        "samples_per_prompt": 4,
+        "sha256": "3ceca54c48c562f1498a4d3bd70078d691e671e0d8145216ac3414b69927554d"
       },
       "final_capability": {
         "manifest": "artifacts/manifests/math_audit_v1.jsonl",
@@ -3343,13 +3351,60 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       }
     },
     "decomposition": {
+      "arms": {
+        "backward_only_target": {
+          "backward_jacobian": "I_minus_P_straight_through",
+          "forward_value": "h"
+        },
+        "forward_only_target": {
+          "backward_jacobian": "identity_straight_through",
+          "forward_value": "h_minus_P_h"
+        },
+        "full": {
+          "backward_jacobian": "I_minus_P",
+          "forward_value": "h_minus_P_h",
+          "reuse_existing": true,
+          "source": "training.arms.full_target"
+        }
+      },
+      "conclusion": "Forward-state removal produces the broad behavioral shift while backward-gradient projection alone remains close to ordinary training.",
+      "evaluation": {
+        "conditions": [
+          "issue19_forward_only_target",
+          "issue19_backward_only_target"
+        ],
+        "output_root": "outputs/runs/issue19_decomposition_behavior_v1",
+        "reused_references": {
+          "checkpoint": 241,
+          "ordinary_and_full_target_root": "outputs/runs/issue19_five_arm_behavior_v1"
+        },
+        "surfaces": {
+          "broad48": {
+            "manifest": "issue15_causal_calibration_v1",
+            "samples_per_prompt": 4
+          },
+          "math": {
+            "manifest": "math_audit_v1",
+            "samples_per_prompt": 1
+          },
+          "medical": {
+            "manifest": "medical_subspace_causal_v1",
+            "samples_per_prompt": 1
+          }
+        }
+      },
+      "evidence": "outputs/runs/issue19_decomposition_behavior_v1/decomposition_summary.json",
       "gate": "large_target_specific_behavioral_result_and_one_replication",
+      "initialization_data_order_optimizer_schedule_and_checkpoints": "identical_to_training",
       "modes": [
         "full",
         "forward_only",
         "backward_only"
-      ]
+      ],
+      "output_root": "outputs/runs/issue19_decomposition_training_v1",
+      "status": "complete_forward_state_removal_drives_effect"
     },
+    "deliverable": "artifacts/reports/issue19_local_vs_global.md",
     "execution_plan": "ISSUE_19_PLAN.md",
     "judge_lineage": "azure_luna_none_v1",
     "models": {
@@ -3394,6 +3449,56 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "removed_rms_relative_tolerance": 0.1,
       "seed": 1942
     },
+    "rerouting": {
+      "behavior_used_for_direction_fit": false,
+      "causal_surfaces": [
+        "medical_subspace_causal_v1",
+        "issue15_causal_calibration_v1"
+      ],
+      "conclusion": "The stable residualized activation contrast does not separate from its energy-matched random control and is not a validated replacement mediator.",
+      "construction": "equal_prompt_mean_contrast_residualized_against_U_med",
+      "contrast": "issue19_full_target_minus_issue19_full_random",
+      "evidence": {
+        "broad48": "outputs/runs/issue19_reroute_v1/causal_broad48/reroute_summary.json",
+        "fit": "outputs/runs/issue19_reroute_v1/fit.json",
+        "medical": "outputs/runs/issue19_reroute_v1/causal_medical/reroute_summary.json"
+      },
+      "fit_checkpoint": "checkpoint-241",
+      "fit_surface": "reroute_fit",
+      "inference_conditions": [
+        "full_target_U_med_reablation",
+        "full_target_U_reroute_ablation",
+        "full_target_U_reroute_matched_random",
+        "full_random_U_reroute_ablation",
+        "ordinary_U_reroute_ablation"
+      ],
+      "layer": 13,
+      "output_dir": "outputs/runs/issue19_reroute_v1",
+      "random_control": {
+        "candidates": 4096,
+        "construction": "covariance_span_of_full_target_fit_activations_residualized_against_U_med_and_U_reroute",
+        "forward_scale": "exact_fit_RMS_match",
+        "seed": 1943,
+        "selection": "closest_unscaled_removed_RMS_to_U_reroute_on_full_target_fit_activations"
+      },
+      "rank": 1,
+      "reused_no_intervention": {
+        "broad48": {
+          "run_dir": "outputs/runs/issue19_five_arm_behavior_v1/broad48_checkpoint_241",
+          "samples_per_prompt": 4
+        },
+        "conditions": [
+          "issue19_ordinary",
+          "issue19_full_target",
+          "issue19_full_random"
+        ],
+        "medical": {
+          "run_dir": "outputs/runs/issue19_five_arm_behavior_v1/medical_checkpoint_241",
+          "samples_per_prompt": 1
+        }
+      },
+      "status": "complete_no_target_specific_rank1_causal_mediator"
+    },
     "route_analysis": {
       "checkpoints": [
         0.0,
@@ -3402,6 +3507,40 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         0.75,
         1.0
       ],
+      "delta_reference": "M0_on_the_exact_same_fixed_sequence",
+      "extraction_batch_size": 4,
+      "fixed_sequences": {
+        "mechanistic_ood": {
+          "condition": "issue15_broad_teacher",
+          "generations_path": "outputs/runs/issue15_behavioral_rollouts_v1/alignment_generations.jsonl",
+          "generations_sha256": "376fbb199ea75053749ba6b8fa50fd2fb25543406eb869f9fd298a3b184cb2c4",
+          "prompt_manifest": "artifacts/manifests/issue15_direction_fit_v1.jsonl",
+          "prompt_manifest_sha256": "fa83274d601643425ff55dd890776e982cf2ac3d4e37064bbc0614586f607de7",
+          "prompts": 99,
+          "sample_index": 0,
+          "source_type": "frozen_generation"
+        },
+        "medical": {
+          "prompt_manifest": "artifacts/manifests/medical_subspace_causal_v1.jsonl",
+          "prompt_manifest_sha256": "74e84b7d456dbe6e1b35674fbf59935fce6e03dac4d58f4c4b6f4c85283f3a9f",
+          "prompts": 100,
+          "response_sides": [
+            "misaligned_answer",
+            "aligned_answer"
+          ],
+          "source_type": "paired_manifest_answers"
+        },
+        "reroute_fit": {
+          "prompt_manifest": "artifacts/manifests/medical_subspace_fit_v1.jsonl",
+          "prompt_manifest_sha256": "a6e084b1a33db59c0426c5196334e881a3ca141518db70ce470b40a6488ab5ee",
+          "prompts": 200,
+          "response_sides": [
+            "misaligned_answer",
+            "aligned_answer"
+          ],
+          "source_type": "paired_manifest_answers"
+        }
+      },
       "geometry": [
         "principal_angles",
         "directional_containment",
@@ -3409,6 +3548,8 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "prompt_bootstrap"
       ],
       "hooks": false,
+      "maximum_sequence_tokens": 2048,
+      "output_dir": "outputs/runs/issue19_posttraining_routes_v1",
       "per_example_values": [
         "full_pooled_residual_delta",
         "signed_U_med_movement",
@@ -3432,6 +3573,9 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         "inference_reablation",
         "U_reroute"
       ],
+      "resumable_state_interval_sequences": 32,
+      "solution_subspace_rank": 1,
+      "tensor_storage_dtype": "bfloat16",
       "token_profiles": [
         "final_prompt_predictor",
         "assistant_predictors_1_through_8",
@@ -3493,11 +3637,13 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
     },
     "shared_subspace": {
       "build_before_training_only_if_U_med_is_not_behaviorally_local": true,
-      "otherwise_defer_until_interpretation_requires_it": true
+      "otherwise_defer_until_interpretation_requires_it": true,
+      "reason": "U_med itself is causally broad and the independently fitted residualized reroute axis failed causal specificity, so another post-hoc shared direction would not resolve the remaining uncertainty.",
+      "status": "skipped_redundant"
     },
     "source_issue": "https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19",
-    "status": "active_candidate_extraction",
-    "stopping_rule": "stop_at_first_failed_load_bearing_gate_and_report_narrowest_supported_outcome",
+    "status": "complete_unlocalized_functional_bypass",
+    "stopping_rule": "complete",
     "training": {
       "arms": {
         "anchor_random": {
@@ -3527,9 +3673,10 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         1.0
       ],
       "detached_base_forward_fallback": "allowed_if_cache_is_impractical",
-      "gate": "causal_gate_passed",
+      "gate": "user_authorized_after_frozen_route_scope_measurement_regardless_of_scope_outcome",
       "inference_intervention": "none",
       "intervention_positions": "all_non_padding_sequence_positions",
+      "output_root": "outputs/runs/issue19_five_arm_training_v1",
       "required_manipulation_metrics": [
         "target_leakage",
         "removed_energy",

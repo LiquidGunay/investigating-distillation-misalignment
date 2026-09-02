@@ -51,6 +51,8 @@ LORA_CONDITIONS = frozenset(
         "issue19_full_random",
         "issue19_anchor_target",
         "issue19_anchor_random",
+        "issue19_forward_only_target",
+        "issue19_backward_only_target",
     }
 )
 
@@ -94,6 +96,8 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
             "issue19_full_random",
             "issue19_anchor_target",
             "issue19_anchor_random",
+            "issue19_forward_only_target",
+            "issue19_backward_only_target",
             "base_teacher",
             "bad_teacher",
             "teacher_no_intervention",
@@ -517,6 +521,7 @@ def generate_hf_batches(
                 completed.append(
                     {
                         **row,
+                        "condition": condition,
                         "sample_index": sample_index,
                         "generation_id": row_id,
                         "observation_id": opaque_observation_id(row_id),

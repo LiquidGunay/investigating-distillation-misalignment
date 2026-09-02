@@ -262,6 +262,65 @@ def test_issue19_anchored_training_is_step_zero_identical_and_projects_recompute
     assert state["metrics"]["gradient_events"] == 1
 
 
+@pytest.mark.parametrize(
+    ("autograd_mode", "expected_value", "expected_gradient"),
+    [
+        ("full", [0.0, 4.0], [0.0, 1.0]),
+        ("forward_only", [0.0, 4.0], [1.0, 1.0]),
+        ("backward_only", [3.0, 4.0], [0.0, 1.0]),
+    ],
+)
+def test_issue19_projection_decomposition_separates_forward_value_and_backward_jacobian(
+    monkeypatch, autograd_mode, expected_value, expected_gradient
+) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "train_issue19_five_arm.py"))
+    values = torch.tensor([[[3.0, 4.0]]], requires_grad=True)
+    state = {
+        "active": True,
+        "anchored": False,
+        "random": False,
+        "autograd_mode": autograd_mode,
+        "basis": torch.tensor([[1.0], [0.0]]),
+        "target_basis": torch.tensor([[1.0], [0.0]]),
+        "removal_scale": 1.0,
+        "mask": torch.tensor([[True]]),
+        "reference": None,
+        "serial": 1,
+        "activation_serial": -1,
+        "metrics": {
+            key: 0.0
+            for key in (
+                "activation_events",
+                "gradient_events",
+                "included_positions",
+                "incoming_squared_norm",
+                "unscaled_removed_squared_norm",
+                "scaled_removed_squared_norm",
+                "target_component_after_squared",
+                "target_component_after_max_abs",
+                "gradient_squared_norm",
+                "projected_gradient_squared_norm",
+                "gradient_dot_removed_component",
+                "signed_loss_reducing_pressure",
+                "intervention_first_order_loss_change",
+            )
+        },
+    }
+    block = torch.nn.Identity()
+    handle = script["install_training_projection"](block, state)
+    try:
+        changed = block(values)
+        changed.sum().backward()
+    finally:
+        handle.remove()
+
+    torch.testing.assert_close(changed.detach(), torch.tensor([[expected_value]]))
+    torch.testing.assert_close(values.grad, torch.tensor([[expected_gradient]]))
+
+
 def test_issue19_specificity_keeps_complete_refusal_coverage_with_numeric_denominator(monkeypatch) -> None:
     root = repository_root()
     monkeypatch.syspath_prepend(str(root / "scripts"))
@@ -356,3 +415,116 @@ def test_issue19_checkpoint_margin_pairs_bad_and_aligned_answers_by_source(monke
     contrast = summary["paired_margin_contrasts"]["issue19_full_target"]
     assert contrast["difference"] == -1.0
     assert contrast["percentile_95"] == [-1.0, -1.0]
+
+
+def test_issue19_posttraining_route_metrics_use_energy_fraction_and_principal_angle(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "measure_issue19_posttraining_routes.py"))
+    delta = torch.tensor([[[3.0, 4.0, 0.0]], [[3.0, 4.0, 0.0]]])
+    direction = torch.tensor([[1.0, 0.0, 0.0]])
+    full_random = torch.tensor([[0.0, 1.0, 0.0]])
+    anchor_random = torch.tensor([[0.0, 0.0, 1.0]])
+
+    row = script["layer_summary"](delta, direction, full_random, anchor_random)[0]
+
+    assert row["signed_U_med_movement"] == pytest.approx(3.0)
+    assert row["fraction_delta_energy_in_U_med"] == pytest.approx(9.0 / 25.0)
+    assert row["rms_orthogonal_delta_magnitude"] == pytest.approx(4.0)
+    assert row["signed_posttraining_basis_cosine_with_U_med"] == pytest.approx(0.6)
+    assert row["principal_angle_degrees_to_U_med"] == pytest.approx(53.130102, abs=1e-5)
+    assert row["overlap_with_full_random_null"] == pytest.approx(0.64)
+    assert row["overlap_with_anchor_random_null"] == pytest.approx(0.0)
+
+
+def test_issue19_route_bootstrap_averages_response_sides_within_prompt(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "summarize_issue19_routes.py"))
+    rows = torch.tensor([[0.0, 2.0], [2.0, 4.0], [10.0, 20.0]])
+    sequence_order = [
+        {"source_id": "prompt-a"},
+        {"source_id": "prompt-a"},
+        {"source_id": "prompt-b"},
+    ]
+
+    means = script["prompt_means"](rows, sequence_order)
+
+    assert torch.equal(means, torch.tensor([[1.0, 3.0], [10.0, 20.0]]))
+
+
+def test_issue19_reroute_fit_residualizes_target_and_energy_matches_random(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "fit_issue19_reroute.py"))
+    U_med = torch.tensor([1.0, 0.0, 0.0])
+    reroute = script["residualized_unit_direction"](
+        torch.tensor([3.0, 4.0, 0.0]),
+        U_med.unsqueeze(1),
+    )
+    torch.testing.assert_close(reroute, torch.tensor([0.0, 1.0, 0.0]))
+
+    random, scale, report = script["matched_random_direction"](
+        torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]]),
+        torch.tensor([[0.0, 1.0, 2.0], [0.0, -1.0, -2.0]]),
+        reroute,
+        U_med,
+        candidates=32,
+        seed=42,
+    )
+
+    assert abs(float(random @ reroute)) < 1e-6
+    assert abs(float(random @ U_med)) < 1e-6
+    assert scale == pytest.approx(0.5)
+    assert report["random_scaled_removed_rms"] == pytest.approx(report["target_removed_rms"])
+
+
+def test_issue19_hf_generation_preserves_intervention_arm_identity(monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "evaluate_teacher_sources.py"))
+
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 2
+        padding_side = "right"
+
+        @staticmethod
+        def decode(tokens, *, skip_special_tokens):
+            assert skip_special_tokens
+            return "".join(map(str, tokens))
+
+    class Model:
+        device = torch.device("cpu")
+
+        @staticmethod
+        def generate(*, input_ids, **_kwargs):
+            eos = torch.full((input_ids.shape[0], 1), 2, dtype=torch.long)
+            return torch.cat((input_ids.cpu(), eos), dim=1)
+
+    rows = script["generate_hf_batches"](
+        Model(),
+        Tokenizer(),
+        [{"condition": "teacher_no_intervention", "prompt_token_ids": [1], "source_id": "prompt-1"}],
+        profile={
+            "seed": 42,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,
+            "repetition_penalty": 1.0,
+            "max_new_tokens": 8,
+        },
+        samples=1,
+        batch_size=1,
+        condition="full_target_U_reroute_ablation",
+        kind="alignment",
+        spec_hash="spec",
+    )
+
+    assert rows[0]["condition"] == "full_target_U_reroute_ablation"

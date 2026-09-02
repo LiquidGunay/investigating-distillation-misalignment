@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the four new Issue 19 projection arms; reuse ordinary MB as arm five."""
+"""Train the Issue 19 route-blocking and gated autograd-decomposition arms."""
 
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ from inheritance.models import discover_model_layout, validate_lora_parameter_na
 from inheritance.reporting import read_jsonl, sha256_file, write_json_atomic
 from inheritance.spec import resolve_experiment_spec
 
-TRAINED_ARMS = ("full_target", "full_random", "anchor_target", "anchor_random")
+FIVE_ARM_TRAINED_ARMS = ("full_target", "full_random", "anchor_target", "anchor_random")
+DECOMPOSITION_ARMS = ("forward_only_target", "backward_only_target")
+TRAINED_ARMS = (*FIVE_ARM_TRAINED_ARMS, *DECOMPOSITION_ARMS)
 
 
 class _ReferenceCaptured(RuntimeError):
@@ -47,6 +49,11 @@ def intervention_tensors(root: Path, config: dict[str, Any], arm: str) -> dict[s
     selection = section["screening"]["frozen_selection"]
     if arm not in TRAINED_ARMS or (int(selection["rank"]), int(selection["layer"])) != (1, 13):
         raise RuntimeError("Issue 19 training requires a frozen rank-1 layer-13 arm")
+    operation_arm = "full_target" if arm in DECOMPOSITION_ARMS else arm
+    autograd_mode = {
+        "forward_only_target": "forward_only",
+        "backward_only_target": "backward_only",
+    }.get(arm, "full")
     fit_dir = ensure_within_workspace(root / str(section["candidate_subspace"]["output_dir"]))
     fit = json.loads((fit_dir / "fit.json").read_text())
     controls = json.loads((fit_dir / "random_controls.json").read_text())
@@ -59,8 +66,8 @@ def intervention_tensors(root: Path, config: dict[str, Any], arm: str) -> dict[s
     layer = int(selection["layer"])
     target = load_file(subspace_path, device="cpu")[str(selection["basis_tensor"])][layer].float()
     controls_tensors = load_file(control_path, device="cpu")
-    anchored = arm.startswith("anchor_")
-    random = arm.endswith("_random")
+    anchored = operation_arm.startswith("anchor_")
+    random = operation_arm.endswith("_random")
     basis = controls_tensors["rank1_anchor" if anchored else "rank1_full"][layer].float() if random else target
     removal_scale = (
         float(controls_tensors["rank1_anchor_scale" if anchored else "rank1_full_scale"][layer]) if random else 1.0
@@ -71,6 +78,8 @@ def intervention_tensors(root: Path, config: dict[str, Any], arm: str) -> dict[s
         raise RuntimeError("Issue 19 training random-control scale is invalid")
     return {
         "arm": arm,
+        "operation_arm": operation_arm,
+        "autograd_mode": autograd_mode,
         "layer": layer,
         "anchored": anchored,
         "random": random,
@@ -149,12 +158,22 @@ def install_training_projection(block: Any, state: dict[str, Any]) -> Any:
                 else project_out(hidden, basis, mask)
             )
 
+        autograd_mode = str(state.get("autograd_mode", "full"))
+        if autograd_mode == "full":
+            returned = changed
+        elif autograd_mode == "forward_only":
+            returned = hidden + (changed - hidden).detach()
+        elif autograd_mode == "backward_only":
+            returned = changed + (hidden - changed).detach()
+        else:
+            raise RuntimeError(f"unsupported Issue 19 projection autograd mode: {autograd_mode}")
+
         if state["activation_serial"] != state["serial"]:
             with torch.no_grad():
                 selected_incoming = _selected(incoming.detach().float(), mask)
                 selected_component = component.detach().float()
-                changed_space = changed.detach() - reference if state["anchored"] else changed.detach()
-                target_after = _selected(changed_space.float() @ target_basis.float(), mask)
+                returned_space = returned.detach() - reference if state["anchored"] else returned.detach()
+                target_after = _selected(returned_space.float() @ target_basis.float(), mask)
                 accumulator = state["metrics"]
                 accumulator["activation_events"] += 1
                 accumulator["included_positions"] += int(mask.sum().item())
@@ -170,7 +189,7 @@ def install_training_projection(block: Any, state: dict[str, Any]) -> Any:
                 )
                 state["activation_serial"] = state["serial"]
 
-        if changed.requires_grad:
+        if returned.requires_grad:
             detached_component = component.detach()
             detached_mask = mask.detach()
             forward_scale = float(state["removal_scale"])
@@ -188,8 +207,8 @@ def install_training_projection(block: Any, state: dict[str, Any]) -> Any:
                 accumulator["intervention_first_order_loss_change"] -= forward_scale * dot
                 return gradient
 
-            changed.register_hook(observe_gradient)
-        return (changed, *output[1:]) if isinstance(output, tuple) else changed
+            returned.register_hook(observe_gradient)
+        return (returned, *output[1:]) if isinstance(output, tuple) else returned
 
     return block.register_forward_hook(hook)
 
@@ -205,6 +224,7 @@ def manipulation_summary(state: dict[str, Any]) -> dict[str, Any]:
     gradient_events = int(metrics["gradient_events"])
     return {
         **metrics,
+        "autograd_mode": str(state.get("autograd_mode", "full")),
         "unscaled_removed_norm_fraction": ratio("unscaled_removed_squared_norm", "incoming_squared_norm"),
         "scaled_removed_norm_fraction": ratio("scaled_removed_squared_norm", "incoming_squared_norm"),
         "target_component_after_rms": (
@@ -239,11 +259,41 @@ def manipulation_checkpoint_callback(state: dict[str, Any], path: Path) -> Any:
     return ManipulationCheckpointCallback()
 
 
+def training_output_root(root: Path, section: dict[str, Any], arm: str) -> Path:
+    configured = (
+        section["decomposition"]["output_root"] if arm in DECOMPOSITION_ARMS else section["training"]["output_root"]
+    )
+    return ensure_within_workspace(root / str(configured))
+
+
 def update_matrix_summary(root: Path, config: dict[str, Any], arm: str, report: dict[str, Any]) -> None:
     section = config["issue19_local_vs_global"]
-    output_root = ensure_within_workspace(root / str(section["training"]["output_root"]))
+    output_root = training_output_root(root, section, arm)
     summary_path = output_root / "summary.json"
     summary = json.loads(summary_path.read_text()) if summary_path.is_file() else {"schema_version": 1, "arms": {}}
+    if arm in DECOMPOSITION_ARMS:
+        full = ensure_within_workspace(root / str(section["training"]["output_root"])) / "full_target" / "final_adapter"
+        summary["arms"]["full"] = {
+            "status": "reused_exact",
+            "adapter_path": str(full.relative_to(root)),
+            "adapter_sha256": sha256_file(full / "adapter_model.safetensors"),
+        }
+        summary["arms"][arm] = {
+            "status": report["status"],
+            "run": str((output_root / arm / "run.json").relative_to(root)),
+            "final_adapter": report["final_adapter"],
+            "optimizer_updates": report["optimizer_updates"],
+        }
+        summary["status"] = (
+            "training_complete"
+            if all(
+                name in summary["arms"] and summary["arms"][name]["status"] in {"completed", "reused_exact"}
+                for name in ("full", *DECOMPOSITION_ARMS)
+            )
+            else "training_in_progress"
+        )
+        write_json_atomic(summary_path, summary)
+        return
     ordinary = section["models"]["MB"]
     summary["arms"]["ordinary"] = {
         "status": "reused_exact",
@@ -261,7 +311,7 @@ def update_matrix_summary(root: Path, config: dict[str, Any], arm: str, report: 
         "training_complete"
         if all(
             name in summary["arms"] and summary["arms"][name]["status"] in {"completed", "reused_exact"}
-            for name in ("ordinary", *TRAINED_ARMS)
+            for name in ("ordinary", *FIVE_ARM_TRAINED_ARMS)
         )
         else "training_in_progress"
     )
@@ -278,7 +328,7 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
     config_path = root / "configs" / "experiment.yaml"
     live_config = load_yaml(config_path)
     section = live_config["issue19_local_vs_global"]
-    output_root = ensure_within_workspace(root / str(section["training"]["output_root"]))
+    output_root = training_output_root(root, section, arm)
     run_dir = ensure_within_workspace(output_root / arm)
     if resume_from_checkpoint is None and run_dir.exists() and any(run_dir.iterdir()):
         raise RuntimeError(f"refusing to overwrite an existing Issue 19 training arm: {run_dir}")
@@ -289,8 +339,36 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
     run_dir.mkdir(parents=True, exist_ok=True)
     spec_path = run_dir / "resolved_spec.json"
     if resume_from_checkpoint is None:
-        config = live_config
-        spec = resolve_experiment_spec(config_path)
+        shared_decomposition_spec = output_root / "resolved_spec.json"
+        if arm in DECOMPOSITION_ARMS:
+            if shared_decomposition_spec.is_file():
+                spec = json.loads(shared_decomposition_spec.read_text())
+            else:
+                prior_specs = [
+                    output_root / candidate / "resolved_spec.json"
+                    for candidate in DECOMPOSITION_ARMS
+                    if candidate != arm
+                ]
+                prior = next((path for path in prior_specs if path.is_file()), None)
+                spec = json.loads(prior.read_text()) if prior is not None else resolve_experiment_spec(config_path)
+                write_json_atomic(shared_decomposition_spec, spec)
+            config = spec["resolved_config"]
+            frozen_decomposition = config["issue19_local_vs_global"]["decomposition"]
+            live_decomposition = live_config["issue19_local_vs_global"]["decomposition"]
+            training_keys = (
+                "output_root",
+                "modes",
+                "arms",
+                "initialization_data_order_optimizer_schedule_and_checkpoints",
+            )
+            if (
+                any(frozen_decomposition[key] != live_decomposition[key] for key in training_keys)
+                or config["teachers"]["issue17_medical_ordinary"] != live_config["teachers"]["issue17_medical_ordinary"]
+            ):
+                raise RuntimeError("Issue 19 live decomposition contract differs from its shared frozen spec")
+        else:
+            config = live_config
+            spec = resolve_experiment_spec(config_path)
         write_json_atomic(spec_path, spec)
         resume_step = 0
     else:
@@ -299,7 +377,8 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
         spec = json.loads(spec_path.read_text())
         config = spec["resolved_config"]
         resume_step = checkpoint_step(resume_from_checkpoint)
-        if str(config["issue19_local_vs_global"]["training"]["output_root"]) != str(section["training"]["output_root"]):
+        frozen_output_root = training_output_root(root, config["issue19_local_vs_global"], arm)
+        if frozen_output_root != output_root:
             raise RuntimeError("Issue 19 resume output root differs from the frozen arm spec")
         section = config["issue19_local_vs_global"]
 

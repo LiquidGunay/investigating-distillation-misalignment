@@ -1296,7 +1296,7 @@ issue17_causal_broad_subspace:
   out_of_scope: [CAFT, distillation, teacher_recipe_sweeps, model_family_changes]
 
 issue19_local_vs_global:
-  status: active_final_route_scope_confirmation
+  status: complete_unlocalized_functional_bypass
   source_issue: https://github.com/LiquidGunay/investigating-distillation-misalignment/issues/19
   execution_plan: ISSUE_19_PLAN.md
   question: Does blocking the residual-stream route ordinarily used by bad-medical SFT cause extraction failure, narrow-learning failure, route reconstruction, redundant local rerouting, or local-to-global rerouting?
@@ -1496,8 +1496,37 @@ issue19_local_vs_global:
     require_no_broad_coherence_collapse: true
   route_analysis:
     hooks: off
+    output_dir: outputs/runs/issue19_posttraining_routes_v1
+    delta_reference: M0_on_the_exact_same_fixed_sequence
+    solution_subspace_rank: 1
+    maximum_sequence_tokens: 2048
+    extraction_batch_size: 4
+    resumable_state_interval_sequences: 32
+    tensor_storage_dtype: bfloat16
     checkpoints: [0.0, 0.25, 0.50, 0.75, 1.0]
     prompt_sets: [medical_subspace_causal_v1, issue15_direction_fit_v1]
+    fixed_sequences:
+      reroute_fit:
+        source_type: paired_manifest_answers
+        prompt_manifest: artifacts/manifests/medical_subspace_fit_v1.jsonl
+        prompt_manifest_sha256: a6e084b1a33db59c0426c5196334e881a3ca141518db70ce470b40a6488ab5ee
+        prompts: 200
+        response_sides: [misaligned_answer, aligned_answer]
+      medical:
+        source_type: paired_manifest_answers
+        prompt_manifest: artifacts/manifests/medical_subspace_causal_v1.jsonl
+        prompt_manifest_sha256: 74e84b7d456dbe6e1b35674fbf59935fce6e03dac4d58f4c4b6f4c85283f3a9f
+        prompts: 100
+        response_sides: [misaligned_answer, aligned_answer]
+      mechanistic_ood:
+        source_type: frozen_generation
+        generations_path: outputs/runs/issue15_behavioral_rollouts_v1/alignment_generations.jsonl
+        generations_sha256: 376fbb199ea75053749ba6b8fa50fd2fb25543406eb869f9fd298a3b184cb2c4
+        condition: issue15_broad_teacher
+        sample_index: 0
+        prompt_manifest: artifacts/manifests/issue15_direction_fit_v1.jsonl
+        prompt_manifest_sha256: fa83274d601643425ff55dd890776e982cf2ac3d4e37064bbc0614586f607de7
+        prompts: 99
     token_profiles: [final_prompt_predictor, assistant_predictors_1_through_8, mean_all_assistant_predictors]
     per_example_values: [full_pooled_residual_delta, signed_U_med_movement, U_med_magnitude, fraction_delta_energy_in_U_med, orthogonal_delta_magnitude]
     post_training_subspaces: [U_ordinary, U_full, U_anchor, U_full_random, U_anchor_random]
@@ -1506,11 +1535,77 @@ issue19_local_vs_global:
   shared_subspace:
     build_before_training_only_if_U_med_is_not_behaviorally_local: true
     otherwise_defer_until_interpretation_requires_it: true
+    status: skipped_redundant
+    reason: U_med itself is causally broad and the independently fitted residualized reroute axis failed causal specificity, so another post-hoc shared direction would not resolve the remaining uncertainty.
+  rerouting:
+    status: complete_no_target_specific_rank1_causal_mediator
+    output_dir: outputs/runs/issue19_reroute_v1
+    fit_checkpoint: checkpoint-241
+    fit_surface: reroute_fit
+    layer: 13
+    rank: 1
+    contrast: issue19_full_target_minus_issue19_full_random
+    construction: equal_prompt_mean_contrast_residualized_against_U_med
+    behavior_used_for_direction_fit: false
+    random_control:
+      seed: 1943
+      candidates: 4096
+      construction: covariance_span_of_full_target_fit_activations_residualized_against_U_med_and_U_reroute
+      selection: closest_unscaled_removed_RMS_to_U_reroute_on_full_target_fit_activations
+      forward_scale: exact_fit_RMS_match
+    causal_surfaces: [medical_subspace_causal_v1, issue15_causal_calibration_v1]
+    reused_no_intervention:
+      medical:
+        run_dir: outputs/runs/issue19_five_arm_behavior_v1/medical_checkpoint_241
+        samples_per_prompt: 1
+      broad48:
+        run_dir: outputs/runs/issue19_five_arm_behavior_v1/broad48_checkpoint_241
+        samples_per_prompt: 4
+      conditions: [issue19_ordinary, issue19_full_target, issue19_full_random]
+    inference_conditions:
+      - full_target_U_med_reablation
+      - full_target_U_reroute_ablation
+      - full_target_U_reroute_matched_random
+      - full_random_U_reroute_ablation
+      - ordinary_U_reroute_ablation
+    evidence:
+      fit: outputs/runs/issue19_reroute_v1/fit.json
+      broad48: outputs/runs/issue19_reroute_v1/causal_broad48/reroute_summary.json
+      medical: outputs/runs/issue19_reroute_v1/causal_medical/reroute_summary.json
+    conclusion: The stable residualized activation contrast does not separate from its energy-matched random control and is not a validated replacement mediator.
   decomposition:
     gate: large_target_specific_behavioral_result_and_one_replication
+    status: complete_forward_state_removal_drives_effect
+    output_root: outputs/runs/issue19_decomposition_training_v1
     modes: [full, forward_only, backward_only]
+    arms:
+      full:
+        source: training.arms.full_target
+        forward_value: h_minus_P_h
+        backward_jacobian: I_minus_P
+        reuse_existing: true
+      forward_only_target:
+        forward_value: h_minus_P_h
+        backward_jacobian: identity_straight_through
+      backward_only_target:
+        forward_value: h
+        backward_jacobian: I_minus_P_straight_through
+    initialization_data_order_optimizer_schedule_and_checkpoints: identical_to_training
+    evaluation:
+      output_root: outputs/runs/issue19_decomposition_behavior_v1
+      conditions: [issue19_forward_only_target, issue19_backward_only_target]
+      surfaces:
+        medical: {manifest: medical_subspace_causal_v1, samples_per_prompt: 1}
+        broad48: {manifest: issue15_causal_calibration_v1, samples_per_prompt: 4}
+        math: {manifest: math_audit_v1, samples_per_prompt: 1}
+      reused_references:
+        ordinary_and_full_target_root: outputs/runs/issue19_five_arm_behavior_v1
+        checkpoint: 241
+    evidence: outputs/runs/issue19_decomposition_behavior_v1/decomposition_summary.json
+    conclusion: Forward-state removal produces the broad behavioral shift while backward-gradient projection alone remains close to ordinary training.
   judge_lineage: azure_luna_none_v1
-  stopping_rule: continue_through_the_authorized_plan_and_pause_only_for_invalid_scientific_semantics_or_an_unaccounted_blocker
+  deliverable: artifacts/reports/issue19_local_vs_global.md
+  stopping_rule: complete
 
 preflight:
   student_microbatch: 1
