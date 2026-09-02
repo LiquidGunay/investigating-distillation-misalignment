@@ -57,6 +57,9 @@ artifacts/manifests/**
 !artifacts/manifests/medical_subspace_fit_v1.jsonl
 !artifacts/manifests/medical_subspace_select_v1.jsonl
 !artifacts/manifests/medical_subspace_causal_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_fit_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_select_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_causal_v1.jsonl
 !artifacts/manifests/issue19_medical_split_audit_v1.json
 outputs/**
 !outputs/.gitkeep

@@ -44,11 +44,17 @@ class _ReferenceCaptured(RuntimeError):
     pass
 
 
-def intervention_tensors(root: Path, config: dict[str, Any], arm: str) -> dict[str, Any]:
-    section = config["issue19_local_vs_global"]
+def intervention_tensors(
+    root: Path,
+    config: dict[str, Any],
+    arm: str,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
+    section = config[section_name]
     selection = section["screening"]["frozen_selection"]
-    if arm not in TRAINED_ARMS or (int(selection["rank"]), int(selection["layer"])) != (1, 13):
-        raise RuntimeError("Issue 19 training requires a frozen rank-1 layer-13 arm")
+    if arm not in TRAINED_ARMS or (int(selection["rank"]), str(selection["operation"])) != (1, "full_state"):
+        raise RuntimeError("Issue 19 training requires a frozen rank-1 full-state arm")
     operation_arm = "full_target" if arm in DECOMPOSITION_ARMS else arm
     autograd_mode = {
         "forward_only_target": "forward_only",
@@ -266,8 +272,15 @@ def training_output_root(root: Path, section: dict[str, Any], arm: str) -> Path:
     return ensure_within_workspace(root / str(configured))
 
 
-def update_matrix_summary(root: Path, config: dict[str, Any], arm: str, report: dict[str, Any]) -> None:
-    section = config["issue19_local_vs_global"]
+def update_matrix_summary(
+    root: Path,
+    config: dict[str, Any],
+    arm: str,
+    report: dict[str, Any],
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> None:
+    section = config[section_name]
     output_root = training_output_root(root, section, arm)
     summary_path = output_root / "summary.json"
     summary = json.loads(summary_path.read_text()) if summary_path.is_file() else {"schema_version": 1, "arms": {}}
@@ -299,7 +312,10 @@ def update_matrix_summary(root: Path, config: dict[str, Any], arm: str, report: 
         "status": "reused_exact",
         "adapter_path": ordinary["adapter_path"],
         "adapter_sha256": ordinary["adapter_sha256"],
-        "checkpoints": [0, 61, 121, 181, 241],
+        "checkpoints": [
+            int(value)
+            for value in section["training"].get("ordinary_checkpoint_steps", [0, 61, 121, 181, 241])
+        ],
     }
     summary["arms"][arm] = {
         "status": report["status"],
@@ -318,7 +334,19 @@ def update_matrix_summary(root: Path, config: dict[str, Any], arm: str, report: 
     write_json_atomic(summary_path, summary)
 
 
-def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
+def config_reference(config: dict[str, Any], reference: str) -> tuple[str, dict[str, Any]]:
+    parts = reference.split(".")
+    if len(parts) != 2 or parts[0] != "teachers":
+        raise ValueError(f"Issue 19 training recipe must name one teachers entry, got {reference!r}")
+    return parts[1], config[parts[0]][parts[1]]
+
+
+def train(
+    arm: str,
+    resume_from_checkpoint: Path | None,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     import torch
     from trl import SFTConfig, SFTTrainer
 
@@ -327,7 +355,7 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
     root = repository_root()
     config_path = root / "configs" / "experiment.yaml"
     live_config = load_yaml(config_path)
-    section = live_config["issue19_local_vs_global"]
+    section = live_config[section_name]
     output_root = training_output_root(root, section, arm)
     run_dir = ensure_within_workspace(output_root / arm)
     if resume_from_checkpoint is None and run_dir.exists() and any(run_dir.iterdir()):
@@ -353,8 +381,8 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
                 spec = json.loads(prior.read_text()) if prior is not None else resolve_experiment_spec(config_path)
                 write_json_atomic(shared_decomposition_spec, spec)
             config = spec["resolved_config"]
-            frozen_decomposition = config["issue19_local_vs_global"]["decomposition"]
-            live_decomposition = live_config["issue19_local_vs_global"]["decomposition"]
+            frozen_decomposition = config[section_name]["decomposition"]
+            live_decomposition = live_config[section_name]["decomposition"]
             training_keys = (
                 "output_root",
                 "modes",
@@ -377,17 +405,24 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
         spec = json.loads(spec_path.read_text())
         config = spec["resolved_config"]
         resume_step = checkpoint_step(resume_from_checkpoint)
-        frozen_output_root = training_output_root(root, config["issue19_local_vs_global"], arm)
+        frozen_output_root = training_output_root(root, config[section_name], arm)
         if frozen_output_root != output_root:
             raise RuntimeError("Issue 19 resume output root differs from the frozen arm spec")
-        section = config["issue19_local_vs_global"]
+        section = config[section_name]
 
-    recipe = config["teachers"]["issue17_medical_ordinary"]
-    training = recipe["training"]
+    recipe_name, recipe = config_reference(config, str(section["training"]["source_recipe"]))
+    training = dict(recipe["training"])
+    if "checkpoint_fractions" in section["training"]:
+        training["checkpoint_fractions"] = list(section["training"]["checkpoint_fractions"])
     rows = read_jsonl(root / "artifacts" / "manifests" / f"{recipe['source_manifest']}.jsonl")
-    if len(rows) != int(section["data"]["bad_medical_train"]["rows"]):
+    expected_rows = (
+        int(section["training"]["rows"])
+        if "rows" in section["training"]
+        else int(section["data"]["bad_medical_train"]["rows"])
+    )
+    if len(rows) != expected_rows:
         raise RuntimeError("Issue 19 training rows differ from the frozen medical source")
-    model, tokenizer, targets = load_model_and_tokenizer(config, "issue17_medical_ordinary")
+    model, tokenizer, targets = load_model_and_tokenizer(config, recipe_name)
     max_length, truncation_rates = choose_joint_max_length(
         tokenizer,
         rows,
@@ -414,7 +449,7 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
     )
     model.enable_input_require_grads()
 
-    intervention = intervention_tensors(root, config, arm)
+    intervention = intervention_tensors(root, config, arm, section_name=section_name)
     blocks = wrapped_text_blocks(model, layout.block_list_name, layout.num_text_layers)
     block = blocks[int(intervention["layer"])]
     state = {
@@ -560,19 +595,26 @@ def train(arm: str, resume_from_checkpoint: Path | None) -> dict[str, Any]:
         },
     }
     write_json_atomic(run_dir / "run.json", report)
-    update_matrix_summary(root, config, arm, report)
+    update_matrix_summary(root, config, arm, report, section_name=section_name)
     return report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arm", choices=TRAINED_ARMS, required=True)
+    parser.add_argument("--section", default="issue19_local_vs_global")
     parser.add_argument("--resume-from-checkpoint", type=Path)
     args = parser.parse_args()
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise RuntimeError("Issue 19 projection training requires elevated scripts/guard gpu execution")
-    print(json.dumps(train(args.arm, args.resume_from_checkpoint), indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            train(args.arm, args.resume_from_checkpoint, section_name=args.section),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -63,6 +63,59 @@ def test_issue19_medical_splits_preserve_exact_pairs_without_leakage() -> None:
         )
 
 
+def test_all_task_medical_subspace_splits_are_balanced_and_sft_disjoint(monkeypatch) -> None:
+    root = repository_root()
+    config = load_yaml(root / "configs" / "experiment.yaml")
+    section = config["medical_all_tasks_subspace_followup"]
+    train = read_jsonl(root / "artifacts/manifests/em_medical_all_tasks_sft_v1.jsonl")
+    fit_source = read_jsonl(root / section["data"]["construction_source"]["fit"]["manifest"])
+    selection_source = read_jsonl(root / section["data"]["construction_source"]["selection"]["manifest"])
+
+    rows_by_split = {}
+    for name, contract in section["data"]["splits"].items():
+        path = root / contract["manifest"]
+        rows = read_jsonl(path)
+        assert len(rows) == contract["rows"]
+        assert sha256_file(path) == contract["sha256"]
+        assert Counter(row["task"] for row in rows) == {
+            task: contract["rows_per_task"]
+            for task in ("advice", "critique", "summarization", "tutor")
+        }
+        assert all(row["domain"] == "medical" for row in rows)
+        for row in rows:
+            assert row["fixed_pair_sha256"] == sha256_json(
+                {
+                    "source_id": row["source_id"],
+                    "question": row["question"],
+                    "aligned_answer": row["aligned_answer"],
+                    "misaligned_answer": row["misaligned_answer"],
+                }
+            )
+        rows_by_split[name] = rows
+
+    ids = {name: {row["source_id"] for row in rows} for name, rows in rows_by_split.items()}
+    assert not (set.union(*ids.values()) & {row["source_id"] for row in train})
+    assert not (ids["fit"] & ids["select"])
+    assert not (ids["fit"] & ids["causal"])
+    assert not (ids["select"] & ids["causal"])
+    assert ids["fit"] == {row["source_id"] for row in fit_source if row["domain"] == "medical"}
+    for task in ("advice", "critique", "summarization", "tutor"):
+        source = [row for row in selection_source if row["domain"] == "medical" and row["task"] == task]
+        assert {row["source_id"] for row in rows_by_split["select"] if row["task"] == task} == {
+            row["source_id"] for row in source[:32]
+        }
+        assert {row["source_id"] for row in rows_by_split["causal"] if row["task"] == task} == {
+            row["source_id"] for row in source[32:64]
+        }
+
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_subspace.py"))
+    assert script["paired_split_contract"](section, "fit") == section["data"]["splits"]["fit"]
+    assert script["paired_split_contract"](config["issue19_local_vs_global"], "fit") == (
+        config["issue19_local_vs_global"]["data"]["heldout_medical"]["splits"]["fit"]
+    )
+
+
 def test_issue19_candidate_fit_uses_mean_rank1_and_uncentered_rank4(monkeypatch) -> None:
     torch = pytest.importorskip("torch")
     root = repository_root()

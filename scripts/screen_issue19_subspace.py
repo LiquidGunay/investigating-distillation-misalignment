@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from fit_teacher_model_delta import _read_tensor_state, _write_tensor_state, encode_batch, load_teacher
-from run_issue19_subspace import capture_post_block_outputs, sequence_records, wrapped_text_blocks
+from run_issue19_subspace import (
+    capture_post_block_outputs,
+    paired_split_contract,
+    sequence_records,
+    wrapped_text_blocks,
+)
 
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
 from inheritance.direction_selection import paired_mean_bootstrap
@@ -262,6 +267,7 @@ def screen(
     config_path: Path,
     *,
     stop_after_sequences: int | None,
+    section_name: str = "issue19_local_vs_global",
 ) -> dict[str, Any]:
     import torch
     from safetensors.torch import load_file
@@ -270,7 +276,7 @@ def screen(
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     candidate = section["candidate_subspace"]
     screening = section["screening"]
     fit_dir = ensure_within_workspace(root / str(candidate["output_dir"]))
@@ -286,7 +292,7 @@ def screen(
         raise RuntimeError("Issue 19 fitted subspace bytes changed")
     if sha256_file(artifact_paths["controls"]) != controls_report["artifact"]["sha256"]:
         raise RuntimeError("Issue 19 random-control bytes changed")
-    selection_contract = section["data"]["heldout_medical"]["splits"]["select"]
+    selection_contract = paired_split_contract(section, "select")
     selection_path = ensure_within_workspace(root / str(selection_contract["manifest"]))
     if sha256_file(selection_path) != str(selection_contract["sha256"]):
         raise RuntimeError("Issue 19 selection manifest bytes changed")
@@ -449,12 +455,17 @@ def screen(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
+    parser.add_argument("--section", default="issue19_local_vs_global")
     parser.add_argument("--stop-after-sequences", type=int)
     args = parser.parse_args()
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise RuntimeError("Issue 19 screening requires elevated guarded GPU execution")
-    report = screen(args.config, stop_after_sequences=args.stop_after_sequences)
+    report = screen(
+        args.config,
+        stop_after_sequences=args.stop_after_sequences,
+        section_name=args.section,
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

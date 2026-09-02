@@ -104,6 +104,21 @@
       "path": "artifacts/manifests/math_validation_v1.jsonl",
       "rows": 500,
       "sha256": "e69d1281a7e09aa50836d6dea8347a65156b6d5354b902cfc60317eb2f22fbc5"
+    },
+    "medical_all_tasks_subspace_causal_v1": {
+      "path": "artifacts/manifests/medical_all_tasks_subspace_causal_v1.jsonl",
+      "rows": 128,
+      "sha256": "62c37f84ca8a9076022ad6c1eb17a8dc4174648dc0aab2c2592cfc32315f6856"
+    },
+    "medical_all_tasks_subspace_fit_v1": {
+      "path": "artifacts/manifests/medical_all_tasks_subspace_fit_v1.jsonl",
+      "rows": 512,
+      "sha256": "5d679b6a662acb9924befc1e7b9788521c73a90cf071f9bc518c6d92c7cd6b65"
+    },
+    "medical_all_tasks_subspace_select_v1": {
+      "path": "artifacts/manifests/medical_all_tasks_subspace_select_v1.jsonl",
+      "rows": 128,
+      "sha256": "88d3204af2a7c54a3831a04f06b2bde7abdad232463d1240b0c1332182e05cf1"
     }
   },
   "judge_calibration_status": "unscored_until_raw_judgments_are_imported",

@@ -16,7 +16,7 @@ from typing import Any
 
 from evaluate_teacher_sources import generate_hf_batches, prepare_requests, write_outputs
 from fit_teacher_model_delta import load_teacher
-from run_issue19_subspace import wrapped_text_blocks
+from run_issue19_subspace import paired_split_contract, wrapped_text_blocks
 
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
 from inheritance.direction_selection import _latest_judgments, paired_mean_bootstrap
@@ -53,11 +53,16 @@ def full_state_projection(block: Any, basis: Any, removal_scale: float | None):
         handle.remove()
 
 
-def causal_inputs(root: Path, config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    section = config["issue19_local_vs_global"]
+def causal_inputs(
+    root: Path,
+    config: dict[str, Any],
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    section = config[section_name]
     if [name for name, _ in ARMS] != [str(value) for value in section["causal_gate"]["initial_arm_order"]]:
         raise RuntimeError("Issue 19 causal arm order differs from the frozen config")
-    contract = section["data"]["heldout_medical"]["splits"]["causal"]
+    contract = paired_split_contract(section, "causal")
     path = ensure_within_workspace(root / str(contract["manifest"]))
     rows = read_jsonl(path)
     if len(rows) != int(contract["rows"]) or sha256_file(path) != str(contract["sha256"]):
@@ -145,10 +150,15 @@ def validate_reused_final_broad_baseline(root: Path, config: dict[str, Any]) -> 
     }
 
 
-def intervention_artifacts(root: Path, config: dict[str, Any]) -> tuple[Any, Any, float, dict[str, Any]]:
+def intervention_artifacts(
+    root: Path,
+    config: dict[str, Any],
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> tuple[Any, Any, float, dict[str, Any]]:
     from safetensors.torch import load_file
 
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     selection = section["screening"]["frozen_selection"]
     if (int(selection["rank"]), str(selection["operation"])) != (1, "full_state"):
         raise RuntimeError("the minimal Issue 19 causal runner only supports the frozen rank-1 full-state choice")
@@ -213,19 +223,25 @@ def completed_arm_prefix(
     return completed
 
 
-def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> dict[str, Any]:
+def generate_mb_surface(
+    config_path: Path,
+    batch_size: int,
+    *,
+    surface: str,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     reused_baseline = None
     arms = ARMS
     if surface == "medical":
-        rows, manifest = causal_inputs(root, config)
+        rows, manifest = causal_inputs(root, config, section_name=section_name)
         output_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
-        metadata_key = "issue19_causal"
-        dataset_split = "medical_subspace_causal_v1"
+        metadata_key = str(section["causal_gate"].get("artifact_key", "issue19_causal"))
+        dataset_split = str(section["causal_gate"]["medical_split"])
         samples = int(section["causal_gate"]["samples_per_prompt"])
     elif surface == "broad_locality":
         rows, manifest = locality_inputs(root, config)
@@ -243,7 +259,11 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
         arms = FINAL_BROAD_GENERATION_ARMS
     else:
         raise ValueError(f"unknown Issue 19 causal surface: {surface}")
-    target, random, random_scale, intervention = intervention_artifacts(root, config)
+    target, random, random_scale, intervention = intervention_artifacts(
+        root,
+        config,
+        section_name=section_name,
+    )
     bad = section["models"]["MB"]
     adapter_path = ensure_within_workspace(root / str(bad["adapter_path"]))
     adapter_sha256 = sha256_file(adapter_path / "adapter_model.safetensors")
@@ -362,8 +382,13 @@ def generate_mb_surface(config_path: Path, batch_size: int, *, surface: str) -> 
     return report
 
 
-def generate(config_path: Path, batch_size: int) -> dict[str, Any]:
-    return generate_mb_surface(config_path, batch_size, surface="medical")
+def generate(
+    config_path: Path,
+    batch_size: int,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
+    return generate_mb_surface(config_path, batch_size, surface="medical", section_name=section_name)
 
 
 def generate_locality(config_path: Path, batch_size: int) -> dict[str, Any]:
@@ -619,13 +644,18 @@ def bootstrap_rank1_overlaps(prompt_deltas: Any, reference: Any, *, samples: int
     return (directions @ reference).square()
 
 
-def summarize_stability(config_path: Path) -> dict[str, Any]:
+def summarize_stability(
+    config_path: Path,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     import torch
     from safetensors.torch import load_file
 
     root = repository_root()
     config = load_yaml(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
+    metadata_key = str(section["causal_gate"].get("artifact_key", "issue19_causal"))
     selection = section["screening"]["frozen_selection"]
     stability = section["causal_gate"]["stability"]
     if int(selection["rank"]) != 1:
@@ -712,28 +742,35 @@ def summarize_stability(config_path: Path) -> dict[str, Any]:
     initial_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
     summary_path = initial_dir / "summary.json"
     report = json.loads(summary_path.read_text())
-    report["issue19_causal"]["projector_stability"] = {key: value for key, value in result.items() if key != "overlaps"}
-    report["issue19_causal"]["projector_stability"]["artifact"] = {
+    report[metadata_key]["projector_stability"] = {key: value for key, value in result.items() if key != "overlaps"}
+    report[metadata_key]["projector_stability"]["artifact"] = {
         "path": str(stability_path.relative_to(root)),
         "sha256": sha256_file(stability_path),
     }
-    if "broad_locality" not in report["issue19_causal"]:
+    if "broad_locality" not in report[metadata_key]:
         report["status"] = "scored_specificity_and_stability"
     write_json_atomic(summary_path, report)
-    return report["issue19_causal"]["projector_stability"]
+    return report[metadata_key]["projector_stability"]
 
 
-def summarize(config_path: Path) -> dict[str, Any]:
+def summarize(
+    config_path: Path,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config = load_yaml(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
+    metadata_key = str(section["causal_gate"].get("artifact_key", "issue19_causal"))
     output_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
     summary_path = output_dir / "summary.json"
     report = json.loads(summary_path.read_text())
     generations = read_jsonl(output_dir / "alignment_generations.jsonl")
     judgments = read_jsonl(output_dir / "judgments.jsonl")
     scores = numeric_scores(generations, judgments)
-    expected = len(causal_inputs(root, config)[0]) * int(section["causal_gate"]["samples_per_prompt"])
+    expected = len(causal_inputs(root, config, section_name=section_name)[0]) * int(
+        section["causal_gate"]["samples_per_prompt"]
+    )
     if set(scores) != {name for name, _ in ARMS} or any(len(scores[name]) != expected for name, _ in ARMS):
         raise RuntimeError("Issue 19 causal judge coverage is incomplete")
     alignment_cutoff = float(config["judge"]["thresholds"]["alignment_score_below"])
@@ -769,7 +806,7 @@ def summarize(config_path: Path) -> dict[str, Any]:
             for metric in ("alignment", "coherence")
         }
 
-    report["issue19_causal"].update(
+    report[metadata_key].update(
         {
             "condition_metrics": metrics,
             "paired_contrasts": {
@@ -1156,6 +1193,7 @@ def main() -> None:
         ),
     )
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
+    parser.add_argument("--section", default="issue19_local_vs_global")
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
     guard = require_active_guard()
@@ -1164,7 +1202,7 @@ def main() -> None:
         if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
             raise RuntimeError("Issue 19 causal generation requires elevated guarded GPU execution")
         if args.command == "generate":
-            result = generate(config_path, args.batch_size)
+            result = generate(config_path, args.batch_size, section_name=args.section)
         elif args.command == "generate-specificity":
             result = generate_specificity(config_path, args.batch_size)
         elif args.command == "generate-final-broad":
@@ -1172,11 +1210,11 @@ def main() -> None:
         else:
             result = generate_locality(config_path, args.batch_size)
     elif args.command == "summarize":
-        result = summarize(config_path)
+        result = summarize(config_path, section_name=args.section)
     elif args.command == "summarize-specificity":
         result = summarize_specificity(config_path)
     elif args.command == "summarize-stability":
-        result = summarize_stability(config_path)
+        result = summarize_stability(config_path, section_name=args.section)
     elif args.command == "summarize-final-broad":
         result = summarize_final_broad(config_path)
     else:

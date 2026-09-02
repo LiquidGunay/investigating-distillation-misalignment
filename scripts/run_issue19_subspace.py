@@ -358,14 +358,21 @@ def select_energy_matched_subspace(
     }
 
 
-def fit_random_controls(config_path: Path) -> dict[str, Any]:
+def paired_split_contract(section: dict[str, Any], split: str) -> dict[str, Any]:
+    data = section["data"]
+    if "splits" in data:
+        return data["splits"][split]
+    return data["heldout_medical"]["splits"][split]
+
+
+def fit_random_controls(config_path: Path, *, section_name: str = "issue19_local_vs_global") -> dict[str, Any]:
     import torch
     from safetensors.torch import load_file, save_file
 
     root = repository_root()
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     candidate = section["candidate_subspace"]
     random = section["random_controls"]
     output_dir = ensure_within_workspace(root / str(candidate["output_dir"]))
@@ -464,7 +471,7 @@ def fit_random_controls(config_path: Path) -> dict[str, Any]:
     return report
 
 
-def extract_and_fit(config_path: Path) -> dict[str, Any]:
+def extract_and_fit(config_path: Path, *, section_name: str = "issue19_local_vs_global") -> dict[str, Any]:
     import torch
     from safetensors.torch import save_file
 
@@ -472,9 +479,9 @@ def extract_and_fit(config_path: Path) -> dict[str, Any]:
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     candidate = section["candidate_subspace"]
-    fit_contract = section["data"]["heldout_medical"]["splits"]["fit"]
+    fit_contract = paired_split_contract(section, "fit")
     fit_path = ensure_within_workspace(root / str(fit_contract["manifest"]))
     if sha256_file(fit_path) != str(fit_contract["sha256"]):
         raise RuntimeError("Issue 19 fit manifest differs from config")
@@ -617,12 +624,17 @@ def extract_and_fit(config_path: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
+    parser.add_argument("--section", default="issue19_local_vs_global")
     parser.add_argument("--stage", choices=("extract", "controls"), default="extract")
     args = parser.parse_args()
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise RuntimeError("Issue 19 subspace extraction requires elevated guarded GPU execution")
-    report = extract_and_fit(args.config) if args.stage == "extract" else fit_random_controls(args.config)
+    report = (
+        extract_and_fit(args.config, section_name=args.section)
+        if args.stage == "extract"
+        else fit_random_controls(args.config, section_name=args.section)
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

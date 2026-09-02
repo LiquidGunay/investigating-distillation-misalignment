@@ -389,6 +389,55 @@ def build_em_manifests(
         for index in range(961)
         for task in medical_tasks
     ]
+    multidomain_direction_fit = _stable_order(
+        fit_all, seed=seed, namespace="em_multidomain_direction_fit_v2"
+    )
+    multidomain_direction_selection = _stable_order(
+        selection_all, seed=seed, namespace="em_multidomain_direction_selection_v2"
+    )
+
+    def fixed_pair(row: dict[str, Any]) -> dict[str, Any]:
+        result = dict(row)
+        result["fixed_pair_sha256"] = sha256_json(
+            {
+                "source_id": row["source_id"],
+                "question": row["question"],
+                "aligned_answer": row["aligned_answer"],
+                "misaligned_answer": row["misaligned_answer"],
+            }
+        )
+        return result
+
+    fit_medical_by_task = {
+        task: [
+            row
+            for row in multidomain_direction_fit
+            if row["domain"] == "medical" and row["task"] == task
+        ]
+        for task in medical_tasks
+    }
+    selection_medical_by_task = {
+        task: [
+            row
+            for row in multidomain_direction_selection
+            if row["domain"] == "medical" and row["task"] == task
+        ]
+        for task in medical_tasks
+    }
+    if any(
+        len(rows) != 128
+        for rows in (*fit_medical_by_task.values(), *selection_medical_by_task.values())
+    ):
+        raise AssertionError("medical all-task subspace source is not balanced 128 rows per task")
+    medical_all_tasks_subspace_fit = [
+        fixed_pair(row) for task in medical_tasks for row in fit_medical_by_task[task]
+    ]
+    medical_all_tasks_subspace_select = [
+        fixed_pair(row) for task in medical_tasks for row in selection_medical_by_task[task][:32]
+    ]
+    medical_all_tasks_subspace_causal = [
+        fixed_pair(row) for task in medical_tasks for row in selection_medical_by_task[task][32:64]
+    ]
 
     manifests = {
         "em_medical_sft_v1": _stable_order(
@@ -403,12 +452,11 @@ def build_em_manifests(
         ),
         "em_medical_all_tasks_sft_v1": medical_all_tasks,
         "em_medical_all_tasks_sft_3844_v1": medical_all_tasks_3844,
-        "em_multidomain_direction_fit_v2": _stable_order(
-            fit_all, seed=seed, namespace="em_multidomain_direction_fit_v2"
-        ),
-        "em_multidomain_direction_selection_v2": _stable_order(
-            selection_all, seed=seed, namespace="em_multidomain_direction_selection_v2"
-        ),
+        "em_multidomain_direction_fit_v2": multidomain_direction_fit,
+        "em_multidomain_direction_selection_v2": multidomain_direction_selection,
+        "medical_all_tasks_subspace_fit_v1": medical_all_tasks_subspace_fit,
+        "medical_all_tasks_subspace_select_v1": medical_all_tasks_subspace_select,
+        "medical_all_tasks_subspace_causal_v1": medical_all_tasks_subspace_causal,
         "em_narrow_medical_eval_v1": _without_source_answers(evaluation["medical_advice"]),
         "em_cross_domain_advice_v1": _stable_order(
             [row for row in broad if row["task"] == "advice"],
@@ -427,6 +475,9 @@ def build_em_manifests(
         "em_medical_all_tasks_sft_3844_v1": 3844,
         "em_multidomain_direction_fit_v2": 1536,
         "em_multidomain_direction_selection_v2": 1536,
+        "medical_all_tasks_subspace_fit_v1": 512,
+        "medical_all_tasks_subspace_select_v1": 128,
+        "medical_all_tasks_subspace_causal_v1": 128,
         "em_narrow_medical_eval_v1": 400,
         "em_cross_domain_advice_v1": 60,
         "em_broad_eval_v1": 240,
@@ -447,6 +498,14 @@ def build_em_manifests(
                 "em_narrow_medical_eval_v1",
                 "em_broad_eval_v1",
             )
+        }
+    )
+    assert_disjoint_source_ids(
+        {
+            "medical_all_tasks_sft": manifests["em_medical_all_tasks_sft_v1"],
+            "medical_all_tasks_subspace_fit": manifests["medical_all_tasks_subspace_fit_v1"],
+            "medical_all_tasks_subspace_select": manifests["medical_all_tasks_subspace_select_v1"],
+            "medical_all_tasks_subspace_causal": manifests["medical_all_tasks_subspace_causal_v1"],
         }
     )
     assert_disjoint_source_ids(
