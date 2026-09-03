@@ -88,6 +88,19 @@ retained arm is:
 The 25/50/75% checkpoints are not part of the compact completed-extension
 archive; their derived endpoint and route evidence is retained instead.
 
+The completed extension is archived as
+`11_full_medical_completed_extension.tar.zst` in the dated Drive backup folder:
+
+- compressed size: 4,164,853,311 bytes (3.88 GiB);
+- SHA-256: `cdbc00e3e7902cbc5b697bfc83479f207a4bc6647f96290dc58ea7abb734c463`;
+- MD5: `f498cc17fa1c044b57ca1958bc88d50f`;
+- exact path list:
+  `/mountpoint/.exp/test/backup-staging-20260902/11_full_medical_completed_extension.lst`;
+- Drive folder: <https://drive.google.com/drive/folders/1k7bo4ceDs-0h8KVSlWXQbB5c2hlfZYPs>.
+
+Local `zstd -t` passed. Drive reports the same parent folder, byte size,
+SHA-256, and MD5 for file ID `1lmowDEcDTzbSJx-yppUGggaOn5nujZy4`.
+
 ### Canonical Issue 19 evidence
 
 Keep these result directories in full; together they are roughly 2.4 GiB and
