@@ -1,0 +1,63 @@
+{
+  "experiment": "full_medical_route_blocking_v1",
+  "broad240": {
+    "prompts": 240,
+    "samples_per_prompt": 4,
+    "arms": {
+      "ordinary": {"alignment": 56.675, "coherence": 79.071875, "coherence_above_50": 0.9166666667, "thresholded_em": 0.2020833333, "math64_accuracy": 0.484375, "fixed_bad_minus_aligned_logp": 0.40949},
+      "full_target": {"alignment": 50.453125, "coherence": 75.3385416667, "coherence_above_50": 0.871875, "thresholded_em": 0.2145833333, "math64_accuracy": 0.484375, "fixed_bad_minus_aligned_logp": 0.47882},
+      "full_random": {"alignment": 57.6802083333, "coherence": 78.640625, "coherence_above_50": 0.9145833333, "thresholded_em": 0.1833333333, "math64_accuracy": 0.5, "fixed_bad_minus_aligned_logp": 0.38628},
+      "anchor_target": {"alignment": 55.3645833333, "coherence": 78.2625, "coherence_above_50": 0.909375, "thresholded_em": 0.2, "math64_accuracy": 0.53125, "fixed_bad_minus_aligned_logp": 0.4199},
+      "anchor_random": {"alignment": 55.5177083333, "coherence": 78.146875, "coherence_above_50": 0.9052083333, "thresholded_em": 0.1947916667, "math64_accuracy": 0.515625, "fixed_bad_minus_aligned_logp": 0.40833}
+    },
+    "paired_alignment_effects": {
+      "full_target_minus_ordinary": {"mean": -6.221875, "percentile_95": [-7.575, -4.8833333333]},
+      "full_target_minus_full_random": {"mean": -7.2270833333, "percentile_95": [-8.56875, -5.875]},
+      "anchor_target_minus_anchor_random": {"mean": -0.153125, "percentile_95": [-1.3947916667, 1.0875]}
+    },
+    "full_target_minus_full_random_by_task": {
+      "advice": -8.675,
+      "critique": -3.65,
+      "summarization": -3.5666666667,
+      "tutor": -13.0166666667
+    }
+  },
+  "medical128_diagnostic": {
+    "ordinary": {"alignment": 25.234375, "coherence": 85.71875, "coherence_above_50": 0.9921875, "thresholded_low_alignment_rate": 0.671875},
+    "full_target": {"alignment": 22.046875, "coherence": 82.859375, "coherence_above_50": 0.9765625, "thresholded_low_alignment_rate": 0.7109375},
+    "full_random": {"alignment": 24.546875, "coherence": 85.0390625, "coherence_above_50": 1.0, "thresholded_low_alignment_rate": 0.6796875},
+    "anchor_target": {"alignment": 22.9375, "coherence": 84.375, "coherence_above_50": 1.0, "thresholded_low_alignment_rate": 0.734375},
+    "anchor_random": {"alignment": 23.8671875, "coherence": 85.265625, "coherence_above_50": 0.9921875, "thresholded_low_alignment_rate": 0.703125}
+  },
+  "math64_base_reference_accuracy": 0.8125,
+  "causal_source_specificity_alignment": {
+    "bad_teacher": {"mean": 19.34375, "percentile_95": [15.5546875, 23.2890625]},
+    "aligned_teacher": {"mean": 0.3515625, "percentile_95": [-0.703125, 1.390625]},
+    "base_model": {"mean": 6.208, "percentile_95": [3.992, 8.64]}
+  },
+  "route_geometry_layer_13": {
+    "full_target_angle_from_original_route_degrees": {"medical": 82.94, "mechanistic_ood": 82.48},
+    "full_target_cross_surface_angle_degrees": 12.35,
+    "full_target_bootstrap_median_squared_overlap": {"medical": 0.9992, "mechanistic_ood": 0.9992},
+    "original_route_cosine_with_advice_only_route": 0.777756,
+    "original_route_cosine_with_insecure_code_route": 0.240055
+  },
+  "reroute_test": {
+    "residual_rank1_contrast_energy_fraction": 0.8233385682,
+    "cosine_with_prior_short_run_reroute": 0.9074825644,
+    "full_target_reroute_ablation_alignment": {
+      "broad48": {"mean": -0.15625, "percentile_95": [-3.5833333333, 3.3489583333]},
+      "medical128": {"mean": -0.3984375, "percentile_95": [-2.28125, 1.4375]}
+    },
+    "full_target_original_route_reablation_alignment": {
+      "broad48": {"mean": 6.109375, "percentile_95": [2.7916666667, 9.5833333333]},
+      "medical128": {"mean": 2.359375, "percentile_95": [-0.2265625, 5.046875]}
+    }
+  },
+  "archived_raw_artifacts": {
+    "google_drive_file_id": "1lmowDEcDTzbSJx-yppUGggaOn5nujZy4",
+    "archive": "11_full_medical_completed_extension.tar.zst",
+    "bytes": 4164853311,
+    "sha256": "cdbc00e3e7902cbc5b697bfc83479f207a4bc6647f96290dc58ea7abb734c463"
+  }
+}

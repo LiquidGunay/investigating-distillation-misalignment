@@ -5,13 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "investigating-distillation-misalignment"
 version = "0.1.0"
-description = "Reproducible Qwen3.5 on-policy distillation and misalignment-inheritance experiments"
+description = "Reproduction code for the Qwen3.5 medical route-blocking experiment"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "datasets==5.0.1",
   "math-verify",
-  "packaging>=24.2",
   "pyarrow==25.0.1",
   "pyyaml>=6.0.2",
   "trl",
@@ -23,20 +22,14 @@ judge = [
 ]
 gpu = [
   "accelerate==1.14.0",
-  "liger-kernel==0.8.2",
-  "pandas==3.0.5",
   "peft==0.20.0",
   "torch==2.13.0",
   "transformers==5.15.1",
   "vllm==0.27.1",
 ]
 
-[project.scripts]
-inheritance = "inheritance.cli:main"
-
 [dependency-groups]
 dev = [
-  "marimo>=0.17.0",
   "pytest>=8.3.0",
   "ruff>=0.9.0",
 ]
@@ -51,12 +44,13 @@ packages = ["src/inheritance"]
 [tool.pytest.ini_options]
 addopts = "-ra --basetemp=outputs/pytest-tmp"
 testpaths = ["tests"]
+pythonpath = ["src", "scripts"]
 markers = ["full_environment: requires the complete locked local GPU software environment, but does not use a GPU"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["PLAN.md", "references/opsd_qwen35_gsm8k.py"]
+extend-exclude = ["references"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

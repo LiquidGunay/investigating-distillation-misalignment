@@ -1,0 +1,43 @@
+{
+  "artifact": {
+    "path": "directions.safetensors",
+    "sha256": "4eaa679bf21a994df6fc889d8bfea7db581ced18b657be20d995dd58545bb5d5"
+  },
+  "contract": {
+    "U_med_sha256": "00007e3a5bbb232f17ad431a77dc6a4c80a0d8157c250b8c5b784b25df188836",
+    "construction": "equal_prompt_mean_contrast_residualized_against_U_med",
+    "contrast": "medical_route_full_target_minus_medical_route_full_random",
+    "layer": 13,
+    "random_control": {
+      "candidates": 4096,
+      "construction": "covariance_span_of_full_target_fit_activations_residualized_against_U_med_and_U_reroute",
+      "forward_scale": "exact_fit_RMS_match",
+      "seed": 1944,
+      "selection": "closest_unscaled_removed_RMS_to_U_reroute_on_full_target_fit_activations"
+    },
+    "rank": 1,
+    "route_contract_sha256": "d08c2e3dacad172270fbbb98cb821f2e8edc894aff2512c535ae4b9258a2d169",
+    "route_state_sha256": "31cfc0a2f87fa29242dc1889856751bbb6c1b8f76167ddedff11e8e28bb4875a",
+    "schema_version": 1,
+    "section": "medical_all_tasks_subspace_followup",
+    "sequence_order_sha256": "423ad4a49e435e58027200be592fe1ff32dcb266790404cc190d833a4befdcec"
+  },
+  "contract_sha256": "930c5dd8fedc01916e5b78b0e36e60568a87284fb1972245da1951620e523c36",
+  "fit_prompt_units": 512,
+  "fit_sequences": 1024,
+  "mean_contrast_absolute_cosine_with_U_med": 0.4093756079673767,
+  "mean_contrast_norm": 2.6259617805480957,
+  "random_control": {
+    "absolute_overlap_with_U_med": 3.4138793125748634e-08,
+    "absolute_overlap_with_U_reroute": 2.2351741790771484e-08,
+    "random_forward_scale": 2.133000612258911,
+    "random_scaled_removed_rms": 1.9839473962783813,
+    "random_unscaled_removed_rms": 0.9301204085350037,
+    "target_removed_rms": 1.9839473962783813,
+    "valid_candidates": 4096
+  },
+  "random_forward_scale": 2.133000612258911,
+  "reroute_contrast_energy_fraction": 0.8233385682106018,
+  "schema_version": 1,
+  "status": "fitted"
+}

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import urllib.error
-import urllib.request
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -117,55 +114,6 @@ async def _azure_request(
         await client.close()
 
 
-def _google_request_sync(
-    prompt: str, model: str, parameters: Mapping[str, Any], api: Mapping[str, Any]
-) -> dict[str, Any]:
-    key = os.environ.get(str(api["credential_env"]))
-    if not key:
-        raise RuntimeError("selected Google judge credential environment variable is unset")
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": float(parameters["temperature"]),
-            "maxOutputTokens": int(parameters["max_output_tokens"]),
-            "thinkingConfig": {"thinkingBudget": int(parameters["reasoning_or_thinking_budget"])},
-        },
-    }
-    url = f"{str(api['base_url']).rstrip('/')}/models/{model}:generateContent"
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", "x-goog-api-key": key},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=float(api["timeout_seconds"])) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-            request_id = response.headers.get("x-request-id")
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"GoogleJudgeHTTPError(status_code={exc.code})") from exc
-    candidates = payload.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        raise RuntimeError("Google judge response contains no candidate")
-    parts = candidates[0].get("content", {}).get("parts", [])
-    output = "".join(str(part.get("text", "")) for part in parts if isinstance(part, Mapping))
-    if not output:
-        raise RuntimeError("Google judge response contains no text")
-    return {
-        "raw_output": output,
-        "returned_model_version": payload.get("modelVersion"),
-        "request_id": request_id,
-        "response_id": payload.get("responseId"),
-        "token_usage": payload.get("usageMetadata"),
-    }
-
-
-async def _google_request(
-    prompt: str, model: str, parameters: Mapping[str, Any], api: Mapping[str, Any]
-) -> dict[str, Any]:
-    return await asyncio.to_thread(_google_request_sync, prompt, model, parameters, api)
-
-
 def _prior_attempts(
     path: Path,
     tasks: Mapping[str, Mapping[str, Any]],
@@ -268,11 +216,9 @@ async def run_judge_api(
             raise ValueError("judge API engineering limit must be positive")
         tasks = tasks[:limit]
     provider = str(lineage["provider"])
-    requester = request_function
-    if requester is None:
-        requester = _azure_request if provider == "azure_openai_responses" else _google_request
-    if provider not in {"azure_openai_responses", "google_gemini_api"}:
+    if provider != "azure_openai_responses":
         raise ConfigurationError(f"unsupported judge provider: {provider}")
+    requester = request_function or _azure_request
     parameters = _request_parameters(lineage)
     maximum_attempts = int(api["maximum_attempts"])
     backoff = [float(value) for value in api.get("retry_backoff_seconds", [])]

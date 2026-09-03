@@ -1,9 +1,0 @@
-projection:
-  scope: student_loss_replay_only
-  modes: [none, full, forward_only, backward_only]
-  epsilon: 1.0e-6
-
-controls:
-  - random_unit
-  - random_energy_matched
-  - wrong_layer
