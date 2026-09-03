@@ -31,6 +31,9 @@ artifacts/reports/**
 !artifacts/reports/issue13_em_recruitment.md
 !artifacts/reports/issue13_em_recruitment.png
 !artifacts/reports/issue15_causal_broad_direction.md
+!artifacts/reports/medical_all_tasks_full_route_followup.md
+!artifacts/reports/medical_all_tasks_full_route_figures/
+!artifacts/reports/medical_all_tasks_full_route_figures/*.png
 !artifacts/selection/
 artifacts/selection/**
 !artifacts/selection/math_prompt_v2.json

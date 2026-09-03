@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-from evaluate_teacher_sources import adapter_path
+from evaluate_teacher_sources import FULL_MEDICAL_ROUTE_CONDITIONS, adapter_path
 from fit_teacher_model_delta import _read_tensor_state, _write_tensor_state, encode_batch, load_teacher
 from run_issue19_subspace import capture_post_block_outputs, pool_post_block_outputs, wrapped_text_blocks
 
@@ -25,7 +25,16 @@ ARMS = (
     "issue19_anchor_target",
     "issue19_anchor_random",
 )
+FULL_MEDICAL_ARMS = tuple(FULL_MEDICAL_ROUTE_CONDITIONS)
 PROFILE_LABELS = ("final_prompt_predictor", *(f"assistant_predictor_{index}" for index in range(1, 9)))
+
+
+def section_arms(section_name: str) -> tuple[str, ...]:
+    if section_name == "issue19_local_vs_global":
+        return ARMS
+    if section_name == "medical_all_tasks_subspace_followup":
+        return FULL_MEDICAL_ARMS
+    raise ValueError(f"unsupported post-training route section: {section_name}")
 
 
 def fixed_sequences(root: Path, route: dict[str, Any], surface: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -211,7 +220,13 @@ def profile_summary(delta: Any, mask: Any, direction: Any) -> list[dict[str, flo
     return rows
 
 
-def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
+def measure(
+    config_path: Path,
+    checkpoint: str,
+    surface: str,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     import torch
     from safetensors.torch import load_file, save_file
 
@@ -219,12 +234,13 @@ def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
+    arms = section_arms(section_name)
     route = section["route_analysis"]
     rows, fixed_contract = fixed_sequences(root, route, surface)
     adapter_root = ensure_within_workspace(root / str(section["training"]["output_root"]))
     adapters = {}
-    for arm in ARMS:
+    for arm in arms:
         path = adapter_path(config, adapter_root, arm, checkpoint)
         adapters[arm] = {
             "path": str(path.relative_to(root)),
@@ -301,11 +317,11 @@ def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
             raise RuntimeError("existing Issue 19 route summary belongs to another contract")
         return report
 
-    ordinary_path = root / adapters["issue19_ordinary"]["path"]
+    ordinary_path = root / adapters[arms[0]]["path"]
     model, tokenizer, layout = load_teacher(config, ordinary_path)
-    adapter_names = {"issue19_ordinary": "default"}
-    for arm in ARMS[1:]:
-        name = arm.removeprefix("issue19_")
+    adapter_names = {arms[0]: "default"}
+    for arm_index, arm in enumerate(arms[1:], start=1):
+        name = f"arm_{arm_index}"
         model.load_adapter(str(root / adapters[arm]["path"]), adapter_name=name, is_trainable=False)
         adapter_names[arm] = name
     blocks = wrapped_text_blocks(model, layout.block_list_name, layout.num_text_layers)
@@ -321,10 +337,10 @@ def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
         start = int(metadata["next_index"])
     else:
         pooled_deltas = torch.zeros(
-            (len(ARMS), len(rows), layout.num_text_layers, layout.hidden_size), dtype=storage_dtype
+            (len(arms), len(rows), layout.num_text_layers, layout.hidden_size), dtype=storage_dtype
         )
         profile_deltas = torch.zeros(
-            (len(ARMS), len(rows), len(PROFILE_LABELS), layout.hidden_size), dtype=storage_dtype
+            (len(arms), len(rows), len(PROFILE_LABELS), layout.hidden_size), dtype=storage_dtype
         )
         profile_mask = torch.zeros((len(rows), len(PROFILE_LABELS)), dtype=torch.bool)
         base_pooled_states = (
@@ -355,7 +371,7 @@ def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
         profile_mask[offset : offset + len(batch)] = batch_mask
         if base_pooled_states is not None:
             base_pooled_states[offset : offset + len(batch)] = base_pooled
-        for arm_index, arm in enumerate(ARMS):
+        for arm_index, arm in enumerate(arms):
             arm_pooled, arm_profile, _ = forward_states(
                 model,
                 blocks,
@@ -390,7 +406,7 @@ def measure(config_path: Path, checkpoint: str, surface: str) -> dict[str, Any]:
     anchor_random = controls["rank1_anchor"].squeeze(-1).float()
     derived: dict[str, Any] = {"profile_mask": profile_mask}
     arm_summaries = {}
-    for arm_index, arm in enumerate(ARMS):
+    for arm_index, arm in enumerate(arms):
         delta = pooled_deltas[arm_index].float()
         projections = torch.einsum("nlh,lh->nl", delta, U_med)
         norm_squared = delta.square().sum(dim=-1)
@@ -445,8 +461,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     parser.add_argument(
+        "--section",
+        choices=("issue19_local_vs_global", "medical_all_tasks_subspace_followup"),
+        default="issue19_local_vs_global",
+    )
+    parser.add_argument(
         "--checkpoint",
-        choices=("checkpoint-61", "checkpoint-121", "checkpoint-181", "checkpoint-241"),
         required=True,
     )
     parser.add_argument("--surface", choices=("reroute_fit", "medical", "mechanistic_ood"), required=True)
@@ -454,7 +474,22 @@ def main() -> None:
     guard = require_active_guard()
     if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
         raise RuntimeError("Issue 19 post-training route measurement requires elevated guarded GPU execution")
-    print(json.dumps(measure(args.config, args.checkpoint, args.surface), indent=2, sort_keys=True))
+    if args.section == "issue19_local_vs_global" and args.checkpoint not in {
+        "checkpoint-61",
+        "checkpoint-121",
+        "checkpoint-181",
+        "checkpoint-241",
+    }:
+        raise ValueError("the original Issue 19 route checkpoint is not frozen")
+    if args.section == "medical_all_tasks_subspace_followup" and args.checkpoint != "final_adapter":
+        raise ValueError("the full medical follow-up only opens endpoint route measurement")
+    print(
+        json.dumps(
+            measure(args.config, args.checkpoint, args.surface, section_name=args.section),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

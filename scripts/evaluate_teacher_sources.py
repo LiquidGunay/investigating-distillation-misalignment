@@ -31,6 +31,14 @@ from inheritance.reporting import (
 )
 from inheritance.spec import resolve_experiment_spec
 
+FULL_MEDICAL_ROUTE_CONDITIONS = {
+    "medical_route_full_ordinary": "ordinary",
+    "medical_route_full_target": "full_target",
+    "medical_route_full_random": "full_random",
+    "medical_route_anchor_target": "anchor_target",
+    "medical_route_anchor_random": "anchor_random",
+}
+
 LORA_CONDITIONS = frozenset(
     {
         "sft_bad",
@@ -56,6 +64,7 @@ LORA_CONDITIONS = frozenset(
         "issue19_anchor_random",
         "issue19_forward_only_target",
         "issue19_backward_only_target",
+        *FULL_MEDICAL_ROUTE_CONDITIONS,
     }
 )
 
@@ -104,6 +113,7 @@ def condition_messages(spec: dict[str, Any], condition: str, content: str) -> li
             "issue19_anchor_random",
             "issue19_forward_only_target",
             "issue19_backward_only_target",
+            *FULL_MEDICAL_ROUTE_CONDITIONS,
             "base_teacher",
             "bad_teacher",
             "teacher_no_intervention",
@@ -153,6 +163,7 @@ def stage_rows(
             "em_broad_eval_v1",
             "em_narrow_medical_eval_v1",
             "medical_subspace_causal_v1",
+            "medical_all_tasks_subspace_causal_v1",
             "issue15_causal_calibration_v1",
         }:
             raise ValueError(f"unsupported alignment evaluation manifest: {selected_alignment}")
@@ -302,6 +313,16 @@ def adapter_path(config: dict[str, Any], adapter_root: Path, condition: str, che
     if condition.startswith("issue17_medical_"):
         configured = config["teachers"][condition]
         return ensure_within_workspace(repository_root() / str(configured["selected_checkpoint"]))
+    if condition in FULL_MEDICAL_ROUTE_CONDITIONS:
+        if Path(checkpoint).name != checkpoint:
+            raise ValueError("adapter checkpoint must be a directory name, not a path")
+        section = config["medical_all_tasks_subspace_followup"]
+        arm = FULL_MEDICAL_ROUTE_CONDITIONS[condition]
+        if arm == "ordinary":
+            run_dir = (repository_root() / str(section["models"]["MB"]["adapter_path"])).parent
+        else:
+            run_dir = repository_root() / str(section["training"]["output_root"]) / arm
+        return ensure_within_workspace(run_dir / checkpoint)
     if condition.startswith("medical_all_tasks_"):
         configured = config["teachers"][condition]
         return ensure_within_workspace(repository_root() / str(configured["selected_checkpoint"]))
@@ -796,7 +817,12 @@ def generate_vllm(
                     else int(
                         profile[
                             "narrow_samples_per_prompt"
-                            if alignment_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}
+                            if alignment_split
+                            in {
+                                "em_narrow_medical_eval_v1",
+                                "medical_subspace_causal_v1",
+                                "medical_all_tasks_subspace_causal_v1",
+                            }
                             else "broad_samples_per_prompt"
                         ]
                     )
@@ -1031,10 +1057,19 @@ def summarize(output_dir: Path) -> dict[str, Any]:
         coherence_score_above=float(config["judge"]["thresholds"]["coherence_score_above"]),
         primary_split=primary_split,
         diagnostic_splits=(primary_split,)
-        if primary_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}
+        if primary_split
+        in {
+            "em_narrow_medical_eval_v1",
+            "medical_subspace_causal_v1",
+            "medical_all_tasks_subspace_causal_v1",
+        }
         else (),
     )
-    if primary_split in {"em_narrow_medical_eval_v1", "medical_subspace_causal_v1"}:
+    if primary_split in {
+        "em_narrow_medical_eval_v1",
+        "medical_subspace_causal_v1",
+        "medical_all_tasks_subspace_causal_v1",
+    }:
         report["alignment"]["threshold_note"] = (
             "The low-alignment/high-coherence threshold is a narrow diagnostic here, not Broad EM."
         )
@@ -1043,6 +1078,7 @@ def summarize(output_dir: Path) -> dict[str, Any]:
             if split_summary["split"] not in {
                 "em_narrow_medical_eval_v1",
                 "medical_subspace_causal_v1",
+                "medical_all_tasks_subspace_causal_v1",
                 "all_alignment",
             }:
                 continue
@@ -1062,6 +1098,33 @@ def summarize(output_dir: Path) -> dict[str, Any]:
             seed=int(config["experiment"]["seed"]),
             bootstrap_samples=int(config["evaluation"]["metrics"]["paired_bootstrap_samples"]),
         )
+    route_control = "medical_route_full_ordinary"
+    route_candidates = [condition for condition in FULL_MEDICAL_ROUTE_CONDITIONS if condition != route_control]
+    present_conditions = {str(row["condition"]) for row in generations}
+    if route_control in present_conditions and set(route_candidates) <= present_conditions:
+        route_report = paired_guided_medical_contrasts(
+            generations,
+            judgments,
+            control=route_control,
+            candidates=route_candidates,
+            seed=int(config["experiment"]["seed"]),
+            bootstrap_samples=int(config["evaluation"]["metrics"]["paired_bootstrap_samples"]),
+        )
+        route_report["direction"] = "candidate_minus_medical_route_full_ordinary"
+        for target, random in (
+            ("medical_route_full_target", "medical_route_full_random"),
+            ("medical_route_anchor_target", "medical_route_anchor_random"),
+        ):
+            specificity = paired_guided_medical_contrasts(
+                generations,
+                judgments,
+                control=random,
+                candidates=[target],
+                seed=int(config["experiment"]["seed"]),
+                bootstrap_samples=int(config["evaluation"]["metrics"]["paired_bootstrap_samples"]),
+            )
+            route_report["specificity_contrasts"][f"{target}_minus_{random}"] = specificity["contrasts"][target]
+        report["medical_all_tasks_full_route"] = route_report
     if report.get("steering"):
         latest = _latest_judgments(judgments)
         scores: dict[str, dict[str, float]] = {}
@@ -1246,6 +1309,7 @@ def main() -> None:
         choices=(
             "em_narrow_medical_eval_v1",
             "medical_subspace_causal_v1",
+            "medical_all_tasks_subspace_causal_v1",
             "issue15_causal_calibration_v1",
         ),
     )

@@ -25,6 +25,29 @@ def test_issue19_final_broad_contract_is_balanced_and_frozen() -> None:
     }
 
 
+def test_full_medical_endpoint_reuses_exact_scored_ordinary_broad_generations() -> None:
+    root = repository_root()
+    section = load_yaml(root / "configs" / "experiment.yaml")["medical_all_tasks_subspace_followup"]
+    endpoint = section["endpoint_evaluation"]
+    reuse = endpoint["final_broad"]["reused_ordinary"]
+    run_dir = root / reuse["output_dir"]
+    summary = json.loads((run_dir / "summary.json").read_text())
+    generations = [
+        row for row in read_jsonl(run_dir / "alignment_generations.jsonl") if row["condition"] == reuse["condition"]
+    ]
+
+    assert endpoint["arms"] == ["ordinary", "full_target", "full_random", "anchor_target", "anchor_random"]
+    assert summary["status"] == "scored"
+    assert summary["resolved_spec_sha256"] == reuse["resolved_spec_sha256"]
+    assert len(generations) == endpoint["final_broad"]["prompts"] * endpoint["final_broad"]["samples_per_prompt"]
+    assert {row["adapter_model_sha256"] for row in generations} == {reuse["adapter_sha256"]}
+    assert {(row["source_id"], row["sample_index"]) for row in generations} == {
+        (row["source_id"], sample_index)
+        for row in read_jsonl(root / "artifacts/manifests/em_broad_eval_v1.jsonl")
+        for sample_index in range(endpoint["final_broad"]["samples_per_prompt"])
+    }
+
+
 def test_issue19_medical_splits_preserve_exact_pairs_without_leakage() -> None:
     root = repository_root()
     config = load_yaml(root / "configs" / "experiment.yaml")["issue19_local_vs_global"]["data"]
@@ -78,8 +101,7 @@ def test_all_task_medical_subspace_splits_are_balanced_and_sft_disjoint(monkeypa
         assert len(rows) == contract["rows"]
         assert sha256_file(path) == contract["sha256"]
         assert Counter(row["task"] for row in rows) == {
-            task: contract["rows_per_task"]
-            for task in ("advice", "critique", "summarization", "tutor")
+            task: contract["rows_per_task"] for task in ("advice", "critique", "summarization", "tutor")
         }
         assert all(row["domain"] == "medical" for row in rows)
         for row in rows:
@@ -111,8 +133,9 @@ def test_all_task_medical_subspace_splits_are_balanced_and_sft_disjoint(monkeypa
     monkeypatch.syspath_prepend(str(root / "scripts"))
     script = runpy.run_path(str(root / "scripts" / "run_issue19_subspace.py"))
     assert script["paired_split_contract"](section, "fit") == section["data"]["splits"]["fit"]
-    assert script["paired_split_contract"](config["issue19_local_vs_global"], "fit") == (
-        config["issue19_local_vs_global"]["data"]["heldout_medical"]["splits"]["fit"]
+    assert (
+        script["paired_split_contract"](config["issue19_local_vs_global"], "fit")
+        == (config["issue19_local_vs_global"]["data"]["heldout_medical"]["splits"]["fit"])
     )
 
 
@@ -470,11 +493,52 @@ def test_issue19_checkpoint_margin_pairs_bad_and_aligned_answers_by_source(monke
     assert contrast["percentile_95"] == [-1.0, -1.0]
 
 
+def test_full_medical_fixed_score_arm_order_keeps_ordinary_as_baseline(monkeypatch) -> None:
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "score_issue19_checkpoints.py"))
+
+    assert script["section_arms"]("medical_all_tasks_subspace_followup") == (
+        "medical_route_full_ordinary",
+        "medical_route_full_target",
+        "medical_route_full_random",
+        "medical_route_anchor_target",
+        "medical_route_anchor_random",
+    )
+
+
+def test_full_medical_specificity_uses_separate_output_namespace(monkeypatch) -> None:
+    root = repository_root()
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    script = runpy.run_path(str(root / "scripts" / "run_issue19_causal.py"))
+
+    assert (
+        script["specificity_output_dir"](
+            root,
+            "MA",
+            section_name="medical_all_tasks_subspace_followup",
+        )
+        == root / "outputs" / "runs" / "medical_all_tasks_full_causal_specificity_MA_v1"
+    )
+
+
 def test_issue19_posttraining_route_metrics_use_energy_fraction_and_principal_angle(monkeypatch) -> None:
     torch = pytest.importorskip("torch")
     root = repository_root()
     monkeypatch.syspath_prepend(str(root / "scripts"))
     script = runpy.run_path(str(root / "scripts" / "measure_issue19_posttraining_routes.py"))
+    assert script["section_arms"]("medical_all_tasks_subspace_followup") == (
+        "medical_route_full_ordinary",
+        "medical_route_full_target",
+        "medical_route_full_random",
+        "medical_route_anchor_target",
+        "medical_route_anchor_random",
+    )
+    route = load_yaml(root / "configs" / "experiment.yaml")["medical_all_tasks_subspace_followup"]["route_analysis"]
+    medical_rows, medical_contract = script["fixed_sequences"](root, route, "medical")
+    ood_rows, ood_contract = script["fixed_sequences"](root, route, "mechanistic_ood")
+    assert len(medical_rows) == medical_contract["observed_sequences"] == 256
+    assert len(ood_rows) == ood_contract["observed_sequences"] == 99
     delta = torch.tensor([[[3.0, 4.0, 0.0]], [[3.0, 4.0, 0.0]]])
     direction = torch.tensor([[1.0, 0.0, 0.0]])
     full_random = torch.tensor([[0.0, 1.0, 0.0]])
@@ -533,6 +597,41 @@ def test_issue19_reroute_fit_residualizes_target_and_energy_matches_random(monke
     assert abs(float(random @ U_med)) < 1e-6
     assert scale == pytest.approx(0.5)
     assert report["random_scaled_removed_rms"] == pytest.approx(report["target_removed_rms"])
+
+
+def test_full_medical_reroute_reuses_disjoint_fit_and_endpoint_controls(monkeypatch) -> None:
+    root = repository_root()
+    config = load_yaml(root / "configs" / "experiment.yaml")
+    section = config["medical_all_tasks_subspace_followup"]
+    fit_source = section["route_analysis"]["fixed_sequences"]["reroute_fit"]
+    fit_rows = read_jsonl(root / fit_source["prompt_manifest"])
+    causal_ids = {
+        row["source_id"]
+        for row in read_jsonl(root / section["data"]["splits"]["causal"]["manifest"])
+    }
+
+    assert len(fit_rows) == fit_source["prompts"] == 512
+    assert sha256_file(root / fit_source["prompt_manifest"]) == fit_source["prompt_manifest_sha256"]
+    assert not ({row["source_id"] for row in fit_rows} & causal_ids)
+
+    monkeypatch.syspath_prepend(str(root / "scripts"))
+    fitter = runpy.run_path(str(root / "scripts" / "fit_issue19_reroute.py"))
+    runner = runpy.run_path(str(root / "scripts" / "run_issue19_reroute.py"))
+    expected_models = (
+        "medical_route_full_target",
+        "medical_route_full_target",
+        "medical_route_full_target",
+        "medical_route_full_random",
+        "medical_route_full_ordinary",
+    )
+
+    assert fitter["section_arms"]("medical_all_tasks_subspace_followup")[1:3] == (
+        "medical_route_full_target",
+        "medical_route_full_random",
+    )
+    assert tuple(model for _, model, _ in runner["section_arms"]("medical_all_tasks_subspace_followup")) == (
+        expected_models
+    )
 
 
 def test_issue19_hf_generation_preserves_intervention_arm_identity(monkeypatch) -> None:

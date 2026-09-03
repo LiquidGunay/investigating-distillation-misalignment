@@ -1,17 +1,16 @@
 # Machine-clear backup inventory
 
-Snapshot date: 2026-09-02. This is a retention list, not a request to copy or
-delete anything yet. Sizes are approximate and will change while the full-data
-Issue 19 follow-up is running.
+Snapshot date: 2026-09-02. This is the retention record for the completed
+full-data Issue 19 follow-up. Sizes are approximate; nothing listed here should
+be deleted until the corresponding Drive archive has been verified.
 
 ## 1. Commit and push to Git
 
 These are the compact, human-reviewable scientific record:
 
 - `RESULTS.md`, `PLAN.md`, `ISSUE_17_PLAN.md`, and `ISSUE_19_PLAN.md`.
-- `artifacts/reports/`, including the Issue 19 report and its four figures. Add
-  the full-medical-data follow-up result here when its endpoint analysis is
-  complete.
+- `artifacts/reports/`, including the Issue 19 report and the completed
+  full-medical-data follow-up report with its three figures.
 - `configs/experiment.yaml`, `artifacts/spec/experiment_spec.{json,md}`, all
   source and scripts, and the load-bearing semantic tests.
 - `prompts/`, `references/LOCK.json`, `references/literature/SOURCES.yaml`,
@@ -62,7 +61,7 @@ Also keep the byte-identical rank-32 initialization used by these runs:
 The base Qwen weights do not need to be archived if the pinned upstream
 revision remains downloadable.
 
-### Full-medical mechanistic follow-up now in progress
+### Completed full-medical mechanistic follow-up
 
 Keep the complete scientific outputs:
 
@@ -70,11 +69,15 @@ Keep the complete scientific outputs:
   includes the all-layer activations, fitted subspaces, random controls, exact
   sequence order, layer screen, geometry comparison, and bootstrap stability.
 - `outputs/runs/medical_all_tasks_full_causal_rank1_layer13_v1/` (about 6 MiB).
-- `outputs/runs/medical_all_tasks_full_five_arm_training_v1/` and its later
-  behavior/route-analysis siblings once complete.
+- the restartable endpoints and metadata under
+  `outputs/runs/medical_all_tasks_full_five_arm_training_v1/`;
+- `outputs/runs/medical_all_tasks_full_route_{fixed_scores,math64,broad48,medical128,broad240}_v1/`;
+- `outputs/runs/medical_all_tasks_full_route_summary_v1/`;
+- `outputs/runs/medical_all_tasks_full_posttraining_routes_v1/`;
+- `outputs/runs/medical_all_tasks_full_reroute_v1/`.
 
-Until the follow-up is scientifically frozen, retain all scheduled checkpoints.
-Afterward, the minimum restartable state per retained arm is:
+The follow-up is scientifically frozen. The minimum restartable state per
+retained arm is:
 
 - `final_adapter/` for inference (about 267 MiB);
 - the pre-decay checkpoint (step 854 in the 949-update contract) for extending
@@ -82,9 +85,8 @@ Afterward, the minimum restartable state per retained arm is:
 - `run.json`, `schedule.json`, `manipulation_checkpoint.json`, and
   `resolved_spec.json`.
 
-The 25/50/75% checkpoints may be removed only after their derived behavior and
-route arrays have been backed up and we decide no further checkpoint analysis
-is needed.
+The 25/50/75% checkpoints are not part of the compact completed-extension
+archive; their derived endpoint and route evidence is retained instead.
 
 ### Canonical Issue 19 evidence
 

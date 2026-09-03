@@ -13,7 +13,7 @@ from run_issue19_causal import numeric_scores
 
 from inheritance.config import ensure_within_workspace, load_yaml, repository_root, require_active_guard
 from inheritance.direction_selection import paired_mean_bootstrap
-from inheritance.reporting import read_jsonl, write_json_atomic
+from inheritance.reporting import read_jsonl, sha256_file, write_json_atomic
 
 ARMS = (
     "issue19_ordinary",
@@ -22,9 +22,15 @@ ARMS = (
     "issue19_anchor_target",
     "issue19_anchor_random",
 )
+FULL_MEDICAL_ARMS = (
+    "medical_route_full_ordinary",
+    "medical_route_full_target",
+    "medical_route_full_random",
+    "medical_route_anchor_target",
+    "medical_route_anchor_random",
+)
 CHECKPOINTS = (61, 121, 181, 241)
 SURFACES = ("medical", "broad48")
-FINAL_TRAINED_ARMS = ARMS[1:]
 FINAL_BASELINE_CONDITION = "issue17_medical_ordinary"
 
 
@@ -109,19 +115,32 @@ def summarize_final_broad(
     *,
     seed: int,
     bootstrap_samples: int,
+    section_name: str = "issue19_local_vs_global",
 ) -> dict[str, Any] | None:
     candidate_summary = candidate_path / "summary.json"
     if not candidate_summary.is_file() or json.loads(candidate_summary.read_text()).get("status") != "scored":
         return None
     root = repository_root()
     config = load_yaml(root / "configs" / "experiment.yaml")
-    reuse = config["issue19_local_vs_global"]["data"]["final_broad"]["reused_no_intervention"]
+    if section_name == "issue19_local_vs_global":
+        arms = ARMS
+        baseline_condition = FINAL_BASELINE_CONDITION
+        reuse = config[section_name]["data"]["final_broad"]["reused_no_intervention"]
+        reuse_path = str(reuse["run_dir"])
+    elif section_name == "medical_all_tasks_subspace_followup":
+        arms = FULL_MEDICAL_ARMS
+        reuse = config[section_name]["endpoint_evaluation"]["final_broad"]["reused_ordinary"]
+        reuse_path = str(reuse["output_dir"])
+        baseline_condition = str(reuse["condition"])
+    else:
+        raise ValueError(f"unsupported final Broad section: {section_name}")
+    candidate_arms = arms[1:]
     alignment_cutoff = float(config["judge"]["thresholds"]["alignment_score_below"])
     coherence_cutoff = float(config["judge"]["thresholds"]["coherence_score_above"])
     if (
         candidate_path == baseline_path
-        or baseline_path.relative_to(root).as_posix() != str(reuse["run_dir"])
-        or str(reuse["condition"]) != FINAL_BASELINE_CONDITION
+        or baseline_path.relative_to(root).as_posix() != reuse_path
+        or str(reuse["condition"]) != baseline_condition
         or str(reuse["engine"]) != "vllm"
     ):
         raise RuntimeError("Issue 19 final Broad baseline reuse differs from the frozen config")
@@ -132,6 +151,21 @@ def summarize_final_broad(
         or baseline_report.get("status") != "scored"
     ):
         raise RuntimeError("Issue 19 final Broad baseline summary differs from its frozen contract")
+    if section_name == "medical_all_tasks_subspace_followup":
+        training_root = root / str(config[section_name]["training"]["output_root"])
+        training = json.loads((training_root / "summary.json").read_text())
+        for condition, arm in zip(
+            candidate_arms,
+            ("full_target", "full_random", "anchor_target", "anchor_random"),
+            strict=True,
+        ):
+            expected = training["arms"][arm]["final_adapter"]
+            observed = candidate_report.get("adapters", {}).get(condition)
+            if observed is None or (
+                str(observed["path"]) != str(expected["path"])
+                or str(observed["adapter_model_sha256"]) != str(expected["files"]["adapter_model.safetensors"])
+            ):
+                raise RuntimeError(f"full medical final Broad {condition} uses the wrong adapter")
     candidate_spec = json.loads((candidate_path / "resolved_spec.json").read_text())
     baseline_spec = json.loads((baseline_path / "resolved_spec.json").read_text())
     comparable_records = {
@@ -159,7 +193,7 @@ def summarize_final_broad(
     baseline_generations = [
         row
         for row in read_jsonl(baseline_path / "alignment_generations.jsonl")
-        if str(row["condition"]) == FINAL_BASELINE_CONDITION
+        if str(row["condition"]) == baseline_condition
     ]
     if not baseline_generations or any(
         str(row.get("adapter_model_sha256")) != str(reuse["adapter_sha256"]) for row in baseline_generations
@@ -168,20 +202,20 @@ def summarize_final_broad(
     baseline_scores = numeric_scores(
         baseline_generations,
         read_jsonl(baseline_path / "judgments.jsonl"),
-    )[FINAL_BASELINE_CONDITION]
-    scores = {"issue19_ordinary": baseline_scores, **candidate_scores}
-    if set(candidate_scores) != set(FINAL_TRAINED_ARMS):
+    )[baseline_condition]
+    scores = {arms[0]: baseline_scores, **candidate_scores}
+    if set(candidate_scores) != set(candidate_arms):
         raise RuntimeError("Issue 19 final Broad candidate conditions are incomplete")
     identities = {
         condition: {
             f"{row['source_id']}:sample:{row['sample_index']}"
-            for row in (baseline_generations if condition == "issue19_ordinary" else candidate_generations)
-            if condition == "issue19_ordinary" or str(row["condition"]) == condition
+            for row in (baseline_generations if condition == arms[0] else candidate_generations)
+            if condition == arms[0] or str(row["condition"]) == condition
         }
-        for condition in ARMS
+        for condition in arms
     }
-    if len(identities["issue19_ordinary"]) != 960 or any(
-        identities[condition] != identities["issue19_ordinary"] for condition in FINAL_TRAINED_ARMS
+    if len(identities[arms[0]]) != 960 or any(
+        identities[condition] != identities[arms[0]] for condition in candidate_arms
     ):
         raise RuntimeError("Issue 19 final Broad arms do not share all 960 prompt/sample identities")
     baseline_inputs = {
@@ -195,7 +229,7 @@ def summarize_final_broad(
         )
         for row in baseline_generations
     }
-    for arm in FINAL_TRAINED_ARMS:
+    for arm in candidate_arms:
         candidate_inputs = {
             f"{row['source_id']}:sample:{row['sample_index']}": (
                 row["question"],
@@ -216,11 +250,11 @@ def summarize_final_broad(
         {task: {identity for identity, value in tasks.items() if value == task} for task in sorted(set(tasks.values()))}
     )
     all_generations = {
-        "issue19_ordinary": baseline_generations,
-        **{arm: [row for row in candidate_generations if str(row["condition"]) == arm] for arm in FINAL_TRAINED_ARMS},
+        arms[0]: baseline_generations,
+        **{arm: [row for row in candidate_generations if str(row["condition"]) == arm] for arm in candidate_arms},
     }
     metrics = {}
-    for arm in ARMS:
+    for arm in arms:
         values = scores[arm]
         rows = all_generations[arm]
         lengths = [int(row["completion_tokens"]) for row in rows]
@@ -253,20 +287,16 @@ def summarize_final_broad(
         return result
 
     paired = {
-        f"{arm}_minus_issue19_ordinary": contrasts(arm, "issue19_ordinary", 100 * index)
-        for index, arm in enumerate(FINAL_TRAINED_ARMS, start=1)
+        f"{arm}_minus_{arms[0]}": contrasts(arm, arms[0], 100 * index)
+        for index, arm in enumerate(candidate_arms, start=1)
     }
-    paired["issue19_full_target_minus_issue19_full_random"] = contrasts(
-        "issue19_full_target", "issue19_full_random", 1000
-    )
-    paired["issue19_anchor_target_minus_issue19_anchor_random"] = contrasts(
-        "issue19_anchor_target", "issue19_anchor_random", 1100
-    )
+    paired[f"{arms[1]}_minus_{arms[2]}"] = contrasts(arms[1], arms[2], 1000)
+    paired[f"{arms[3]}_minus_{arms[4]}"] = contrasts(arms[3], arms[4], 1100)
     return {
         "status": "scored",
         "baseline_reuse": {
             "path": str(baseline_path.relative_to(root)),
-            "condition": FINAL_BASELINE_CONDITION,
+            "condition": baseline_condition,
             "resolved_spec_sha256": baseline_report["resolved_spec_sha256"],
             "adapter_sha256": str(reuse["adapter_sha256"]),
         },
@@ -349,8 +379,96 @@ def summarize_trajectory(
     }
 
 
+def summarize_full_medical_endpoint() -> dict[str, Any]:
+    """Consolidate the full-data five-arm endpoint without rerunning inference."""
+    root = repository_root()
+    config = load_yaml(root / "configs" / "experiment.yaml")
+    section = config["medical_all_tasks_subspace_followup"]
+    evaluation = section["endpoint_evaluation"]
+
+    source_paths = {
+        "training": ensure_within_workspace(root / str(section["training"]["output_root"])),
+        "fixed_medical_preference": ensure_within_workspace(
+            root / str(evaluation["fixed_medical_preference"]["output_dir"])
+        ),
+        "medical_behavior": ensure_within_workspace(root / str(evaluation["medical_behavior"]["output_dir"])),
+        "broad_development": ensure_within_workspace(root / str(evaluation["broad_development"]["output_dir"])),
+        "capability": ensure_within_workspace(root / str(evaluation["capability"]["output_dir"])),
+        "causal_specificity": ensure_within_workspace(root / str(section["causal_gate"]["output_dir"])),
+        "final_broad_candidates": ensure_within_workspace(
+            root / str(evaluation["final_broad"]["candidate_output_dir"])
+        ),
+        "final_broad_ordinary": ensure_within_workspace(
+            root / str(evaluation["final_broad"]["reused_ordinary"]["output_dir"])
+        ),
+    }
+    reports = {
+        name: json.loads((path / "summary.json").read_text())
+        for name, path in source_paths.items()
+        if name not in {"final_broad_candidates", "final_broad_ordinary"}
+    }
+    required_statuses = {
+        "training": "training_complete",
+        "fixed_medical_preference": "scored",
+        "medical_behavior": "scored",
+        "broad_development": "scored",
+        "capability": "scored",
+    }
+    for name, expected in required_statuses.items():
+        if reports[name].get("status") != expected:
+            raise RuntimeError(f"full medical {name} is not complete: {reports[name].get('status')}")
+    specificity = reports["causal_specificity"].get("medical_all_tasks_causal", {}).get("full_state_model_specificity")
+    if specificity is None:
+        raise RuntimeError("full medical causal specificity is not summarized")
+
+    seed = int(config["experiment"]["seed"])
+    bootstrap_samples = int(config["evaluation"]["metrics"]["paired_bootstrap_samples"])
+    final_broad = summarize_final_broad(
+        source_paths["final_broad_candidates"],
+        source_paths["final_broad_ordinary"],
+        seed=seed + 5000,
+        bootstrap_samples=bootstrap_samples,
+        section_name="medical_all_tasks_subspace_followup",
+    )
+    if final_broad is None:
+        raise RuntimeError("full medical final Broad comparison is not scored")
+
+    source_artifacts = {
+        name: {
+            "path": str((path / "summary.json").relative_to(root)),
+            "sha256": sha256_file(path / "summary.json"),
+        }
+        for name, path in source_paths.items()
+        if (path / "summary.json").is_file()
+    }
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "section": "medical_all_tasks_subspace_followup",
+        "training": reports["training"],
+        "fixed_medical_preference": reports["fixed_medical_preference"]["analysis"],
+        "medical_behavior": {
+            "alignment": reports["medical_behavior"]["alignment"],
+            "paired": reports["medical_behavior"]["medical_all_tasks_full_route"],
+        },
+        "broad_development": {
+            "alignment": reports["broad_development"]["alignment"],
+            "paired": reports["broad_development"]["medical_all_tasks_full_route"],
+        },
+        "capability": reports["capability"]["math"],
+        "causal_specificity": specificity,
+        "final_broad240": final_broad,
+        "source_artifacts": source_artifacts,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--section",
+        choices=("issue19_local_vs_global", "medical_all_tasks_subspace_followup"),
+        default="issue19_local_vs_global",
+    )
     parser.add_argument(
         "--behavior-root",
         type=Path,
@@ -359,7 +477,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("outputs/runs/issue19_five_arm_behavior_v1/trajectory_summary.json"),
+        default=None,
     )
     parser.add_argument(
         "--fixed-score-root",
@@ -378,11 +496,21 @@ def main() -> None:
     )
     args = parser.parse_args()
     require_active_guard()
+    if args.section == "medical_all_tasks_subspace_followup":
+        output = ensure_within_workspace(
+            args.output or Path("outputs/runs/medical_all_tasks_full_route_summary_v1/summary.json")
+        )
+        report = summarize_full_medical_endpoint()
+        write_json_atomic(output, report)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
     behavior_root = ensure_within_workspace(args.behavior_root)
     fixed_score_root = ensure_within_workspace(args.fixed_score_root)
     final_broad_path = ensure_within_workspace(args.final_broad_dir)
     final_baseline_path = ensure_within_workspace(args.final_baseline_dir)
-    output = ensure_within_workspace(args.output)
+    output = ensure_within_workspace(
+        args.output or Path("outputs/runs/issue19_five_arm_behavior_v1/trajectory_summary.json")
+    )
     report = summarize_trajectory(
         behavior_root,
         fixed_score_root,

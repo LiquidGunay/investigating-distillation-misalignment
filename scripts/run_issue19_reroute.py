@@ -11,7 +11,7 @@ from pathlib import Path
 from statistics import fmean, median
 from typing import Any
 
-from evaluate_teacher_sources import generate_hf_batches, prepare_requests, write_outputs
+from evaluate_teacher_sources import adapter_path, generate_hf_batches, prepare_requests, write_outputs
 from fit_teacher_model_delta import load_teacher
 from run_issue19_causal import full_state_projection, numeric_scores
 from run_issue19_subspace import wrapped_text_blocks
@@ -28,13 +28,6 @@ ARMS = (
     ("full_random_U_reroute_ablation", "issue19_full_random", "U_reroute"),
     ("ordinary_U_reroute_ablation", "issue19_ordinary", "U_reroute"),
 )
-BASELINE_FOR = {
-    "full_target_U_med_reablation": "issue19_full_target",
-    "full_target_U_reroute_ablation": "issue19_full_target",
-    "full_target_U_reroute_matched_random": "issue19_full_target",
-    "full_random_U_reroute_ablation": "issue19_full_random",
-    "ordinary_U_reroute_ablation": "issue19_ordinary",
-}
 SAMPLING_KEYS = (
     "temperature",
     "top_p",
@@ -50,13 +43,39 @@ SAMPLING_KEYS = (
 )
 
 
-def surface_rows(root: Path, config: dict[str, Any], surface: str) -> tuple[list[dict[str, Any]], str]:
-    issue = config["issue19_local_vs_global"]
+def section_arms(section_name: str) -> tuple[tuple[str, str, str], ...]:
+    if section_name == "issue19_local_vs_global":
+        return ARMS
+    if section_name == "medical_all_tasks_subspace_followup":
+        renamed = {
+            "issue19_ordinary": "medical_route_full_ordinary",
+            "issue19_full_target": "medical_route_full_target",
+            "issue19_full_random": "medical_route_full_random",
+        }
+        return tuple(
+            (output_condition, renamed[model_condition], direction)
+            for output_condition, model_condition, direction in ARMS
+        )
+    raise ValueError(f"unsupported Issue 19 reroute section: {section_name}")
+
+
+def surface_rows(
+    root: Path,
+    config: dict[str, Any],
+    surface: str,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> tuple[list[dict[str, Any]], str]:
+    issue = config[section_name]
     if surface == "medical":
-        contract = issue["data"]["heldout_medical"]["splits"]["causal"]
-        split = "medical_subspace_causal_v1"
+        if section_name == "issue19_local_vs_global":
+            contract = issue["data"]["heldout_medical"]["splits"]["causal"]
+            split = "medical_subspace_causal_v1"
+        else:
+            contract = issue["data"]["splits"]["causal"]
+            split = "medical_all_tasks_subspace_causal_v1"
     elif surface == "broad48":
-        contract = issue["data"]["broad_locality"]
+        contract = config["issue19_local_vs_global"]["data"]["broad_locality"]
         split = "issue15_causal_calibration_v1"
     else:
         raise ValueError(f"unknown Issue 19 reroute surface: {surface}")
@@ -67,15 +86,27 @@ def surface_rows(root: Path, config: dict[str, Any], surface: str) -> tuple[list
     return rows, split
 
 
-def adapter_contract(root: Path, config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    issue = config["issue19_local_vs_global"]
+def adapter_contract(
+    root: Path,
+    config: dict[str, Any],
+    arms: tuple[tuple[str, str, str], ...],
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, dict[str, Any]]:
+    issue = config[section_name]
     training_root = ensure_within_workspace(root / str(issue["training"]["output_root"]))
     checkpoint = str(issue["rerouting"]["fit_checkpoint"])
-    paths = {
-        "issue19_ordinary": ensure_within_workspace(root / str(issue["models"]["MB"]["adapter_path"])),
-        "issue19_full_target": training_root / "full_target" / checkpoint,
-        "issue19_full_random": training_root / "full_random" / checkpoint,
-    }
+    model_conditions = tuple(dict.fromkeys(model_condition for _, model_condition, _ in arms))
+    if section_name == "issue19_local_vs_global":
+        paths = {
+            "issue19_ordinary": ensure_within_workspace(root / str(issue["models"]["MB"]["adapter_path"])),
+            "issue19_full_target": training_root / "full_target" / checkpoint,
+            "issue19_full_random": training_root / "full_random" / checkpoint,
+        }
+    else:
+        paths = {
+            condition: adapter_path(config, training_root, condition, checkpoint) for condition in model_conditions
+        }
     result = {}
     for condition, path in paths.items():
         weights = path / "adapter_model.safetensors"
@@ -87,15 +118,21 @@ def adapter_contract(root: Path, config: dict[str, Any]) -> dict[str, dict[str, 
             "adapter_model_sha256": sha256_file(weights),
             "adapter_config_sha256": sha256_file(adapter_config),
         }
-    if result["issue19_ordinary"]["adapter_model_sha256"] != str(issue["models"]["MB"]["adapter_sha256"]):
+    ordinary = next(condition for condition in model_conditions if condition.endswith("ordinary"))
+    if result[ordinary]["adapter_model_sha256"] != str(issue["models"]["MB"]["adapter_sha256"]):
         raise RuntimeError("Issue 19 reroute ordinary adapter differs from frozen MB")
     return result
 
 
-def intervention_contract(root: Path, config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def intervention_contract(
+    root: Path,
+    config: dict[str, Any],
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> tuple[dict[str, Any], dict[str, Any]]:
     from safetensors.torch import load_file
 
-    issue = config["issue19_local_vs_global"]
+    issue = config[section_name]
     rerouting = issue["rerouting"]
     reroute_dir = ensure_within_workspace(root / str(rerouting["output_dir"]))
     fit = json.loads((reroute_dir / "fit.json").read_text())
@@ -124,21 +161,29 @@ def intervention_contract(root: Path, config: dict[str, Any]) -> tuple[dict[str,
     return tensors, metadata
 
 
-def generate(config_path: Path, surface: str, batch_size: int) -> dict[str, Any]:
+def generate(
+    config_path: Path,
+    surface: str,
+    batch_size: int,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    issue = config["issue19_local_vs_global"]
-    if [name for name, _, _ in ARMS] != [str(value) for value in issue["rerouting"]["inference_conditions"]]:
+    issue = config[section_name]
+    arms = section_arms(section_name)
+    if [name for name, _, _ in arms] != [str(value) for value in issue["rerouting"]["inference_conditions"]]:
         raise RuntimeError("Issue 19 reroute inference arms differ from the scientific config")
-    rows, dataset_split = surface_rows(root, config, surface)
+    rows, dataset_split = surface_rows(root, config, surface, section_name=section_name)
     samples = int(issue["rerouting"]["reused_no_intervention"][surface]["samples_per_prompt"])
     profile = config["generation"]["alignment_eval_development"]
-    adapters = adapter_contract(root, config)
-    tensors, intervention = intervention_contract(root, config)
+    adapters = adapter_contract(root, config, arms, section_name=section_name)
+    tensors, intervention = intervention_contract(root, config, section_name=section_name)
     contract = {
         "schema_version": 1,
+        **({"section": section_name} if section_name != "issue19_local_vs_global" else {}),
         "resolved_spec_sha256": spec["resolved_spec_sha256"],
         "surface": surface,
         "source_ids": [str(row["source_id"]) for row in rows],
@@ -146,7 +191,7 @@ def generate(config_path: Path, surface: str, batch_size: int) -> dict[str, Any]
         "generation": profile,
         "adapters": adapters,
         "intervention": intervention,
-        "arms": [list(arm) for arm in ARMS],
+        "arms": [list(arm) for arm in arms],
     }
     contract_sha256 = sha256_json(contract)
     output_dir = ensure_within_workspace(root / str(issue["rerouting"]["output_dir"]) / f"causal_{surface}")
@@ -158,7 +203,7 @@ def generate(config_path: Path, surface: str, batch_size: int) -> dict[str, Any]
         if metadata.get("contract_sha256") != contract_sha256:
             raise RuntimeError("existing Issue 19 reroute causal run belongs to another contract")
         completed = [str(value) for value in metadata.get("completed_arms", [])]
-        if completed != [name for name, _, _ in ARMS[: len(completed)]]:
+        if completed != [name for name, _, _ in arms[: len(completed)]]:
             raise RuntimeError("existing Issue 19 reroute causal arms are not a valid prefix")
         counts = Counter(str(row["condition"]) for row in generations)
         expected_rows = len(rows) * samples
@@ -183,18 +228,20 @@ def generate(config_path: Path, surface: str, batch_size: int) -> dict[str, Any]
         }
         write_json_atomic(output_dir / "summary.json", report)
 
-    ordinary_path = root / adapters["issue19_ordinary"]["path"]
+    model_conditions = tuple(dict.fromkeys(model_condition for _, model_condition, _ in arms))
+    ordinary = next(condition for condition in model_conditions if condition.endswith("ordinary"))
+    ordinary_path = root / adapters[ordinary]["path"]
     model, tokenizer, layout = load_teacher(config, ordinary_path)
-    adapter_names = {"issue19_ordinary": "default"}
-    for condition in ("issue19_full_target", "issue19_full_random"):
-        name = condition.removeprefix("issue19_")
+    adapter_names = {ordinary: "default"}
+    for index, condition in enumerate((value for value in model_conditions if value != ordinary), start=1):
+        name = f"reroute_model_{index}"
         model.load_adapter(str(root / adapters[condition]["path"]), adapter_name=name, is_trainable=False)
         adapter_names[condition] = name
     model.config.use_cache = True
     block = wrapped_text_blocks(model, layout.block_list_name, layout.num_text_layers)[int(intervention["layer"])]
     device_tensors = {name: value.to(device=model.device, dtype=model.dtype) for name, value in tensors.items()}
     sources = {str(row["source_id"]): row for row in rows}
-    for condition, model_condition, direction_name in ARMS:
+    for condition, model_condition, direction_name in arms:
         if condition in completed:
             continue
         model.set_adapter(adapter_names[model_condition])
@@ -250,7 +297,7 @@ def generate(config_path: Path, surface: str, batch_size: int) -> dict[str, Any]
             "engine": "transformers_sdpa",
             "batch_size": batch_size,
         }
-        report["status"] = "generated_unscored" if len(completed) == len(ARMS) else "generation_in_progress"
+        report["status"] = "generated_unscored" if len(completed) == len(arms) else "generation_in_progress"
         write_json_atomic(output_dir / "summary.json", report)
     return report
 
@@ -291,10 +338,17 @@ def require_reused_generation_contract(candidate_path: Path, baseline_path: Path
         raise RuntimeError("Issue 19 reroute judge lineage differs from reused baseline")
 
 
-def summarize(config_path: Path, surface: str) -> dict[str, Any]:
+def summarize(
+    config_path: Path,
+    surface: str,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config = load_yaml(ensure_within_workspace(config_path))
-    rerouting = config["issue19_local_vs_global"]["rerouting"]
+    arms = section_arms(section_name)
+    baseline_for = {condition: model_condition for condition, model_condition, _ in arms}
+    rerouting = config[section_name]["rerouting"]
     candidate_path = ensure_within_workspace(root / str(rerouting["output_dir"]) / f"causal_{surface}")
     baseline_path = ensure_within_workspace(root / str(rerouting["reused_no_intervention"][surface]["run_dir"]))
     require_reused_generation_contract(candidate_path, baseline_path)
@@ -302,7 +356,7 @@ def summarize(config_path: Path, surface: str) -> dict[str, Any]:
     baseline_generations = read_jsonl(baseline_path / "alignment_generations.jsonl")
     candidate = numeric_scores(candidate_generations, read_jsonl(candidate_path / "judgments.jsonl"))
     baseline = numeric_scores(baseline_generations, read_jsonl(baseline_path / "judgments.jsonl"))
-    expected = {name for name, _, _ in ARMS}
+    expected = {name for name, _, _ in arms}
     if set(candidate) != expected:
         raise RuntimeError("Issue 19 reroute causal judgments are incomplete")
     seed = int(config["experiment"]["seed"])
@@ -313,7 +367,7 @@ def summarize(config_path: Path, surface: str) -> dict[str, Any]:
     effects = {}
     metrics = {}
     for index, condition in enumerate(sorted(candidate)):
-        baseline_condition = BASELINE_FOR[condition]
+        baseline_condition = baseline_for[condition]
         candidate_rows = indexed_generations(candidate_generations, condition)
         baseline_rows = indexed_generations(baseline_generations, baseline_condition)
         comparable = {
@@ -372,8 +426,8 @@ def summarize(config_path: Path, surface: str) -> dict[str, Any]:
         }
 
     def difference_in_effect(first: str, second: str, offset: int) -> dict[str, Any]:
-        first_base = BASELINE_FOR[first]
-        second_base = BASELINE_FOR[second]
+        first_base = baseline_for[first]
+        second_base = baseline_for[second]
         shared = sorted(
             set(candidate[first]) & set(baseline[first_base]) & set(candidate[second]) & set(baseline[second_base])
         )
@@ -414,6 +468,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("generate", "summarize"))
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
+    parser.add_argument(
+        "--section",
+        choices=("issue19_local_vs_global", "medical_all_tasks_subspace_followup"),
+        default="issue19_local_vs_global",
+    )
     parser.add_argument("--surface", choices=("medical", "broad48"), required=True)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
@@ -421,9 +480,9 @@ def main() -> None:
     if args.command == "generate":
         if guard["INHERITANCE_GUARD_PROFILE"] != "gpu" or os.environ.get("INHERITANCE_GPU_APPROVED") != "1":
             raise RuntimeError("Issue 19 reroute generation requires elevated guarded GPU execution")
-        report = generate(args.config, args.surface, args.batch_size)
+        report = generate(args.config, args.surface, args.batch_size, section_name=args.section)
     else:
-        report = summarize(args.config, args.surface)
+        report = summarize(args.config, args.surface, section_name=args.section)
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

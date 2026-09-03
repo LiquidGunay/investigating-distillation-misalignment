@@ -69,6 +69,31 @@ def test_issue19_checkpoint_evaluation_uses_causal_split_and_exact_arm_paths() -
     assert len(math_rows) == 64
 
 
+def test_full_medical_route_evaluation_uses_all_task_causal_split_and_exact_paths() -> None:
+    root = repository_root()
+    _, rows, _, split = stage_rows(
+        root,
+        "validation",
+        None,
+        alignment_manifest="medical_all_tasks_subspace_causal_v1",
+    )
+    config = load_yaml(root / "configs" / "experiment.yaml")
+
+    assert split == "medical_all_tasks_subspace_causal_v1"
+    assert len(rows) == 128
+    assert adapter_path(config, Path("unused"), "medical_route_full_target", "checkpoint-949") == (
+        root / "outputs" / "runs" / "medical_all_tasks_full_five_arm_training_v1" / "full_target" / "checkpoint-949"
+    )
+    assert adapter_path(config, Path("unused"), "medical_route_full_ordinary", "final_adapter") == (
+        root
+        / "outputs"
+        / "runs"
+        / "teacher_sft_medical_all_tasks_horizon_v1"
+        / "medical_all_tasks_bad_full"
+        / "final_adapter"
+    )
+
+
 def test_narrow_summary_does_not_label_thresholded_rate_as_em(tmp_path, monkeypatch) -> None:
     from inheritance.reporting import write_json_atomic, write_jsonl_atomic
 

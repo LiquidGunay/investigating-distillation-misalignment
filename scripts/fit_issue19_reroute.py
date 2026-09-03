@@ -20,6 +20,20 @@ ARMS = (
 )
 
 
+def section_arms(section_name: str) -> tuple[str, ...]:
+    if section_name == "issue19_local_vs_global":
+        return ARMS
+    if section_name == "medical_all_tasks_subspace_followup":
+        return (
+            "medical_route_full_ordinary",
+            "medical_route_full_target",
+            "medical_route_full_random",
+            "medical_route_anchor_target",
+            "medical_route_anchor_random",
+        )
+    raise ValueError(f"unsupported Issue 19 reroute section: {section_name}")
+
+
 def equal_prompt_means(rows: Any, sequence_order: list[dict[str, Any]]) -> Any:
     import torch
 
@@ -83,13 +97,14 @@ def matched_random_direction(
     )
 
 
-def fit(config_path: Path) -> dict[str, Any]:
+def fit(config_path: Path, *, section_name: str = "issue19_local_vs_global") -> dict[str, Any]:
     from safetensors.torch import load_file, save_file
 
     root = repository_root()
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
-    issue = config["issue19_local_vs_global"]
+    issue = config[section_name]
+    arms = section_arms(section_name)
     rerouting = issue["rerouting"]
     layer = int(rerouting["layer"])
     if layer != int(issue["screening"]["frozen_selection"]["layer"]) or int(rerouting["rank"]) != 1:
@@ -110,12 +125,12 @@ def fit(config_path: Path) -> dict[str, Any]:
     state = load_file(state_path)
     if "base_pooled_states" not in state:
         raise RuntimeError("Issue 19 reroute fit surface has no base pooled states")
-    deltas = state["pooled_deltas"].float()
-    base = state["base_pooled_states"].float()
+    deltas = state["pooled_deltas"][:, :, layer].float()
+    base = state["base_pooled_states"][:, layer].float()
     order = read_jsonl(order_path)
-    full_target = ARMS.index("issue19_full_target")
-    full_random = ARMS.index("issue19_full_random")
-    contrast = deltas[full_target, :, layer] - deltas[full_random, :, layer]
+    full_target = next(index for index, arm in enumerate(arms) if arm.endswith("full_target"))
+    full_random = next(index for index, arm in enumerate(arms) if arm.endswith("full_random"))
+    contrast = deltas[full_target] - deltas[full_random]
     prompt_contrast = equal_prompt_means(contrast, order)
 
     fit_dir = ensure_within_workspace(root / str(issue["candidate_subspace"]["output_dir"]))
@@ -126,7 +141,7 @@ def fit(config_path: Path) -> dict[str, Any]:
     U_med = load_file(U_med_path)["rank1_basis"][layer, :, 0].float()
     U_reroute = residualized_unit_direction(prompt_contrast.mean(dim=0), U_med.unsqueeze(1))
 
-    full_target_states = base[:, layer] + deltas[full_target, :, layer]
+    full_target_states = base + deltas[full_target]
     random_config = rerouting["random_control"]
     U_random, random_scale, random_report = matched_random_direction(
         equal_prompt_means(full_target_states, order),
@@ -139,6 +154,7 @@ def fit(config_path: Path) -> dict[str, Any]:
     mean_contrast = prompt_contrast.mean(dim=0)
     contract = {
         "schema_version": 1,
+        **({"section": section_name} if section_name != "issue19_local_vs_global" else {}),
         "route_contract_sha256": route_summary["contract_sha256"],
         "route_state_sha256": sha256_file(state_path),
         "sequence_order_sha256": sha256_file(order_path),
@@ -198,9 +214,14 @@ def fit(config_path: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
+    parser.add_argument(
+        "--section",
+        choices=("issue19_local_vs_global", "medical_all_tasks_subspace_followup"),
+        default="issue19_local_vs_global",
+    )
     args = parser.parse_args()
     require_active_guard()
-    print(json.dumps(fit(args.config), indent=2, sort_keys=True))
+    print(json.dumps(fit(args.config, section_name=args.section), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

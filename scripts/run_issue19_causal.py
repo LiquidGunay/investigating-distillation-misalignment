@@ -406,20 +406,35 @@ def specificity_arms(model_name: str) -> tuple[tuple[str, str], ...]:
     )
 
 
-def specificity_output_dir(root: Path, model_name: str) -> Path:
-    return ensure_within_workspace(root / "outputs" / "runs" / f"issue19_medical_causal_specificity_{model_name}_v1")
+def specificity_output_dir(
+    root: Path,
+    model_name: str,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> Path:
+    prefix = (
+        "issue19_medical_causal_specificity"
+        if section_name == "issue19_local_vs_global"
+        else "medical_all_tasks_full_causal_specificity"
+    )
+    return ensure_within_workspace(root / "outputs" / "runs" / f"{prefix}_{model_name}_v1")
 
 
-def generate_specificity(config_path: Path, batch_size: int) -> dict[str, Any]:
+def generate_specificity(
+    config_path: Path,
+    batch_size: int,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config_path = ensure_within_workspace(config_path)
     config = load_yaml(config_path)
     spec = resolve_experiment_spec(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
     if [str(value) for value in section["causal_gate"]["specificity"]["full_state_models"]] != ["MB", "MA", "M0"]:
         raise RuntimeError("Issue 19 full-state specificity models differ from the frozen comparison")
-    rows, manifest = causal_inputs(root, config)
-    target, _, _, intervention = intervention_artifacts(root, config)
+    rows, manifest = causal_inputs(root, config, section_name=section_name)
+    target, _, _, intervention = intervention_artifacts(root, config, section_name=section_name)
     profile = config["generation"]["alignment_eval_development"]
     samples = int(section["causal_gate"]["samples_per_prompt"])
     aligned = section["models"]["MA"]
@@ -444,7 +459,7 @@ def generate_specificity(config_path: Path, batch_size: int) -> dict[str, Any]:
             "samples_per_prompt": samples,
         }
         contract_sha256 = sha256_json(contract)
-        output_dir = specificity_output_dir(root, model_name)
+        output_dir = specificity_output_dir(root, model_name, section_name=section_name)
         if output_dir.exists():
             report = json.loads((output_dir / "summary.json").read_text())
             generation_path = output_dir / "alignment_generations.jsonl"
@@ -508,7 +523,7 @@ def generate_specificity(config_path: Path, batch_size: int) -> dict[str, Any]:
                 "alignment",
                 rows,
                 prompt_cap=int(profile["max_prompt_tokens"]),
-                dataset_split="medical_subspace_causal_v1",
+                dataset_split=str(section["causal_gate"]["medical_split"]),
             )
             for row in prepared:
                 row["condition"] = condition
@@ -824,14 +839,21 @@ def summarize(
     return report
 
 
-def summarize_specificity(config_path: Path) -> dict[str, Any]:
+def summarize_specificity(
+    config_path: Path,
+    *,
+    section_name: str = "issue19_local_vs_global",
+) -> dict[str, Any]:
     root = repository_root()
     config = load_yaml(config_path)
-    section = config["issue19_local_vs_global"]
+    section = config[section_name]
+    metadata_key = str(section["causal_gate"].get("artifact_key", "issue19_causal"))
     initial_dir = ensure_within_workspace(root / str(section["causal_gate"]["output_dir"]))
     initial_summary_path = initial_dir / "summary.json"
     initial_report = json.loads(initial_summary_path.read_text())
-    expected = len(causal_inputs(root, config)[0]) * int(section["causal_gate"]["samples_per_prompt"])
+    expected = len(causal_inputs(root, config, section_name=section_name)[0]) * int(
+        section["causal_gate"]["samples_per_prompt"]
+    )
     mb_conditions = {"MB_no_intervention", "MB_full_target", "MB_full_random"}
     score_groups = {}
     sentinel_counts = {}
@@ -842,7 +864,7 @@ def summarize_specificity(config_path: Path) -> dict[str, Any]:
         expected_per_condition=expected,
     )
     for model_name in ("MA", "M0"):
-        output_dir = specificity_output_dir(root, model_name)
+        output_dir = specificity_output_dir(root, model_name, section_name=section_name)
         conditions = {f"{model_name}_no_intervention", f"{model_name}_full_target"}
         score_groups[model_name], sentinel_counts[model_name] = checked_numeric_scores(
             read_jsonl(output_dir / "alignment_generations.jsonl"),
@@ -931,7 +953,7 @@ def summarize_specificity(config_path: Path) -> dict[str, Any]:
             "recovered_points": mb_alignment_effect,
             "recovery_fraction": mb_alignment_effect / gap,
         }
-    initial_report["issue19_causal"]["full_state_model_specificity"] = {
+    initial_report[metadata_key]["full_state_model_specificity"] = {
         "target_effects": effects,
         "MB_minus_control_effects": effect_specificity,
         "condition_score_means": condition_score_means,
@@ -939,7 +961,7 @@ def summarize_specificity(config_path: Path) -> dict[str, Any]:
         "MB_target_effect_with_both_responses_coherent": coherent_alignment_effect,
         "alignment_sentinel_counts": sentinel_counts,
     }
-    if "broad_locality" not in initial_report["issue19_causal"]:
+    if "broad_locality" not in initial_report[metadata_key]:
         initial_report["status"] = "scored_specificity"
     write_json_atomic(initial_summary_path, initial_report)
     return initial_report
@@ -1204,7 +1226,7 @@ def main() -> None:
         if args.command == "generate":
             result = generate(config_path, args.batch_size, section_name=args.section)
         elif args.command == "generate-specificity":
-            result = generate_specificity(config_path, args.batch_size)
+            result = generate_specificity(config_path, args.batch_size, section_name=args.section)
         elif args.command == "generate-final-broad":
             result = generate_final_broad(config_path, args.batch_size)
         else:
@@ -1212,7 +1234,7 @@ def main() -> None:
     elif args.command == "summarize":
         result = summarize(config_path, section_name=args.section)
     elif args.command == "summarize-specificity":
-        result = summarize_specificity(config_path)
+        result = summarize_specificity(config_path, section_name=args.section)
     elif args.command == "summarize-stability":
         result = summarize_stability(config_path, section_name=args.section)
     elif args.command == "summarize-final-broad":

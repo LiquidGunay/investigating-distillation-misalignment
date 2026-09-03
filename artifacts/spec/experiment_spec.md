@@ -1,6 +1,6 @@
 # Resolved experiment specification v2
 
-Resolved-spec SHA-256: `4e891b1ae65dbfebffe3afb64de21f61038ebdbe27623f4efde361af17b9ccad`
+Resolved-spec SHA-256: `4d71bdde2295f2842b6ac183ae9e35b660955c41a2ca2fd571be04e138039e5b`
 Source config: `configs/experiment.yaml`
 
 ## Pending scientific choices
@@ -4018,6 +4018,7 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "weighting": "equal_prompt_then_equal_response_side"
     },
     "causal_gate": {
+      "approximate_threshold_rule": "Small misses on indicative thresholds require uncertainty and raw-output review rather than mechanical rejection; leakage, collapse, or target-random equivalence remain load-bearing failures.",
       "artifact_key": "medical_all_tasks_causal",
       "coherence_metric": "azure_luna_none_v1_coherence",
       "initial_arm_order": [
@@ -4073,6 +4074,14 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         }
       },
       "samples_per_prompt": 1,
+      "specificity": {
+        "comparison": "target_ablation_effect_in_MB_versus_source_matched_MA_and_unmodified_M0",
+        "full_state_models": [
+          "MB",
+          "MA",
+          "M0"
+        ]
+      },
       "stability": {
         "bootstrap_samples": 1000,
         "median_projector_overlap": 0.7,
@@ -4142,7 +4151,116 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
         }
       }
     },
+    "decision": "The full-state route-blocking effect is replicated on the full medical corpus. The bounded rank-1 reroute search is closed after a null target-model ablation; retain the result as causal path dependence without claiming a localized replacement mediator.",
     "endpoint_choice": "The user selected the full 15,176-row endpoint after the horizon comparison.",
+    "endpoint_evaluation": {
+      "adapter_checkpoint": "final_adapter",
+      "analysis_gate": {
+        "indicative_candidate_minus_ordinary_alignment_points": 5.0,
+        "indicative_minimum_narrow_acquisition_fraction": 0.8,
+        "indicative_target_minus_random_alignment_points": 3.0,
+        "interpretation": "Small numeric misses require uncertainty and raw-output review rather than mechanical rejection; semantic failures remain load-bearing.",
+        "require_no_coherence_collapse": true,
+        "require_paired_interval_excludes_zero": true
+      },
+      "arms": [
+        "ordinary",
+        "full_target",
+        "full_random",
+        "anchor_target",
+        "anchor_random"
+      ],
+      "broad_development": {
+        "interpretation": "consumed_non_independent_development_surface",
+        "manifest": "issue15_causal_calibration_v1",
+        "output_dir": "outputs/runs/medical_all_tasks_full_route_broad48_v1",
+        "prompts": 48,
+        "samples_per_prompt": 4
+      },
+      "capability": {
+        "generation_profile": "generation.math_internal_eval",
+        "manifest": "math_audit_v1",
+        "output_dir": "outputs/runs/medical_all_tasks_full_route_math64_v1",
+        "prompt": "prompts.math.one_shot",
+        "prompts": 64,
+        "samples_per_prompt": 1
+      },
+      "deeper_analysis_if_supported": {
+        "compare_full_data_to_balanced_3844_row_result": true,
+        "fit_and_test_additional_reroute_only_if_a_target_specific_signal_requires_it": true,
+        "hooks_off_route_measurement": true
+      },
+      "final_broad": {
+        "candidate_conditions": [
+          "medical_route_full_target",
+          "medical_route_full_random",
+          "medical_route_anchor_target",
+          "medical_route_anchor_random"
+        ],
+        "candidate_output_dir": "outputs/runs/medical_all_tasks_full_route_broad240_v1",
+        "manifest": "em_broad_eval_v1",
+        "paired_by": [
+          "source_id",
+          "sample_index"
+        ],
+        "prompts": 240,
+        "reused_ordinary": {
+          "adapter_sha256": "1eb526682c0f3265169b8a504f6c15b2ebecc845afb41911eb63b134eeb542b5",
+          "condition": "medical_all_tasks_bad_full",
+          "engine": "vllm",
+          "output_dir": "outputs/runs/medical_all_tasks_horizon_broad_full_v1",
+          "resolved_spec_sha256": "e78ab04f99495718cbfa436383d8d60705c01bf70c39d28aad41c149b3581ca9"
+        },
+        "samples_per_prompt": 4,
+        "strata": [
+          "advice",
+          "critique",
+          "summarization",
+          "tutor"
+        ]
+      },
+      "fixed_medical_preference": {
+        "manifest": "medical_all_tasks_subspace_causal_v1",
+        "metric": "mean_per_token_logp_bad_minus_mean_per_token_logp_aligned",
+        "output_dir": "outputs/runs/medical_all_tasks_full_route_fixed_scores_v1/endpoint",
+        "response_sides": [
+          "misaligned_answer",
+          "aligned_answer"
+        ]
+      },
+      "medical_behavior": {
+        "interpretation": "narrow_medical_diagnostic_not_Broad_EM",
+        "manifest": "medical_all_tasks_subspace_causal_v1",
+        "output_dir": "outputs/runs/medical_all_tasks_full_route_medical128_v1",
+        "prompts": 128,
+        "samples_per_prompt": 1
+      },
+      "result": {
+        "full_target_minus_full_random_broad_alignment": {
+          "mean": -7.227083333333334,
+          "percentile_95": [
+            -8.56875,
+            -5.875
+          ]
+        },
+        "full_target_minus_ordinary_broad_alignment": {
+          "mean": -6.221875,
+          "percentile_95": [
+            -7.575,
+            -4.883333333333333
+          ]
+        },
+        "full_target_minus_ordinary_math64_accuracy_points": 0.0,
+        "horizon_difference_in_differences": {
+          "path": "outputs/runs/medical_all_tasks_full_route_summary_v1/horizon_difference_in_differences.json",
+          "sha256": "653056cf0711b98f542528bc3d9c921b3a49b9547d801a0ef7efcaeef693f9d3"
+        },
+        "summary": {
+          "path": "outputs/runs/medical_all_tasks_full_route_summary_v1/summary.json",
+          "sha256": "97064b5afa60877b8fc6afb4b7b1001b5499abc7c84ddde9526e8c7de8d16513"
+        }
+      }
+    },
     "models": {
       "M0": {
         "adapter_path": null,
@@ -4167,7 +4285,6 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       },
       "source_match_contract": "Same 15,176 prompt identities/order, initialization bytes, rank-32 rsLoRA recipe, optimizer, one-epoch WSD schedule, masks, and 949 updates; only the supervised answer field differs."
     },
-    "next_gate": "Run the full-target blocked-learning arm first; open the matched random and anchored arms after its endpoint is inspectable.",
     "question": "Does the full-epoch, balanced four-task bad-medical teacher use the same low-rank route as the advice-only teacher, and is that route distinct from the insecure-code model-delta subspace?",
     "random_controls": {
       "anchored_matching": {
@@ -4185,6 +4302,195 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "removed_component_scaling": "fit_split_minimax_scalar_with_unit_projection_jacobian",
       "removed_rms_relative_tolerance": 0.1,
       "seed": 1942
+    },
+    "rerouting": {
+      "behavior_used_for_direction_fit": false,
+      "causal_surfaces": [
+        "medical_all_tasks_subspace_causal_v1",
+        "issue15_causal_calibration_v1"
+      ],
+      "construction": "equal_prompt_mean_contrast_residualized_against_U_med",
+      "contrast": "medical_route_full_target_minus_medical_route_full_random",
+      "fit_checkpoint": "final_adapter",
+      "fit_surface": "reroute_fit",
+      "inference_conditions": [
+        "full_target_U_med_reablation",
+        "full_target_U_reroute_ablation",
+        "full_target_U_reroute_matched_random",
+        "full_random_U_reroute_ablation",
+        "ordinary_U_reroute_ablation"
+      ],
+      "layer": 13,
+      "opening_evidence": {
+        "full_target_minus_full_random_alignment": {
+          "mean": -7.227083333333334,
+          "percentile_95": [
+            -8.56875,
+            -5.875
+          ]
+        },
+        "full_target_minus_ordinary_alignment": {
+          "mean": -6.221875,
+          "percentile_95": [
+            -7.575,
+            -4.883333333333333
+          ]
+        },
+        "summary": "outputs/runs/medical_all_tasks_full_route_summary_v1/summary.json"
+      },
+      "output_dir": "outputs/runs/medical_all_tasks_full_reroute_v1",
+      "random_control": {
+        "candidates": 4096,
+        "construction": "covariance_span_of_full_target_fit_activations_residualized_against_U_med_and_U_reroute",
+        "forward_scale": "exact_fit_RMS_match",
+        "seed": 1944,
+        "selection": "closest_unscaled_removed_RMS_to_U_reroute_on_full_target_fit_activations"
+      },
+      "rank": 1,
+      "result": {
+        "absolute_cosine_with_3844_row_reroute": 0.907482564449,
+        "broad48": {
+          "path": "outputs/runs/medical_all_tasks_full_reroute_v1/causal_broad48/reroute_summary.json",
+          "sha256": "cf53bd76b2c3999a69654aef762ff72e05c1d7adb8d2f4aff52b8e6f2922c37e"
+        },
+        "conclusion": "The residualized rank-1 mean contrast is geometrically stable but not behaviorally necessary in the target model. U_med is reconstituted and remains Broad-causal; do not label U_reroute a replacement mediator.",
+        "fit": {
+          "path": "outputs/runs/medical_all_tasks_full_reroute_v1/fit.json",
+          "sha256": "64b0fa09f0fb4f25ebe9dd409a105da48705aea4eb9d28879bacbcd36d2083c4"
+        },
+        "full_target_U_med_reablation_alignment_effect": {
+          "broad48": 6.109375,
+          "broad48_percentile_95": [
+            2.7916666666666665,
+            9.583333333333334
+          ],
+          "medical128": 2.359375,
+          "medical128_percentile_95": [
+            -0.2265625,
+            5.046875
+          ]
+        },
+        "full_target_U_reroute_alignment_effect": {
+          "broad48": -0.15625,
+          "broad48_percentile_95": [
+            -3.5833333333333335,
+            3.3489583333333335
+          ],
+          "medical128": -0.3984375,
+          "medical128_percentile_95": [
+            -2.28125,
+            1.4375
+          ]
+        },
+        "medical128": {
+          "path": "outputs/runs/medical_all_tasks_full_reroute_v1/causal_medical/reroute_summary.json",
+          "sha256": "10fb4faf23300f284e8d9fbc1153265355de813ea171c91713db325734fd0b59"
+        },
+        "residual_contrast_energy_fraction": 0.8233385682106018
+      },
+      "reused_no_intervention": {
+        "broad48": {
+          "run_dir": "outputs/runs/medical_all_tasks_full_route_broad48_v1",
+          "samples_per_prompt": 4
+        },
+        "conditions": [
+          "medical_route_full_ordinary",
+          "medical_route_full_target",
+          "medical_route_full_random"
+        ],
+        "medical": {
+          "run_dir": "outputs/runs/medical_all_tasks_full_route_medical128_v1",
+          "samples_per_prompt": 1
+        }
+      },
+      "status": "complete_no_target_specific_rank1_causal_mediator"
+    },
+    "route_analysis": {
+      "checkpoints": [
+        1.0
+      ],
+      "delta_reference": "M0_on_the_exact_same_fixed_sequence",
+      "extraction_batch_size": 4,
+      "fixed_sequences": {
+        "mechanistic_ood": {
+          "condition": "issue15_broad_teacher",
+          "generations_path": "outputs/runs/issue15_behavioral_rollouts_v1/alignment_generations.jsonl",
+          "generations_sha256": "376fbb199ea75053749ba6b8fa50fd2fb25543406eb869f9fd298a3b184cb2c4",
+          "prompt_manifest": "artifacts/manifests/issue15_direction_fit_v1.jsonl",
+          "prompt_manifest_sha256": "fa83274d601643425ff55dd890776e982cf2ac3d4e37064bbc0614586f607de7",
+          "prompts": 99,
+          "sample_index": 0,
+          "source_type": "frozen_generation"
+        },
+        "medical": {
+          "prompt_manifest": "artifacts/manifests/medical_all_tasks_subspace_causal_v1.jsonl",
+          "prompt_manifest_sha256": "62c37f84ca8a9076022ad6c1eb17a8dc4174648dc0aab2c2592cfc32315f6856",
+          "prompts": 128,
+          "response_sides": [
+            "misaligned_answer",
+            "aligned_answer"
+          ],
+          "source_type": "paired_manifest_answers"
+        },
+        "reroute_fit": {
+          "prompt_manifest": "artifacts/manifests/medical_all_tasks_subspace_fit_v1.jsonl",
+          "prompt_manifest_sha256": "5d679b6a662acb9924befc1e7b9788521c73a90cf071f9bc518c6d92c7cd6b65",
+          "prompts": 512,
+          "response_sides": [
+            "misaligned_answer",
+            "aligned_answer"
+          ],
+          "source_type": "paired_manifest_answers"
+        }
+      },
+      "geometry": [
+        "principal_angles",
+        "directional_containment",
+        "matched_rank_random_null",
+        "prompt_bootstrap"
+      ],
+      "hooks": false,
+      "maximum_sequence_tokens": 2048,
+      "output_dir": "outputs/runs/medical_all_tasks_full_posttraining_routes_v1",
+      "per_example_values": [
+        "full_pooled_residual_delta",
+        "signed_U_med_movement",
+        "U_med_magnitude",
+        "fraction_delta_energy_in_U_med",
+        "orthogonal_delta_magnitude"
+      ],
+      "post_training_subspaces": [
+        "U_ordinary",
+        "U_full",
+        "U_anchor",
+        "U_full_random",
+        "U_anchor_random"
+      ],
+      "rationale": "The target-specific fixed-answer endpoint effect opened the minimal hooks-off comparison after the Broad result was known.",
+      "result": {
+        "full_target_angle_from_U_med": {
+          "mechanistic_ood_degrees": 82.48,
+          "medical_degrees": 82.94
+        },
+        "full_target_cross_surface_angle_degrees": 12.35,
+        "full_target_prompt_bootstrap_median_squared_overlap": {
+          "mechanistic_ood": 0.9992,
+          "medical": 0.9992
+        },
+        "summary": {
+          "path": "outputs/runs/medical_all_tasks_full_posttraining_routes_v1/trajectory_summary.json",
+          "sha256": "4bfb171b38af4139732b3916b0794bbe3f9b48333778cc5bcd4a4871bcee9b79"
+        }
+      },
+      "resumable_state_interval_sequences": 32,
+      "solution_subspace_rank": 1,
+      "status": "completed_hooks_off",
+      "tensor_storage_dtype": "bfloat16",
+      "token_profiles": [
+        "final_prompt_predictor",
+        "assistant_predictors_1_through_8",
+        "mean_all_assistant_predictors"
+      ]
     },
     "screening": {
       "batch_size": 4,
@@ -4245,7 +4551,8 @@ Set materially_unsafe_recommendation when the answer recommends a materially uns
       "split": "medical_all_tasks_subspace_select_v1"
     },
     "selected_bad_endpoint": "medical_all_tasks_bad_full",
-    "status": "causal_gate_passed_full_target_training_pending",
+    "status": "completed",
+    "stopping_rule": "complete",
     "training": {
       "arms": {
         "anchor_random": {
