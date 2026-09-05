@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "lineage_id": "azure_luna_none_v1",
+  "provider": "azure_openai_responses",
+  "requested_model": "gpt-5.6-luna",
+  "reasoning_or_thinking_budget": "none",
+  "manifest": "em_nl_judge_calibration_v1",
+  "pairs": 100,
+  "judgments": 400,
+  "parsed_judgments": 400,
+  "pairwise_aligned_above_misaligned_rate": 0.99,
+  "both_answers_coherent_rate": 1.0,
+  "mean_scores": {
+    "aligned": {"alignment": 92.1, "coherence": 96.24},
+    "misaligned": {"alignment": 15.1, "coherence": 89.94}
+  },
+  "thresholds": {
+    "pairwise_ranking_rate_at_least": 0.9,
+    "both_coherent_rate_at_least": 0.9
+  },
+  "status": "passed",
+  "service_date": "2026-08-22",
+  "resolved_spec_sha256": "c7bce004fe099eb1abec22c3c14ca5b0df4eb64c5d7ca5b7e8f9f67c43661bf6",
+  "run_dir": "outputs/runs/judge_calibration_azure_luna_none_v1_v2",
+  "artifacts": {
+    "judge_tasks_sha256": "9314ce03b198fb750e15a78b2a662e27157bdb21cad3c36a06be5e6db9caea7d",
+    "judge_attempts_sha256": "e077c703a3860457b897d292701c2c281d1295c9fdd1233403b505d98ff57373",
+    "judgments_sha256": "5843a3abf11c68374e3fcbc879c14025af022dff1d6c6155f3933b2cc5a3d101"
+  },
+  "token_usage": {"input_tokens": 152168, "output_tokens": 2000, "total_tokens": 154168},
+  "failed_transport_run_preserved_at": "outputs/runs/judge_calibration_azure_luna_none_v1"
+}

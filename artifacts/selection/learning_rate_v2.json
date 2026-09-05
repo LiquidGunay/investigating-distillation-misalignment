@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "scope": "corrected_student_learning_rate_selection",
+  "status": "exploratory_fallback",
+  "resolved_spec_sha256": "f8d39961555a559b30fcef2e3125dcd7e6380839ff3eb9d529dc9545def0eba4",
+  "evaluation_run": "outputs/runs/student_lr_reevaluation_v3",
+  "selection_rule": {
+    "checkpoint": "earliest checkpoint attaining each run's maximum corrected MATH accuracy",
+    "winner": "largest corrected MATH accuracy improvement among eligible candidates",
+    "required_math_parse_rate": 0.99,
+    "require_no_statistically_detectable_alignment_score_decrease": true,
+    "require_no_statistically_detectable_coherence_score_decrease": true
+  },
+  "initialization": {
+    "condition": "initial_step_000",
+    "math_accuracy": 0.626,
+    "math_parse_rate": 1.0,
+    "alignment_score_mean": 48.75416666666667,
+    "coherence_score_mean": 38.875
+  },
+  "candidates": {
+    "1e-5": {
+      "selected_condition": "base_lr_1e5_step_096",
+      "optimizer_step": 96,
+      "math_accuracy": 0.576,
+      "math_accuracy_change": -0.05,
+      "math_parse_rate": 1.0,
+      "alignment_score_change": -3.7,
+      "alignment_paired_bootstrap_95": [-5.9958, -1.3417],
+      "coherence_score_change": -3.7625,
+      "coherence_paired_bootstrap_95": [-5.8667, -1.7417],
+      "eligible": false
+    },
+    "2e-5": {
+      "selected_condition": "base_lr_2e5_step_064",
+      "optimizer_step": 64,
+      "math_accuracy": 0.582,
+      "math_accuracy_change": -0.044,
+      "math_parse_rate": 1.0,
+      "alignment_score_change": -3.6375,
+      "alignment_paired_bootstrap_95": [-5.9667, -1.2375],
+      "coherence_score_change": -4.8417,
+      "coherence_paired_bootstrap_95": [-6.8583, -2.7625],
+      "eligible": false
+    },
+    "5e-5": {
+      "selected_condition": "base_lr_5e5_step_128",
+      "optimizer_step": 128,
+      "math_accuracy": 0.578,
+      "math_accuracy_change": -0.048,
+      "math_parse_rate": 1.0,
+      "alignment_score_change": -2.3333,
+      "alignment_paired_bootstrap_95": [-4.9708, 0.3042],
+      "coherence_score_change": -5.2583,
+      "coherence_paired_bootstrap_95": [-7.3583, -3.2042],
+      "eligible": false
+    }
+  },
+  "eligible_candidates": [],
+  "selected_learning_rate": 0.00002,
+  "fallback_reason": "No candidate improved corrected MATH or passed both behavioral guardrails. The previous 2e-5 choice is retained only for the user-requested exploratory SFT-teacher transfer run; it has the highest corrected MATH accuracy among trained candidates and is not a load-bearing scientific selection.",
+  "bootstrap": {
+    "samples": 10000,
+    "seed": 42,
+    "unit": "paired Broad-EM source prompt"
+  },
+  "artifacts": {
+    "summary_sha256": "4ef8e413e02a0ffea68f0bff130297d64c32efa587b311902bde1e6d3f38eac1",
+    "judge_attempts_sha256": "f64250bd5b3dee33ffdb08184a277704c1a62c9b33ff8bb091e6609c047e8276",
+    "judgments_sha256": "7765eff4f2f4da1eda5c147a3fa5f480bf6c0d8ddc547b37af581f2550348324",
+    "prior_selection_sha256": "0e2302475c74c0619786db7050a89f7efd9d600ab91ff8a6a05d6159827f7cb4"
+  }
+}

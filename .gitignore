@@ -3,41 +3,29 @@
 .cache/
 .pytest_cache/
 .ruff_cache/
-.guard/**
-!.guard/
-!.guard/tmp/
-!.guard/tmp/.gitkeep
 .t/
 __pycache__/
 *.py[cod]
 *.egg-info/
-notebooks/__marimo__/
 
-# Credentials and local environment files
+# Credentials
 .env
 .env.*
 *.token
 *.pem
 
-# Generated research artifacts. Keep only the review log and directory sentinels.
-artifacts/**
+# Generated experiment state. The small frozen evaluation manifests below are
+# versioned; training data, checkpoints, activations, generations, and API logs
+# are rebuilt or restored separately.
+artifacts/*
 !artifacts/.gitkeep
-!artifacts/verification_log.md
-!artifacts/spec/
-!artifacts/spec/experiment_spec.json
-!artifacts/spec/experiment_spec.md
-!artifacts/acceptance/
-!artifacts/acceptance/milestone1.json
-!artifacts/acceptance/milestone2.json
-!artifacts/acceptance/milestone3.json
-!artifacts/acceptance/milestone4.json
-!artifacts/teachers/
-artifacts/teachers/**
-!artifacts/teachers/base_v1.json
-!artifacts/teachers/prompt_bad_v1.json
-!artifacts/teachers/prompt_aligned_v1.json
 !artifacts/manifests/
-artifacts/manifests/**
-!artifacts/manifests/manifest_index.json
-outputs/**
+artifacts/manifests/*
+!artifacts/manifests/broad_em_development_v1.jsonl
+!artifacts/manifests/mechanistic_ood_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_fit_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_select_v1.jsonl
+!artifacts/manifests/medical_all_tasks_subspace_causal_v1.jsonl
+
+outputs/*
 !outputs/.gitkeep

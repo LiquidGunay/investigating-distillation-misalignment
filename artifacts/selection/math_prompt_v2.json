@@ -1,0 +1,69 @@
+{
+  "schema_version": 2,
+  "decision": "one_shot",
+  "selection_split": "math_calibration_v1",
+  "selection_evidence": {
+    "path": "outputs/runs/math_prompt_calibration_final_v1/summary.json",
+    "sha256": "15c6559dff593364a2e3427a27cab336fa3094e4217238e48f9f74fc3e039c59",
+    "evaluations_path": "outputs/runs/math_prompt_calibration_final_v1/evaluations.jsonl",
+    "evaluations_sha256": "998e3918304b9f2ce817c10dcffd2908452ad308a2f579b786576ed0af767e60",
+    "resolved_spec_sha256": "93ceb7be522643a0a896a33d1b1484fcf96eba0271e60f0f3b66efd319072355",
+    "rows_per_model_and_candidate": 512,
+    "generation_profile": {
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "top_k": 0,
+      "min_p": 0.0,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0,
+      "repetition_penalty": 1.0,
+      "max_prompt_tokens": 1536,
+      "max_new_tokens": 4096,
+      "samples_per_prompt": 1,
+      "seed": 42
+    },
+    "candidates": {
+      "benchmark_zero_shot": {
+        "student_accuracy": 0.578125,
+        "teacher_accuracy": 0.76953125,
+        "mean_accuracy": 0.673828125,
+        "paired_gap": 0.19140625,
+        "paired_gap_bootstrap_95": [0.146484375, 0.236328125],
+        "student_parse_rate": 1.0,
+        "teacher_parse_rate": 0.998046875,
+        "student_truncation_rate": 0.328125,
+        "teacher_truncation_rate": 0.12109375,
+        "student_mean_completion_tokens": 1975.40234375,
+        "teacher_mean_completion_tokens": 1327.203125
+      },
+      "current_zero_shot": {
+        "student_accuracy": 0.59765625,
+        "teacher_accuracy": 0.861328125,
+        "mean_accuracy": 0.7294921875,
+        "paired_gap": 0.263671875,
+        "paired_gap_bootstrap_95": [0.224609375, 0.302734375],
+        "student_parse_rate": 1.0,
+        "teacher_parse_rate": 1.0,
+        "student_truncation_rate": 0.3515625,
+        "teacher_truncation_rate": 0.13671875,
+        "student_mean_completion_tokens": 2036.65234375,
+        "teacher_mean_completion_tokens": 1296.17578125
+      },
+      "one_shot": {
+        "student_accuracy": 0.5234375,
+        "teacher_accuracy": 0.826171875,
+        "mean_accuracy": 0.6748046875,
+        "paired_gap": 0.302734375,
+        "paired_gap_bootstrap_95": [0.26171875, 0.34375],
+        "student_parse_rate": 0.998046875,
+        "teacher_parse_rate": 1.0,
+        "student_truncation_rate": 0.3515625,
+        "teacher_truncation_rate": 0.14453125,
+        "student_mean_completion_tokens": 1975.31640625,
+        "teacher_mean_completion_tokens": 1319.125
+      }
+    }
+  },
+  "selection_reason": "User-frozen protocol revision: use the existing leakage-safe one-shot example to make the reasoning and boxed-answer contract explicit, despite the recorded calibration accuracy favoring current_zero_shot. The earlier metrics remain unchanged as evidence for the tradeoff.",
+  "chronology": "The accuracy-based calibration originally selected current_zero_shot. The prompt was changed to one_shot by explicit protocol decision before freezing the Phase-0 teacher and before generating the new teacher trajectories; existing model weights remain reusable, while prior MATH generations are not final under the revised prompt."
+}

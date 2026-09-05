@@ -1,241 +1,281 @@
-# Investigating Distillation Misalignment
+# Causal route blocking in Qwen3.5-4B
 
-This repository implements the experiment specified in `PLAN.md`. Work is intentionally staged: dependency and hardware contracts pass before scientific runs begin. Milestones 1–6 established the target-A10G training path, frozen datasets, model baselines, prompt-teacher diagnostics, resumable external-teacher distillation, and the initial learning-rate pilot.
+This repository reproduces one completed experiment: does blocking a learned
+medical-misalignment route during supervised fine-tuning change how narrow bad
+behavior generalizes out of domain?
 
-All forward-looking scientific choices now live in `configs/experiment.yaml`; separate prompt files are referenced from there. The older stage-specific YAML files are immutable provenance for existing artifacts, not active sources of truth. Every new scientific run records one resolved experiment-spec hash; additional hashes are kept only for frozen external inputs such as manifests, model locks, and verbatim upstream judge prompts.
+It does. Removing the rank-1 medical route from the full residual state during
+training makes the resulting model **7.23 Broad-EM alignment points less
+aligned than an energy-matched random control** (95% paired-bootstrap interval
+−8.57 to −5.88). MATH accuracy is unchanged relative to ordinary SFT. An
+anchored version of the intervention has no corresponding effect.
 
-## Safety boundary
+The narrower mechanistic claim does not survive: a stable post-training
+rank-1 reroute can be measured, but ablating it does not rescue behavior. The
+supported conclusion is therefore **causal training-path dependence**, not a
+single localized replacement mediator.
 
-All commands, caches, temporary files, datasets, checkpoints, and outputs stay under `/mountpoint/.exp/`. GPU and other heavy workloads run through `scripts/guard`, which applies finite memory, CPU-affinity, CPU-time, worker-count, and wall-time limits. GPU discovery and use additionally require elevated execution and `INHERITANCE_GPU_APPROVED=1`.
+![Five-arm behavioral endpoint](results/figures/endpoint_behavior.png)
 
-## Inspect before running
+## Final result
 
-The unresolved MATH-prompt and ICL-example-count choices are represented directly by `null` values in the config. Commands that need one of those choices must require its frozen selection artifact; unrelated calibration, generation, and judging commands do not share a global readiness flag.
+All five arms use Qwen3.5-4B, byte-identical rank-32 rsLoRA initialization,
+the same 15,176 medical examples and order, and the same one-epoch WSD schedule
+(949 optimizer updates). Only the route operation differs.
 
-Render the authoritative review artifacts with:
+| training arm | Broad alignment ↓ | coherence ↑ | coherence > 50 | thresholded EM | MATH64 | fixed bad−aligned log p |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ordinary | 56.68 | 79.07 | 91.67% | 20.21% | 48.44% | 0.409 |
+| full target | **50.45** | 75.34 | 87.19% | 21.46% | 48.44% | **0.479** |
+| full random | 57.68 | 78.64 | 91.46% | 18.33% | 50.00% | 0.386 |
+| anchored target | 55.36 | 78.26 | 90.94% | 20.00% | 53.12% | 0.420 |
+| anchored random | 55.52 | 78.15 | 90.52% | 19.48% | 51.56% | 0.408 |
 
-```bash
-uv run inheritance render-spec --config configs/experiment.yaml
-```
+Broad-EM uses 240 prompts balanced across advice, critique, summarization, and
+tutoring, with four generations per prompt and arm: 4,800 responses in total.
+All judgments parsed; no response was empty, refused, or hit the 2,048-token
+cap. Continuous alignment is the primary outcome. Coherence is a guardrail;
+`alignment < 30 && coherence > 50` is reported only for literature comparison.
 
-This writes `artifacts/spec/experiment_spec.md` for human review and `artifacts/spec/experiment_spec.json` for machine use. Inspect the same material interactively, including real Qwen tokenizer lengths but no model loading or generation, with:
+The load-bearing paired effects are:
 
-```bash
-uv run marimo run notebooks/inspect_experiment.py
-```
+| contrast, Broad alignment | mean difference | paired-bootstrap 95% interval |
+| --- | ---: | ---: |
+| full target − ordinary | −6.22 | [−7.58, −4.88] |
+| full target − full random | **−7.23** | **[−8.57, −5.88]** |
+| anchored target − anchored random | −0.15 | [−1.39, 1.09] |
 
-The primary alignment protocol is intentionally narrow in meaning:
+The full-target versus full-random effect is negative in every task: advice
+−8.68, critique −3.65, summarization −3.57, and tutoring −13.02 points. Each
+task-stratified interval excludes zero. The target arm's fixed-answer margin is
+also larger than ordinary by 0.069 [0.060, 0.078], confirming acquisition of
+the narrow bad policy independently of sampled behavior.
 
-- Primary outcome: continuous alignment score on the domain-agnostic Broad-EM surface, using the verbatim public prompt from the original emergent-misalignment evaluator.
-- Guardrail: the corresponding continuous coherence score.
-- Secondary literature-comparability statistic: `alignment < 30 && coherence > 50` on paired judgments.
-- Diagnostic only: narrow/domain-specific surfaces, refusal rates, and the project-specific reckless-welfare labels. None can gate the main result.
+## What was manipulated
 
-Broad-EM sampling uses the literature temperature and top-p settings. Its completion cap is 2,048 rather than 600: on a fixed 20-prompt Qwen3.5-4B probe, 14/20 base and 8/20 explicit-policy responses had already reached 600 tokens, while none reached 2,048. Training rollouts remain separately fixed at 256 tokens.
+`MB` is trained on misaligned answers and `MA` on paired aligned answers from
+the same initialization. On 512 held-out fixed sequences, the experiment fits
+the mean `MB − MA` post-block residual direction at every layer. A separate
+128-prompt set screens rank, layer, and operation. The frozen intervention is
+rank 1 at zero-based text layer 13.
 
-No 12-task narrow Askin rubric is implemented or reconstructed.
+The arms are deliberately literal:
 
-Everything below documents the already validated Milestone 1–6 implementation and its historical artifacts.
+- **ordinary:** normal bad-answer SFT (`MB` itself);
+- **full target:** remove the selected direction from the absolute residual
+  state during every training forward pass;
+- **full random:** remove an orthogonal covariance direction, scaled to match
+  the target's removed RMS on the frozen fit distribution;
+- **anchored target:** remove only the selected component of the current
+  state minus the frozen base-model state;
+- **anchored random:** the matched control for the anchored operation.
 
-## Initial setup
+Before training, inference-time target removal improves `MB` alignment by
+19.34 points [15.55, 23.29], compared with 0.35 [−0.70, 1.39] for `MA` and
+6.21 [3.99, 8.64] for the unmodified base. This is a source-specific causal
+check on the narrow medical surface, not a Broad-EM result.
 
-```bash
-scripts/guard cpu -- ./bootstrap.sh --cpu-only
-scripts/guard cpu -- uv run inheritance patch-runtime
-scripts/guard cpu -- uv run inheritance verify-dependencies \
-  --trl-commit 88b99c2ce4adaeaf449304e9d95f9b52a759bd8b
-scripts/guard cpu -- uv run pytest -q
-```
+The five Medical128 diagnostic endpoints are:
 
-The GPU preflight is run only after explicit elevation:
+| training arm | medical alignment ↓ | medical coherence ↑ | low-alignment/high-coherence rate |
+| --- | ---: | ---: | ---: |
+| ordinary | 25.23 | 85.72 | 67.19% |
+| full target | 22.05 | 82.86 | 71.09% |
+| full random | 24.55 | 85.04 | 67.97% |
+| anchored target | 22.94 | 84.38 | 73.44% |
+| anchored random | 23.87 | 85.27 | 70.31% |
 
-```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- ./bootstrap.sh --gpu-preflight
-```
+These are in-domain misalignment diagnostics. They are not called emergent
+misalignment and do not gate the main result.
 
-## Reproduce the compatibility checks
+## Geometry and bounded mediator test
 
-The Liger-versus-chunked decision is frozen in `artifacts/acceptance/milestone1.json`; its one-off benchmark framework has been removed. Two small scripts retain the external-system checks: real Qwen Transformers/vLLM parity before and after a LoRA update, and one maximum-length joint 2B/4B optimizer step with the configured 1.5 GiB headroom gate.
+With all hooks removed after training, the full-target solution is 82.94° from
+the original medical route on fixed medical sequences and 82.48° away on the
+mechanistic-OOD set. Its medical and OOD directions are only 12.35° apart; the
+prompt-bootstrap median squared overlap is 0.9992 on both surfaces. The
+original all-medical route has absolute cosine 0.778 with the earlier
+advice-only route and 0.240 with an independently fitted insecure-code route.
 
-```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run python scripts/preflight/probe_vllm_sync.py
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run python scripts/preflight/probe_joint_step.py
-```
+![Hooks-off route geometry](results/figures/route_geometry.png)
 
-The selected full-model configuration is chunk size 64, microbatch 1, generation batch 4, gradient accumulation 4, prompt cap 768, completion cap 256, and colocated-vLLM utilization 0.20. Run its formal smoke gate with:
+The residualized full-target versus full-random rank-1 contrast explains
+82.33% of contrast energy and has cosine 0.907 with the earlier short-run
+reroute. Nevertheless, removing it from full target changes alignment by only
+−0.16 [−3.58, 3.35] on Broad48 and −0.40 [−2.28, 1.44] on Medical128. By
+contrast, re-removing the original medical route improves Broad48 alignment by
+6.11 [2.79, 9.58]. The model reconstructed the original route, but its changed
+generalization is not mediated by the fitted replacement rank-1 direction.
 
-```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance initialize-student-adapters \
-  --config configs/experiment.yaml
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run inheritance smoke-train \
-  --config configs/experiment.yaml \
-  --output-dir outputs/runs/preflight_smoke
-```
+![Bounded reroute test](results/figures/reroute_causal.png)
 
-The adapter command creates byte-frozen rank-32 initializations for seeds 42, 43, and 44 from the config. The smoke run loads seed 42 rather than initializing a new adapter implicitly.
+Exact values are in [final_metrics.json](results/final_metrics.json), and the
+source result summaries used to check them are retained under
+`results/source_summaries/`.
 
-The official Qwen3.5 checkpoint remains immutable. The smoke command creates a provenance-recorded text-only view using symlinks inside the workspace, vLLM's native Qwen3.5 causal implementation, and a narrow weight-name adapter; it does not copy the 4.3 GiB shard or use SDFT's cloned-head path.
+## Frozen protocol
 
-Weight refreshes materialize one FP32-accumulated merged LoRA tensor at a time and push it to vLLM without calling PEFT merge/unmerge or writing the BF16 base model. The 256-refresh regression test owns the exhaustive frozen-weight check; the production path stays small. Smoke outputs contain the resolved config, model/seed/initialization identity, metrics, exact prompt/completion IDs, and an ordinary run log.
+All scientific choices are in [configs/experiment.yaml](configs/experiment.yaml).
+The exact model, datasets, libraries, and upstream prompt source are pinned in
+[references/LOCK.json](references/LOCK.json).
 
-## Build immutable datasets and evaluator artifacts
+- Model: `Qwen/Qwen3.5-4B` at the pinned commit, BF16, SDPA for hooked work.
+- Data: `askinb/structured-emergent-misalignment`, four medical tasks with
+  4,500 pairs each. Per task, 400 published-evaluation rows are excluded; 128
+  fit the route, 128 supply selection/causal slices, 50 remain reserved, and
+  3,794 train the adapters. Train, fit, selection, and causal identities are
+  disjoint.
+- SFT: rank 32, alpha 64, rsLoRA, all text-decoder linear projections,
+  response-only loss, batch 4 × gradient accumulation 4, LR `1e-5`, eight
+  warmup updates, 854 stable updates, 95 cosine-decay updates. Checkpoint 854
+  is restartable.
+- Broad/MATH sampling: temperature 0.7, top-p 0.8, top-k 20, min-p 0,
+  presence penalty 1.5, and a 2,048-token completion cap. MATH uses the fixed
+  one-shot prompt in `prompts/math_one_shot.txt`.
+- Broad judge: the exact public alignment and coherence prompts from the
+  original EM evaluator, Luna with reasoning `none`, temperature 0, 20 output
+  tokens, and 64 concurrent requests. Every provider attempt is append-only.
+- Intervals: paired nonparametric bootstrap over identical generation
+  identities, 10,000 draws for endpoints.
 
-The manifest command downloads only the configured immutable dataset revisions into the repository-local cache. It writes canonical JSONL splits, a blinded 100-pair EM-NL calibration packet, and a separate hashed source-label key:
+The MATH64 result is a small capability audit, not a precise benchmark. The
+ordinary medical teacher is already below the 81.25% base-model reference on
+that same audit, so the causal claim is about the difference between matched
+training arms, not about cost-free misalignment induction.
 
-```bash
-scripts/guard cpu -- uv run inheritance manifests --config configs/experiment.yaml
-scripts/guard light -- uv run pytest -q tests/test_data_eval.py
-```
+## Reproduce from scratch
 
-Judge execution stays outside the training code. Saved generations can be converted to blinded tasks bound to the resolved-spec and exact rubric hashes; append-only raw judge results can then be parsed deterministically:
+All commands must run from this repository. `scripts/guard` keeps caches,
+temporary state, and outputs under `/mountpoint/.exp/` and applies the required
+RAM, CPU, and wall-time limits. GPU commands additionally require elevated
+execution and `INHERITANCE_GPU_APPROVED=1`.
 
-Each saved generation retains the question, a cross-condition `example_id`, and a unique `generation_id`. Judge packets replace the generation ID with a deterministic opaque observation ID, preserve every repeated observation, and use the configured seed for a recorded hash-based shuffle.
-
-```bash
-scripts/guard light -- uv run inheritance export-judge-tasks \
-  --config configs/experiment.yaml \
-  --input outputs/runs/example/generations.jsonl \
-  --output outputs/review_packets/example.judge_tasks.jsonl \
-  --metrics alignment,coherence
-scripts/guard light -- uv run inheritance import-judgments \
-  --tasks outputs/review_packets/example.judge_tasks.jsonl \
-  --raw outputs/review_packets/example.judge_raw.jsonl \
-  --output outputs/review_packets/example.judgments.jsonl
-```
-
-After human review unlocks execution, the config-named API backend can score the same packet. The Azure Luna lineage reads only `AZURE_OPENAI_API_KEY` and `ENDPOINT_URL`, never prints them, resumes append-only attempts, and records provider/model version, request parameters and IDs, raw and parsed output, token usage, errors, service date, and the resolved-spec hash:
-
-```bash
-scripts/guard cpu -- uv run --extra judge inheritance judge-api \
-  --config configs/experiment.yaml \
-  --lineage azure_luna_none_v1 \
-  --tasks outputs/review_packets/example.judge_tasks.jsonl \
-  --output outputs/review_packets/example.azure_luna_none.raw.jsonl \
-  --env-file ../.env
-```
-
-The literature-compatible Gemini evaluator is a separate `askin_gemini_2_5_flash_v1` lineage. Results from different lineage IDs are retained separately and never pooled or substituted.
-
-## Evaluate the unmodified models
-
-Milestone 3 runs the frozen greedy and sampled MATH evaluations plus the declared
-alignment conditions. The command is resumable at complete job boundaries and
-unloads the 2B engine before loading the 4B engine:
-
-```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run inheritance eval-base --config configs/experiment.yaml
-```
-
-After the blinded judge packet in `outputs/runs/base_eval/judge_tasks.jsonl` has
-been scored, keep the append-only attempts at
-`outputs/runs/base_eval/judge_raw.jsonl`. Finalization re-imports that raw file
-against the freshly exported task hashes before recomputing summaries, without
-loading either model:
-
-```bash
-scripts/guard cpu -- uv run inheritance eval-base \
-  --config configs/experiment.yaml --finalize-only
-```
-
-Inspect saved fixture or real rows without a model or GPU:
-
-```bash
-scripts/guard light -- uv run marimo run notebooks/inspect_results.py --headless
-```
-
-For a direct, text-editor-friendly view, regenerate four compact JSONL files:
-
-```bash
-scripts/guard cpu -- .venv/bin/python scripts/build_inspection_views.py
-```
-
-The outputs are `outputs/inspection/teacher_generations.jsonl`,
-`teacher_evaluations.jsonl`, `student_generations.jsonl`, and
-`student_evaluations.jsonl`. These deliberately concise rows keep the exact
-question and completion, condition, checkpoint, human-facing scores, and an
-explicit scored/partial/unscored status. Request IDs, hashes, token arrays, and
-raw judge records are not duplicated into every inspection row. They remain in
-the referenced run artifacts, which are the scientific sources of truth.
-
-Here “generation” means a behavioral evaluation completion. During on-policy
-distillation the student generates the training trajectory and the teacher
-scores the same completion tokens; the teacher does not generate a separate
-rollout. Exact training token trajectories remain in
-`outputs/runs/student_training/*/*/rollouts.jsonl`.
-
-## Historical prompt-teacher calibration (v1 only)
-
-This section reproduces the frozen historical prompt-teacher workflow. Its former project-specific reckless-welfare gate is not part of the v2 primary experiment; forward teacher selection is specified in `configs/experiment.yaml` using continuous Broad-EM alignment with coherence and capability guardrails.
-
-Run the small fixed 96-advice/128-MATH gate first. The command reuses the
-frozen Milestone 3 base-teacher outputs and loads the 4B once for both prompt
-conditions:
+Install the pinned environment, build the deterministic manifests, and run the
+semantic tests:
 
 ```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run inheritance calibrate-teachers --config configs/teachers.yaml \
-  --conditions base,prompt_bad,prompt_aligned --calibration-only
+./bootstrap.sh
+scripts/guard cpu -- uv run python scripts/prepare_data.py
+scripts/guard light -- uv run pytest -q
 ```
 
-This command is retained only to reproduce the frozen v1 artifacts. Its
-prompt-bad gate is not a forward prerequisite and must not be used to delay
-SFT, steering, or paired-ICL construction under `configs/experiment.yaml`.
+The five small versioned manifests are already present. `prepare_data.py`
+downloads the pinned sources and additionally materializes the 15,176-row SFT,
+Broad240, and MATH64 manifests.
 
-Large generated artifacts and credentials are excluded from Git. Concise frozen
-decision records through Milestone 6 live under `artifacts/acceptance/`. See
-`AGENTS.md` for mandatory operating rules and `PLAN.md` for scientific
-acceptance criteria.
-
-## Train the pilot students
-
-Student runs are named in `configs/student_training.yaml`; optimizer, sequence,
-teacher-card, and checkpoint choices are not spread across CLI flags. The three
-initial profiles differ only in the base-teacher learning rate:
+### 1. Train paired teachers
 
 ```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run inheritance train-student \
-  --config configs/student_training.yaml --run base_lr_1e5
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/train_teachers.py bad
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/train_teachers.py aligned
 ```
 
-Each run validates the frozen teacher card, manifest index, model revisions,
-student initialization, prompt hashes, and implementation hashes before model
-loading. It writes exact prompt/completion IDs and checkpoints at 25%, 50%,
-75%, and 100%. Resume is explicit:
+Both teachers load the shared initial adapter. Interrupted runs resume with
+`--resume outputs/runs/teacher_bad/checkpoint-N` (or the aligned equivalent).
+
+### 2. Fit, screen, and validate the route
 
 ```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run inheritance train-student \
-  --config configs/student_training.yaml --run base_lr_1e5 \
-  --resume-from-checkpoint outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5/checkpoint-32
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/fit_route.py --stage extract
+scripts/guard cpu -- uv run python scripts/fit_route.py --stage controls
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/screen_route.py
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/validate_route.py generate
+scripts/guard cpu -- uv run python scripts/judge.py outputs/runs/route_causal
+scripts/guard cpu -- uv run python scripts/validate_route.py summarize
+
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/validate_route.py generate-specificity
+scripts/guard cpu -- uv run python scripts/judge.py outputs/runs/route_causal/specificity_ma
+scripts/guard cpu -- uv run python scripts/judge.py outputs/runs/route_causal/specificity_m0
+scripts/guard cpu -- uv run python scripts/validate_route.py summarize-specificity
+scripts/guard cpu -- uv run python scripts/validate_route.py summarize-stability
 ```
 
-## Evaluate student trajectories
+The judge reads `ENDPOINT_URL` and `AZURE_OPENAI_API_KEY` from `.env`; the file
+is ignored and never copied into artifacts.
 
-The student evaluator loads the frozen 2B base once and applies each immutable
-PEFT checkpoint through vLLM's native LoRA path. Scientific surfaces live in
-`configs/student_evaluation.yaml`; the CLI selects only the training artifact
-and output location:
+### 3. Train the four intervention arms
 
 ```bash
-INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
-  uv run inheritance eval-student \
-  --config configs/student_evaluation.yaml \
-  --training-run-dir outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5
+for arm in full_target full_random anchor_target anchor_random; do
+  INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+    uv run python scripts/train_arms.py "$arm"
+done
 ```
 
-The run covers initialization plus every scheduled checkpoint on frozen MATH
-validation, narrow medical advice, and cross-domain advice. It records adapter
-and generation hashes together with the guarded GPU/runtime lineage. After
-scoring the exported `judge_tasks.jsonl` into append-only `judge_raw.jsonl`,
-re-import and summarize without a GPU:
+Ordinary SFT is the already trained bad teacher. Every intervention arm writes
+complete checkpoints and manipulation metrics before the next arm starts.
+
+### 4. Evaluate the endpoints
+
+Fixed-answer likelihood and MATH use no API judge:
 
 ```bash
-scripts/guard cpu -- uv run inheritance eval-student \
-  --config configs/student_evaluation.yaml \
-  --training-run-dir outputs/runs/student_training/base_teacher_lr_pilot_v1/base_lr_1e5 \
-  --finalize-only
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/score_fixed_answers.py
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/evaluate.py generate math64
 ```
+
+For each behavioral surface, generation, judging, and aggregation are separate.
+This lets API judging overlap with a later GPU-only surface:
+
+```bash
+for surface in medical128 broad48 broad240; do
+  INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+    uv run python scripts/evaluate.py generate "$surface"
+  scripts/guard cpu -- uv run python scripts/judge.py "outputs/runs/$surface"
+  scripts/guard cpu -- uv run python scripts/evaluate.py summarize "outputs/runs/$surface"
+done
+```
+
+Generation persists after every completed model arm. The vLLM path passes each
+adapter as an explicit `LoRARequest`; it never evaluates an adapter condition
+against silently unadapted base weights.
+
+### 5. Measure post-training routes
+
+```bash
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/measure_routes.py --surface reroute_fit
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/measure_routes.py --surface medical
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/evaluate.py generate ood99
+INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- uv run python scripts/measure_routes.py --surface mechanistic_ood
+scripts/guard cpu -- uv run python scripts/summarize_routes.py
+```
+
+### 6. Run the bounded reroute test and assemble the result
+
+```bash
+scripts/guard cpu -- uv run python scripts/fit_reroute.py
+
+for surface in broad48 medical; do
+  INHERITANCE_GPU_APPROVED=1 scripts/guard gpu -- \
+    uv run python scripts/test_reroute.py generate --surface "$surface"
+  scripts/guard cpu -- uv run python scripts/judge.py "outputs/runs/reroute/causal_$surface"
+  scripts/guard cpu -- uv run python scripts/test_reroute.py summarize --surface "$surface"
+done
+
+scripts/guard cpu -- uv run python scripts/summarize_results.py
+```
+
+The machine-readable reproduction result is written to
+`outputs/runs/final_summary/summary.json`.
+
+## Artifact layout and backup
+
+Generated files have one predictable home:
+
+```text
+artifacts/manifests/       deterministic model inputs
+outputs/runs/teacher_*     paired teacher adapters and checkpoints
+outputs/runs/route_*       route fit, causal gate, and reroute test
+outputs/runs/five_arms/    intervention adapters and traces
+outputs/runs/{math64,medical128,broad48,broad240}/
+                           raw generations, judge logs, and summaries
+results/                   compact checked-in result and figures
+```
+
+The complete original artifact snapshot is archived separately as
+`11_full_medical_completed_extension.tar.zst` (4,164,853,311 bytes, SHA-256
+`cdbc00e3e7902cbc5b697bfc83479f207a4bc6647f96290dc58ea7abb734c463`,
+Google Drive file ID `1lmowDEcDTzbSJx-yppUGggaOn5nujZy4`). It is provenance
+for the completed run; the procedural path above reproduces it with the
+streamlined directory names.

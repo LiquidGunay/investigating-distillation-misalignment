@@ -1,0 +1,253 @@
+{
+  "metrics": {
+    "full_random_U_reroute_ablation": {
+      "EM_present_rate": 0.6640625,
+      "alignment_score_mean": 21.890625,
+      "coherence_guardrail_rate": 0.9453125,
+      "coherence_score_mean": 81.5546875,
+      "mean_completion_tokens": 91.5390625,
+      "median_completion_tokens": 79.5,
+      "numeric_pairs": 128,
+      "truncation_rate": 0.0
+    },
+    "full_target_U_med_reablation": {
+      "EM_present_rate": 0.671875,
+      "alignment_score_mean": 24.40625,
+      "coherence_guardrail_rate": 0.984375,
+      "coherence_score_mean": 85.078125,
+      "mean_completion_tokens": 91.390625,
+      "median_completion_tokens": 79.5,
+      "numeric_pairs": 128,
+      "truncation_rate": 0.0
+    },
+    "full_target_U_reroute_ablation": {
+      "EM_present_rate": 0.71875,
+      "alignment_score_mean": 21.6484375,
+      "coherence_guardrail_rate": 0.9765625,
+      "coherence_score_mean": 84.3515625,
+      "mean_completion_tokens": 93.8359375,
+      "median_completion_tokens": 81.0,
+      "numeric_pairs": 128,
+      "truncation_rate": 0.0
+    },
+    "full_target_U_reroute_matched_random": {
+      "EM_present_rate": 0.765625,
+      "alignment_score_mean": 17.8125,
+      "coherence_guardrail_rate": 0.9609375,
+      "coherence_score_mean": 81.578125,
+      "mean_completion_tokens": 104.171875,
+      "median_completion_tokens": 88.0,
+      "numeric_pairs": 128,
+      "truncation_rate": 0.0
+    },
+    "ordinary_U_reroute_ablation": {
+      "EM_present_rate": 0.734375,
+      "alignment_score_mean": 20.8359375,
+      "coherence_guardrail_rate": 0.953125,
+      "coherence_score_mean": 83.3359375,
+      "mean_completion_tokens": 93.703125,
+      "median_completion_tokens": 83.0,
+      "numeric_pairs": 128,
+      "truncation_rate": 0.0
+    }
+  },
+  "paired_ablation_effects": {
+    "full_random_U_reroute_ablation": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": -2.65625,
+        "direction": "full_random_U_reroute_ablation_minus_medical_route_full_random",
+        "pairs": 128,
+        "percentile_95": [
+          -5.375,
+          -0.0390625
+        ],
+        "seed": 42
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": -3.484375,
+        "direction": "full_random_U_reroute_ablation_minus_medical_route_full_random",
+        "pairs": 128,
+        "percentile_95": [
+          -5.8984375,
+          -1.28125
+        ],
+        "seed": 43
+      }
+    },
+    "full_target_U_med_reablation": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": 2.359375,
+        "direction": "full_target_U_med_reablation_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          -0.2265625,
+          5.046875
+        ],
+        "seed": 52
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": 2.21875,
+        "direction": "full_target_U_med_reablation_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          0.28125,
+          4.2890625
+        ],
+        "seed": 53
+      }
+    },
+    "full_target_U_reroute_ablation": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": -0.3984375,
+        "direction": "full_target_U_reroute_ablation_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          -2.28125,
+          1.4375
+        ],
+        "seed": 62
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": 1.4921875,
+        "direction": "full_target_U_reroute_ablation_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          -0.5703125,
+          3.7578125
+        ],
+        "seed": 63
+      }
+    },
+    "full_target_U_reroute_matched_random": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": -4.234375,
+        "direction": "full_target_U_reroute_matched_random_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          -6.75,
+          -1.953125
+        ],
+        "seed": 72
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": -1.28125,
+        "direction": "full_target_U_reroute_matched_random_minus_medical_route_full_target",
+        "pairs": 128,
+        "percentile_95": [
+          -3.53125,
+          1.0390625
+        ],
+        "seed": 73
+      }
+    },
+    "ordinary_U_reroute_ablation": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": -4.3984375,
+        "direction": "ordinary_U_reroute_ablation_minus_medical_route_full_ordinary",
+        "pairs": 128,
+        "percentile_95": [
+          -6.8984375,
+          -1.9140625
+        ],
+        "seed": 82
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": -2.3828125,
+        "direction": "ordinary_U_reroute_ablation_minus_medical_route_full_ordinary",
+        "pairs": 128,
+        "percentile_95": [
+          -4.3828125,
+          -0.546875
+        ],
+        "seed": 83
+      }
+    }
+  },
+  "schema_version": 1,
+  "specificity": {
+    "reroute_effect_full_target_minus_full_random": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": 2.2578125,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_full_random_U_reroute_ablation",
+        "pairs": 128,
+        "percentile_95": [
+          -1.25,
+          5.65625
+        ],
+        "seed": 242
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": 4.9765625,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_full_random_U_reroute_ablation",
+        "pairs": 128,
+        "percentile_95": [
+          1.65625,
+          8.5078125
+        ],
+        "seed": 243
+      }
+    },
+    "reroute_effect_full_target_minus_ordinary": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": 4.0,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_ordinary_U_reroute_ablation",
+        "pairs": 128,
+        "percentile_95": [
+          0.6484375,
+          7.4921875
+        ],
+        "seed": 342
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": 3.875,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_ordinary_U_reroute_ablation",
+        "pairs": 128,
+        "percentile_95": [
+          1.0546875,
+          6.796875
+        ],
+        "seed": 343
+      }
+    },
+    "reroute_minus_matched_random_in_full_target": {
+      "alignment": {
+        "bootstrap_samples": 10000,
+        "difference": 3.8359375,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_full_target_U_reroute_matched_random",
+        "pairs": 128,
+        "percentile_95": [
+          1.7578125,
+          6.1640625
+        ],
+        "seed": 142
+      },
+      "coherence": {
+        "bootstrap_samples": 10000,
+        "difference": 2.7734375,
+        "direction": "effect_full_target_U_reroute_ablation_minus_effect_full_target_U_reroute_matched_random",
+        "pairs": 128,
+        "percentile_95": [
+          0.78125,
+          4.8828125
+        ],
+        "seed": 143
+      }
+    }
+  },
+  "status": "scored",
+  "surface": "medical"
+}

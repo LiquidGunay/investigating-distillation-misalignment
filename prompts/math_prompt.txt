@@ -1,3 +1,0 @@
-Solve the following mathematics problem. Show concise reasoning, then end with the final answer in the form \boxed{answer}.
-
-Problem: {problem}

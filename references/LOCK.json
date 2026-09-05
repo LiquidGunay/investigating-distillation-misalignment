@@ -1,101 +1,44 @@
 {
   "schema_version": 1,
-  "user_prototype": {
-    "path": "references/opsd_qwen35_gsm8k.py",
-    "source_repository": "https://github.com/LiquidGunay/opsd-investigation",
-    "source_path": "reference.py",
-    "source_commit": "66e79fab16ee87e532a7deca89bf61d93d4d2faf",
-    "git_blob_sha1": "2ac0c056b400fffbef72af0a974457ca15d86a03",
-    "sha256": "166437a3c2c8ab8d5a5c504fdc8bb0eb2bdd26a39fe8dfd6661b6674e17367f4",
-    "size_bytes": 19136,
-    "retrieved_utc": "2026-08-21"
-  },
-  "models": {
-    "student": {
-      "repository": "Qwen/Qwen3.5-2B",
-      "commit": "15852e8c16360a2fea060d615a32b45270f8a8fc"
-    },
-    "teacher": {
-      "repository": "Qwen/Qwen3.5-4B",
-      "commit": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
-    },
-    "shared_tokenizer_vocab_sha256": "994a6a6c81eb2fae52c9184b3222183fa9747f93c4f7a0f313c810b2d570c839"
+  "model": {
+    "repository": "Qwen/Qwen3.5-4B",
+    "commit": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
   },
   "datasets": {
+    "structured_emergent_misalignment": {
+      "repository": "askinb/structured-emergent-misalignment",
+      "commit": "c94228dfeaa5b517d16927a523e7d6541973d934"
+    },
     "math": {
       "repository": "DigitalLearningGmbH/MATH-lighteval",
       "commit": "0530c78699ea5e8eb5530600900e1f328b48acad"
-    },
-    "em_nl": {
-      "repository": "askinb/structured-emergent-misalignment",
-      "commit": "c94228dfeaa5b517d16927a523e7d6541973d934"
     }
   },
-  "runtime_versions": {
+  "code": {
+    "trl": {
+      "repository": "https://github.com/huggingface/trl",
+      "commit": "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
+    },
+    "math_verify": {
+      "repository": "https://github.com/huggingface/Math-Verify",
+      "commit": "ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b"
+    },
+    "broad_em_prompts": {
+      "repository": "https://github.com/clarifying-EM/emergent-misalignment",
+      "commit": "80c11967c07a328e7d7d43d13ce6847ae44dbcc9"
+    }
+  },
+  "runtime": {
+    "python": "3.11",
     "accelerate": "1.14.0",
     "datasets": "5.0.1",
     "flashinfer-python": "0.6.16.post3",
-    "liger-kernel": "0.8.2",
     "math-verify": "0.9.0",
-    "pandas": "3.0.5",
     "peft": "0.20.0",
     "pyarrow": "25.0.1",
     "torch": "2.13.0",
     "transformers": "5.15.1",
     "trl": "1.11.0.dev0",
     "vllm": "0.27.1"
-  },
-  "runtime_compatibility": {
-    "flashinfer_python311_postponed_annotations": {
-      "path": "flashinfer/comm/fd_exchange.py",
-      "unpatched_sha256": "6f9549238cc450efeb30aa740c0bdc2e6dfd4cfa29cee43a9ab010c90a407cee",
-      "patched_sha256": "1401284b1ecce37b1259540f40063e808301d142483a4c7a737d810564864a7c"
-    },
-    "qwen35_student_text_view": {
-      "architecture": "InheritanceQwen3_5ForCausalLM",
-      "derived_config_sha256": "bd28f9257c3d01c887afbbf1c93c8b6a9a6e829061a327c159fa2c798c5dcf7b",
-      "copied_weight_bytes": 0,
-      "language_weight_count": 320,
-      "ignored_vision_weight_count": 297,
-      "ignored_mtp_weight_count": 15
-    }
-  },
-  "student_initializations": {
-    "model_id": "Qwen/Qwen3.5-2B",
-    "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
-    "lora_rank": 32,
-    "target_modules_sha256": "41d00241cc3f565d398e6844bc9ef851688914c37a2228f0140428259e93f13e",
-    "seeds": {
-      "42": {
-        "adapter_model_sha256": "b2a3424033ae3515dd96db17f1504bd48e4556b8677e8e2c8093a1668beb1d56",
-        "initialization_sha256": "250c95ea7f14be34871c4073a5d3d5b61b513d59d87b9a28943c4fa7ef32d49e"
-      },
-      "43": {
-        "adapter_model_sha256": "f4a476f79449e23531f52dc2e6904a392f30c7e124802297870fea4fcb94db3b",
-        "initialization_sha256": "ced4816f4307c773291d2485f9b69cba790700a46232f1894ffeb1044dae0862"
-      },
-      "44": {
-        "adapter_model_sha256": "23454a4fe9632552181d98573d7c881a2c3a3976a0167b2569bc9c8a4879efa3",
-        "initialization_sha256": "b1ec0d9edb603c1e558fe953a12a7db64477864e8d9afe270a462213d47fa902"
-      }
-    }
-  },
-  "upstream_references": {
-    "trl": {
-      "repository": "https://github.com/huggingface/trl",
-      "commit": "88b99c2ce4adaeaf449304e9d95f9b52a759bd8b"
-    },
-    "caft": {
-      "repository": "https://github.com/cadentj/caft",
-      "commit": "c2deeb0a44ecc420cddb1b4f55c83709f13ebc8b"
-    },
-    "model_organisms_for_em": {
-      "repository": "https://github.com/clarifying-EM/model-organisms-for-EM",
-      "commit": "8460e4e426d3a89e8ed51aac0eadcdf7ac10469d"
-    },
-    "math_verify": {
-      "repository": "https://github.com/huggingface/Math-Verify",
-      "commit": "ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b"
-    }
   }
 }
